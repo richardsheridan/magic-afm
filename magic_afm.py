@@ -86,7 +86,7 @@ class ForceMapWorker:
         # Index into the data and grab the Defl and Zsnsr ext and ret arrays as one 2D array
         # We could slice with "1:" if chanmap were constant but I'm not sure if it is
         defl_zsnsr_rows = [self.chanmap['Defl'], self.chanmap['ZSnsr']]
-        defl_zsnsr = curve[defl_zsnsr_rows, :s]  # XXX Read h5data
+        defl_zsnsr = curve[defl_zsnsr_rows, :]  # XXX Read h5data
 
         # we are happy to throw away data far from the surface to square up the data
         # Also reverse axis zero so data is ordered zsnsr,defl like we did for FFM
