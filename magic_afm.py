@@ -1,17 +1,25 @@
 from functools import partial
 
+import h5py
 import numpy as np
+import subprocess
+import trio
 from scipy.optimize import curve_fit, root_scalar
 from scipy.signal import resample
 
-import trio, subprocess, h5py
 
 trs = partial(trio.to_thread.run_sync, cancellable=True)
-trio_thread_sleep = partial(trio.from_thread.run, trio.lowlevel.checkpoint)
 
 EPS = float(np.finfo(np.float64).eps)
 RT_EPS = float(np.sqrt(EPS))
 
+def make_cancel_poller():
+    """Uses internal undocumented bits so probably super fragile"""
+    _cancel_status=trio.lowlevel.current_task()._cancel_status
+    def poll_for_cancel():
+        if _cancel_status.effectively_cancelled:
+            raise trio.Cancelled._create()
+    return poll_for_cancel
 
 async def convert_ardf(ardf_path, conv_path=r'X:\Data\AFM\Cypher\ARDFtoHDF5.exe', force=False, pbar=None):
     """Turn an ARDF path into a corresponding HDF5 path, converting the file if it doesn't exist.
@@ -100,14 +108,14 @@ class ForceMapWorker:
 
         return self._shared_get_part(curve, s)
 
-    def get_all_curves(self, _sleep_fun=(lambda: None)):
+    def get_all_curves(self, _poll_for_cancel=(lambda: None)):
         im_r, im_c, num_segments = self.segments.shape
         x = np.empty((im_r, im_c, 2, self.minext + self.minret), dtype=np.float32)
         for index, curve in self.force_curves.items():
             # Unfortunately they threw in segments here too, so we skip over it
             if index == 'Segments':
                 continue
-            _sleep_fun()
+            _poll_for_cancel()
             # Because of the nonuniform arrays, each indent gets its own dataset
             # indexed by 'row:column' e.g. '1:1'. We could start with the shape and index
             # manually, but the string munging is easier for me to think about
@@ -129,7 +137,7 @@ class FFMSingleWorker:
         d = self.defl[r, c]
         return z, d
 
-    def get_all_curves(self, _sleep_fun=None):
+    def get_all_curves(self, _poll_for_cancel=None):
         return np.stack((self.drive, self.defl), axis=-2)
 
 
@@ -150,11 +158,11 @@ class FFMTraceRetraceWorker:
             d = self.defl_retrace[r, c]
         return z, d
 
-    def get_all_curves(self, _sleep_fun=(lambda: None)):
+    def get_all_curves(self, _poll_for_cancel=(lambda: None)):
         drive = np.concatenate((self.drive_trace, self.drive_retrace))
-        _sleep_fun()
+        _poll_for_cancel()
         defl = np.concatenate((self.defl_trace, self.defl_retrace))
-        _sleep_fun()
+        _poll_for_cancel()
         return np.stack((drive, defl,), axis=-2)
 
 
@@ -212,7 +220,7 @@ class AsyncARH5File:
         return await trs(self._worker.get_force_curve, r, c)
 
     async def get_all_curves(self):
-        return await trs(self._worker.get_all_curves, trio_thread_sleep)
+        return await trs(self._worker.get_all_curves, make_cancel_poller())
 
 
 def parse_notes(notes, disp=True):
