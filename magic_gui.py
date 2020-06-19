@@ -92,22 +92,6 @@ class TkHost:
         self.root.destroy()
 
 
-async def pbar_runner(pbar, interval):
-    interval = interval / 1000
-    while True:
-        pbar.step()
-        await trio.sleep(interval)
-
-
-async def pbar_runner_timely(pbar, interval):
-    interval = interval / 1000
-    t = trio.current_time()
-    while True:
-        t = t + interval
-        pbar.step()
-        await trio.sleep_until(t)
-
-
 class MagicGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -166,10 +150,44 @@ class MagicGUI:
     async def about_task(self):
         """Display and control the About menu
 
-        Show copyright and version info and maybe something else
-        display cute progress bars to diagnose event loops
+        ☒ Make new Toplevel window
+        ☐ Show copyright and version info and maybe something else
+        ☒ display cute progress bar spinners to diagnose event loops
 
         """
+        top = tk.Toplevel(self.root)
+        top.wm_title(f'About {self.__class__.__qualname__}')
+
+        opts = dict(mode='indeterminate', maximum=80, length=300)
+        timely_trio_pbar = ttk.Progressbar(top, **opts)
+        timely_trio_pbar.pack()
+        tk_pbar = ttk.Progressbar(top, **opts)
+        tk_pbar.pack()
+        trio_pbar = ttk.Progressbar(top, **opts)
+        trio_pbar.pack()
+
+        interval = 10
+
+        async def pbar_runner():
+            while True:
+                trio_pbar.step()
+                await trio.sleep(interval / 1000)
+
+        async def pbar_runner_timely():
+            t = trio.current_time()
+            while True:
+                t = t + interval / 1000
+                timely_trio_pbar.step()
+                await trio.sleep_until(t)
+
+        # run using tcl event loop
+        tk_pbar.start(interval)
+        # run using trio
+        async with trio.open_nursery() as nursery:
+            top.protocol("WM_DELETE_WINDOW", (nursery.cancel_scope.cancel))
+            nursery.start_soon(pbar_runner)
+            nursery.start_soon(pbar_runner_timely)
+        top.destroy()
 
     async def main(self):
         nursery: trio.Nursery
@@ -178,19 +196,6 @@ class MagicGUI:
             self.root.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
 
             self._build_menus(nursery)
-
-            pbar = ttk.Progressbar(self.root, mode='indeterminate', maximum=20)
-            pbar.pack()
-            pbar2 = ttk.Progressbar(self.root, mode='indeterminate', maximum=20)
-            pbar2.pack()
-            pbar3 = ttk.Progressbar(self.root, mode='indeterminate', maximum=20)
-            pbar3.pack()
-
-            # run using tcl event loop
-            pbar.start(20)
-            # run using trio
-            nursery.start_soon(pbar_runner, pbar2, 20)
-            nursery.start_soon(pbar_runner_timely, pbar3, 20)
 
             await trio.sleep_forever()  # needed if nursery never starts a long running child
 
