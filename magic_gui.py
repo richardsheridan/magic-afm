@@ -1,4 +1,6 @@
 import collections
+import threading
+import time
 import tkinter as tk
 import traceback
 from functools import partial, wraps
@@ -53,20 +55,37 @@ class TkHost:
         self.root.destroy()
 
 
-buttonscope = None
+class button_scope:
+    cancel = lambda: None
 
 
-async def afn():
-    global buttonscope
-    if buttonscope is not None:
-        buttonscope.cancel()
-    with trio.CancelScope() as buttonscope:
-        await trio.sleep(0.01)  # give someone a chance to cancel us
-        print('going to sleep')
+async def button_task():
+    global button_scope
+    button_scope.cancel()
+    with trio.CancelScope() as button_scope:
+        print('task going to sleep')
         await trio.sleep(2)
-        print('slept well!')
+        print('task slept well!')
         return
-    print('rudely awoken..')
+    print('task rudely awoken..')
+
+
+thread_flag = [False]
+
+
+def button_thread():
+    global thread_flag
+    thread_flag[0] = True
+    local_flag = thread_flag = [False]
+    print('thread going to sleep')
+    for _ in range(100):
+        if local_flag[0]:
+            break
+        time.sleep(.02)
+    else:
+        print('thread slept poorly...')
+        return
+    print('thread rudely awoken..')
 
 
 async def pbar_runner(pbar, interval):
@@ -109,8 +128,11 @@ async def amain(root: tk.Tk):
         pbar2.pack()
         pbar3 = ttk.Progressbar(root, mode='indeterminate', maximum=20)
         pbar3.pack()
-        button = tk.Button(root, text='button text', command=lambda: nursery.start_soon(afn))
-        button.pack()
+        task_button = ttk.Button(root, text='start task', command=partial(launch, button_task))
+        task_button.pack()
+        thread_button = ttk.Button(root, text='start thread',
+                                   command=lambda: threading.Thread(target=button_thread, daemon=True).start())
+        thread_button.pack()
         # run using tcl event loop
         pbar.start(20)
         # await trio.sleep_forever()
