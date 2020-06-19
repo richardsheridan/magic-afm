@@ -1,10 +1,19 @@
 import collections
 import tkinter as tk
 import traceback
+from functools import partial, wraps
 from tkinter import ttk
 
 import trio
 from outcome import Error
+
+
+def impartial(fn):
+    @wraps(fn)
+    def impartial_wrapper(*a, **kw):
+        return fn()
+
+    return impartial_wrapper
 
 
 class TkHost:
@@ -30,7 +39,7 @@ class TkHost:
         If .call is called from the Tcl thread, the locking and sending are optimized away
         so it should be fast enough that the run_sync_soon_not_threadsafe version is unnecessary.
         """
-        # self.master.after(0, func) # does a fairly intensive wrapping to each func
+        # self.root.after(0, func) # does a fairly intensive wrapping to each func
         self._q.append(func)
         self.root.call('after', 0, self._tk_func_name)
 
@@ -79,8 +88,21 @@ async def pbar_runner_timely(pbar, interval):
 async def amain(root: tk.Tk):
     nursery: trio.Nursery
     async with trio.open_nursery() as nursery:
+        # convenience aliases
+        quit_app = nursery.cancel_scope.cancel
+        launch = nursery.start_soon
+
         # calls root.destroy by default
-        root.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+        root.protocol("WM_DELETE_WINDOW", quit_app)
+        root.bind_all('<Control-KeyPress-q>', impartial(quit_app))
+
+        menuframe = tk.Menu(root, relief='groove', tearoff=False)
+        root.config(menu=menuframe)
+        file_menu = tk.Menu(menuframe, tearoff=False)
+        file_menu.add_command(label='Quit', command=quit_app, accelerator='Ctrl+Q', underline=0)
+        file_menu.bind('<KeyRelease-q>', quit_app)
+        menuframe.add_cascade(label='File', menu=file_menu, underline=0)
+
         pbar = ttk.Progressbar(root, mode='indeterminate', maximum=20)
         pbar.pack()
         pbar2 = ttk.Progressbar(root, mode='indeterminate', maximum=20)
