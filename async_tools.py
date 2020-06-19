@@ -33,7 +33,9 @@ async def convert_ardf(ardf_path, conv_path=r'X:\Data\AFM\Cypher\ARDFtoHDF5.exe'
 
     if pbar is None:
         import tqdm
-        pbar = tqdm.tqdm(total=100, unit='%')
+        pbar = tqdm.tqdm(total=100, unit='%', )
+
+    pbar.set_description('Converting ' + str(ardf_path))
 
     async def reading_stdout():
         stdout = []
@@ -45,10 +47,10 @@ async def convert_ardf(ardf_path, conv_path=r'X:\Data\AFM\Cypher\ARDFtoHDF5.exe'
 
     async def reading_stderr():
         async for stuff in proc.stderr:
-            stuff = (stuff.lstrip(b'\x08'))
-            if stuff:
-                pbar.update(float(stuff[:-1].decode()) - pbar.n)
-        pbar.close()
+            i = stuff.rfind(b'\x08')
+            most_recent_numeric_output = stuff[i + 1:-1]
+            if most_recent_numeric_output:
+                pbar.update(float(most_recent_numeric_output.decode()) - pbar.n)
 
     try:
         async with await trio.open_process([str(conv_path), str(ardf_path), str(h5file_path), ],
@@ -61,6 +63,8 @@ async def convert_ardf(ardf_path, conv_path=r'X:\Data\AFM\Cypher\ARDFtoHDF5.exe'
         print('Please ensure the full path to the Asylum converter tool ARDFtoHDF5.exe is in the conv_path argument',
               flush=True)
         raise e
+    finally:
+        pbar.close()
 
     return h5file_path
 
