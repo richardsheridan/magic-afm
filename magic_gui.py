@@ -1,6 +1,4 @@
 import collections
-import threading
-import time
 import tkinter as tk
 import traceback
 from functools import partial, wraps
@@ -60,8 +58,8 @@ class PBar:
 class TkHost:
     def __init__(self, root):
         self.root = root
-        self._tk_func_name = root.register(self._tk_func)
         self._q = collections.deque()
+        self._tk_func_name = root.register(self._tk_func)
 
     def _tk_func(self):
         self._q.popleft()()
@@ -94,39 +92,6 @@ class TkHost:
         self.root.destroy()
 
 
-class button_scope:
-    cancel = lambda: None
-
-
-async def button_task():
-    global button_scope
-    button_scope.cancel()
-    with trio.CancelScope() as button_scope:
-        print('task going to sleep')
-        await trio.sleep(2)
-        print('task slept well!')
-        return
-    print('task rudely awoken..')
-
-
-thread_flag = [False]
-
-
-def button_thread():
-    global thread_flag
-    thread_flag[0] = True
-    local_flag = thread_flag = [False]
-    print('thread going to sleep')
-    for _ in range(100):
-        if local_flag[0]:
-            break
-        time.sleep(.02)
-    else:
-        print('thread slept poorly...')
-        return
-    print('thread rudely awoken..')
-
-
 async def pbar_runner(pbar, interval):
     interval = interval / 1000
     while True:
@@ -143,75 +108,99 @@ async def pbar_runner_timely(pbar, interval):
         await trio.sleep_until(t)
 
 
-async def open_task():
-    filename = await trs(partial(filedialog.askopenfilename, filetypes=[('AFM Data', '*.h5 *.ARDF'),
-                                                                        ('AR HDF5', '*.h5'),
-                                                                        ('ARDF', '*.ARDF')]))
-    if not filename:
-        return  # Cancelled
+class MagicGUI:
+    def __init__(self, root: tk.Tk):
+        self.root = root
 
-    filename = trio.Path(filename)
-    if filename.suffix == '.ARDF':
-        with trio.CancelScope() as cscope:
-            filename = await async_tools.convert_ardf(filename, 'ARDFtoHDF5.exe', force=True,
-                                                      pbar=PBar(cancel_callback=cscope.cancel))
-        if cscope.cancel_called:
+    def _build_menus(self, nursery):
+        menu_frame = tk.Menu(self.root, relief='groove', tearoff=False)
+        self.root.config(menu=menu_frame)
+
+        file_menu = tk.Menu(menu_frame, tearoff=False)
+        file_menu.add_command(label='Open...', accelerator='Ctrl+O', underline=0,
+                              command=partial(nursery.start_soon, self.open_task), )
+        file_menu.bind('<KeyRelease-o>',
+                       func=partial(nursery.start_soon, self.open_task))
+        self.root.bind_all('<Control-KeyPress-o>',
+                           func=impartial(partial(nursery.start_soon, self.open_task)))
+        file_menu.add_command(label='Quit', accelerator='Ctrl+Q', underline=0,
+                              command=nursery.cancel_scope.cancel, )
+        file_menu.bind('<KeyRelease-q>',
+                       func=nursery.cancel_scope.cancel)
+        self.root.bind_all('<Control-KeyPress-q>',
+                           func=impartial(nursery.cancel_scope.cancel))
+        menu_frame.add_cascade(label='File', menu=file_menu, underline=0)
+
+        help_menu = tk.Menu(menu_frame, tearoff=False)
+        help_menu.add_command(label='About...', accelerator=None, underline=0,
+                              command=partial(nursery.start_soon, self.about_task), )
+        help_menu.bind('<KeyRelease-a>',
+                       func=partial(nursery.start_soon, self.about_task))
+        self.root.bind_all('<Control-KeyPress-F1>',
+                           func=impartial(partial(nursery.start_soon, self.about_task)))
+        menu_frame.add_cascade(label='Help', menu=help_menu, underline=0)
+
+    async def open_task(self):
+        filename = await trs(partial(filedialog.askopenfilename,
+                                     master=self.root,
+                                     filetypes=[('AFM Data', '*.h5 *.ARDF'),
+                                                ('AR HDF5', '*.h5'),
+                                                ('ARDF', '*.ARDF')]))
+        if not filename:
             return  # Cancelled
 
-    print(filename)
-    data = async_tools.AsyncARH5File(filename)
-    async with data as opened_data:
-        curve = await opened_data.get_force_curve(0, 0)
-    print(curve)
+        filename = trio.Path(filename)
+        if filename.suffix == '.ARDF':
+            with trio.CancelScope() as cscope:
+                pbar = PBar(self.root, cancel_callback=cscope.cancel)
+                filename = await async_tools.convert_ardf(filename, 'ARDFtoHDF5.exe', True, pbar)
+            if cscope.cancel_called:
+                return  # Cancelled
 
+        print(filename)
+        data = async_tools.AsyncARH5File(filename)
+        async with data as opened_data:
+            curve = await opened_data.get_force_curve(0, 0)
+        print(curve)
 
-async def amain(root: tk.Tk):
-    nursery: trio.Nursery
-    async with trio.open_nursery() as nursery:
-        # convenience aliases
-        quit_app = nursery.cancel_scope.cancel
-        launch = nursery.start_soon
-        open_dialog = partial(launch, open_task)
+    async def about_task(self):
+        """Display and control the About menu
 
-        # calls root.destroy by default
-        root.protocol("WM_DELETE_WINDOW", quit_app)
-        root.bind_all('<Control-KeyPress-q>', impartial(quit_app))
-        root.bind_all('<Control-KeyPress-o>', impartial(open_dialog))
+        Show copyright and version info and maybe something else
+        display cute progress bars to diagnose event loops
 
-        menuframe = tk.Menu(root, relief='groove', tearoff=False)
-        root.config(menu=menuframe)
-        file_menu = tk.Menu(menuframe, tearoff=False)
-        file_menu.add_command(label='Open...', accelerator='Ctrl+O', underline=0, command=open_dialog, )
-        file_menu.bind('<KeyRelease-o>', quit_app)
-        file_menu.add_command(label='Quit', accelerator='Ctrl+Q', underline=0, command=quit_app, )
-        file_menu.bind('<KeyRelease-q>', quit_app)
-        menuframe.add_cascade(label='File', menu=file_menu, underline=0)
+        """
 
-        pbar = ttk.Progressbar(root, mode='indeterminate', maximum=20)
-        pbar.pack()
-        pbar2 = ttk.Progressbar(root, mode='indeterminate', maximum=20)
-        pbar2.pack()
-        pbar3 = ttk.Progressbar(root, mode='indeterminate', maximum=20)
-        pbar3.pack()
-        task_button = ttk.Button(root, text='start task', command=partial(launch, button_task))
-        task_button.pack()
-        thread_button = ttk.Button(root, text='start thread',
-                                   command=lambda: threading.Thread(target=button_thread, daemon=True).start())
-        thread_button.pack()
-        # run using tcl event loop
-        pbar.start(20)
-        # await trio.sleep_forever()
-        # run using trio
-        nursery.start_soon(pbar_runner, pbar2, 20)
-        nursery.start_soon(pbar_runner_timely, pbar3, 20)
+    async def main(self):
+        nursery: trio.Nursery
+        async with trio.open_nursery() as nursery:
+            # calls root.destroy by default
+            self.root.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+
+            self._build_menus(nursery)
+
+            pbar = ttk.Progressbar(self.root, mode='indeterminate', maximum=20)
+            pbar.pack()
+            pbar2 = ttk.Progressbar(self.root, mode='indeterminate', maximum=20)
+            pbar2.pack()
+            pbar3 = ttk.Progressbar(self.root, mode='indeterminate', maximum=20)
+            pbar3.pack()
+
+            # run using tcl event loop
+            pbar.start(20)
+            # run using trio
+            nursery.start_soon(pbar_runner, pbar2, 20)
+            nursery.start_soon(pbar_runner_timely, pbar3, 20)
+
+            await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 
 def main():
     root = tk.Tk()
     host = TkHost(root)
+    app = MagicGUI(root)
     trio.lowlevel.start_guest_run(
-        amain,
-        root,
+        app.main,
         run_sync_soon_threadsafe=host.run_sync_soon_threadsafe,
         done_callback=host.done_callback,
     )
