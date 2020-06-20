@@ -1,3 +1,22 @@
+"""
+A Docstring
+"""
+
+# Copyright (C) 2020  Richard J. Sheridan
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import collections
 import tkinter as tk
 import traceback
@@ -95,6 +114,7 @@ class TkHost:
 class MagicGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
+        self.root.wm_title(self.__class__.__qualname__)
 
     def _build_menus(self, nursery):
         menu_frame = tk.Menu(self.root, relief='groove', tearoff=False)
@@ -151,13 +171,29 @@ class MagicGUI:
         """Display and control the About menu
 
         ☒ Make new Toplevel window
-        ☐ Show copyright and version info and maybe something else
+        ☒ Show copyright and version info and maybe something else
         ☒ display cute progress bar spinners to diagnose event loops
 
         """
         top = tk.Toplevel(self.root)
         top.wm_title(f'About {self.__class__.__qualname__}')
+        shortlicense = """Copyright (C) 2020  Richard J. Sheridan
 
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
+        message = tk.Message(top, text=shortlicense)
+        message.pack()
         opts = dict(mode='indeterminate', maximum=80, length=300)
         timely_trio_pbar = ttk.Progressbar(top, **opts)
         timely_trio_pbar.pack()
@@ -184,7 +220,7 @@ class MagicGUI:
         tk_pbar.start(interval)
         # run using trio
         async with trio.open_nursery() as nursery:
-            top.protocol("WM_DELETE_WINDOW", (nursery.cancel_scope.cancel))
+            top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
             nursery.start_soon(pbar_runner)
             nursery.start_soon(pbar_runner_timely)
         top.destroy()
