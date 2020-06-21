@@ -205,9 +205,12 @@ class AsyncARH5File:
                          for line in h5data.attrs["Note"].decode('utf8').split('\n')
                          if ':' in line))
         worker = await trs(self._choose_worker, h5data)
+        images, image_names = await trs(lambda: (h5data['Image'], list(h5data['Image'])))
         self._h5data = h5data
         self.notes = notes
         self._worker = worker
+        self._images = images
+        self.image_names = image_names
 
     async def aclose(self):
         with trio.CancelScope(shield=True):
@@ -246,3 +249,6 @@ class AsyncARH5File:
 
     async def get_all_curves(self):
         return await trs(self._worker.get_all_curves, make_cancel_poller())
+
+    async def get_image(self, image_name):
+        return await trs(self._images.__getitem__, image_name)
