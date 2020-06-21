@@ -57,6 +57,25 @@ def impartial(fn):
 
 
 class FigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
+    def __init__(self, figure, master=None, resize_callback=None):
+        super().__init__(figure, master=master, resize_callback=resize_callback)
+        self._idle_draw_tkname = self._tkcanvas.register(self._idle_draw)
+
+    def _idle_draw(self):
+        try:
+            self.draw()
+        finally:
+            self._idle = True
+
+    def draw_idle(self):
+        # docstring inherited
+        if not self._idle:
+            return
+
+        self._idle = False
+
+        self._idle_callback = self._tkcanvas.tk.call('after', 'idle', self._idle_draw_tkname)
+
     def draw(self):
         super(FigureCanvasTkAgg, self).draw()
         _backend_tk.blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
@@ -156,7 +175,7 @@ class TkHost:
         """
         # self.root.after(0, func) # does a fairly intensive wrapping to each func
         self._q.append(func)
-        self.root.call('after', 0, self._tk_func_name)
+        self.root.call('after', 'idle', self._tk_func_name)
 
     def done_callback(self, outcome):
         """End the Tk app.
@@ -201,6 +220,7 @@ class MagicGUI:
         async with async_tools.AsyncARH5File(filename) as opened_arh5:
             z, d = await opened_arh5.get_force_curve(0, 0)
             plot_ax.plot(z, d)
+            fig.canvas.draw()
             async with trio.open_nursery() as nursery:
                 top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
                 await trio.sleep_forever()
