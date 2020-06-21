@@ -207,7 +207,8 @@ class AsyncARH5File:
         self._worker = worker
 
     async def aclose(self):
-        await trs(self._h5data.close, cancellable=False)
+        with trio.CancelScope(shield=True):
+            await trs(self._h5data.close)
 
     async def __aenter__(self):
         await self.ainitialize()

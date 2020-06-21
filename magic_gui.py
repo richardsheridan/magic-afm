@@ -24,10 +24,28 @@ from functools import partial, wraps
 from tkinter import ttk, filedialog
 
 import trio
+from matplotlib.backends import _backend_tk
+from matplotlib.backends._backend_tk import FigureCanvasTk
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.figure import Figure
 from outcome import Error
 
 import async_tools
 from async_tools import trs
+
+
+def NavFigure(parent):
+    fig = Figure()
+    canvas = FigureCanvasTkAgg(fig, parent, )
+    navbar = NavigationToolbar2Tk(canvas, parent)
+    navbar.grid(row=0, sticky='we')
+    parent.grid_rowconfigure(0, weight=0)
+    parent.grid_columnconfigure(0, weight=1)
+    canvas.get_tk_widget().grid(row=1, sticky='wens')
+    parent.grid_rowconfigure(1, weight=1)
+    parent.grid_columnconfigure(0, weight=1)
+    return fig
 
 
 def impartial(fn):
@@ -36,6 +54,45 @@ def impartial(fn):
         return fn()
 
     return impartial_wrapper
+
+
+class FigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
+    def draw(self):
+        super(FigureCanvasTkAgg, self).draw()
+        _backend_tk.blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
+        # self._master.update_idletasks()
+
+    def blit(self, bbox=None):
+        _backend_tk.blit(
+            self._tkphoto, self.renderer._renderer, (0, 1, 2, 3), bbox=bbox)
+        # self._master.update_idletasks()
+
+    def resize(self, event):
+        width, height = event.width, event.height
+        if self._resize_callback is not None:
+            self._resize_callback(event)
+
+        # compute desired figure size in inches
+        dpival = self.figure.dpi
+        winch = width / dpival
+        hinch = height / dpival
+        self.figure.set_size_inches(winch, hinch, forward=False)
+
+        self._tkcanvas.delete(self._tkphoto)
+        self._tkphoto = tk.PhotoImage(
+            master=self._tkcanvas, width=int(width), height=int(height))
+        self._tkcanvas.create_image(
+            int(width / 2), int(height / 2), image=self._tkphoto)
+        self.resize_event()
+        # self.draw() # resize event calls self.draw_idle()...
+
+        # a resizing will in general move the pointer position
+        # relative to the canvas, so process it as a motion notify
+        # event.  An intended side effect of this call is to allow
+        # window raises (which trigger a resize) to get the cursor
+        # position to the mpl event framework so key presses which are
+        # over the axes will work w/o clicks or explicit motion
+        self._update_pointer_position(event)
 
 
 class PBar:
@@ -116,35 +173,10 @@ class MagicGUI:
         self.root = root
         self.root.wm_title(self.__class__.__qualname__)
 
-    def _build_menus(self, nursery):
-        menu_frame = tk.Menu(self.root, relief='groove', tearoff=False)
-        self.root.config(menu=menu_frame)
-
-        file_menu = tk.Menu(menu_frame, tearoff=False)
-        file_menu.add_command(label='Open...', accelerator='Ctrl+O', underline=0,
-                              command=partial(nursery.start_soon, self.open_task), )
-        file_menu.bind('<KeyRelease-o>',
-                       func=partial(nursery.start_soon, self.open_task))
-        self.root.bind_all('<Control-KeyPress-o>',
-                           func=impartial(partial(nursery.start_soon, self.open_task)))
-        file_menu.add_command(label='Quit', accelerator='Ctrl+Q', underline=0,
-                              command=nursery.cancel_scope.cancel, )
-        file_menu.bind('<KeyRelease-q>',
-                       func=nursery.cancel_scope.cancel)
-        self.root.bind_all('<Control-KeyPress-q>',
-                           func=impartial(nursery.cancel_scope.cancel))
-        menu_frame.add_cascade(label='File', menu=file_menu, underline=0)
-
-        help_menu = tk.Menu(menu_frame, tearoff=False)
-        help_menu.add_command(label='About...', accelerator=None, underline=0,
-                              command=partial(nursery.start_soon, self.about_task), )
-        help_menu.bind('<KeyRelease-a>',
-                       func=partial(nursery.start_soon, self.about_task))
-        self.root.bind_all('<Control-KeyPress-F1>',
-                           func=impartial(partial(nursery.start_soon, self.about_task)))
-        menu_frame.add_cascade(label='Help', menu=help_menu, underline=0)
-
     async def open_task(self):
+        """Open a file using a dialog box, then create a window for data analysis
+
+        """
         filename = await trs(partial(filedialog.askopenfilename,
                                      master=self.root,
                                      filetypes=[('AFM Data', '*.h5 *.ARDF'),
@@ -160,12 +192,20 @@ class MagicGUI:
                 filename = await async_tools.convert_ardf(filename, 'ARDFtoHDF5.exe', True, pbar)
             if cscope.cancel_called:
                 return  # Cancelled
+            del pbar
 
-        print(filename)
-        data = async_tools.AsyncARH5File(filename)
-        async with data as opened_data:
-            curve = await opened_data.get_force_curve(0, 0)
-        print(curve)
+        top = tk.Toplevel(self.root)
+        top.wm_title(filename.name)
+        fig = NavFigure(top)
+        img_ax, plot_ax = fig.subplots(1, 2)
+        async with async_tools.AsyncARH5File(filename) as opened_arh5:
+            z, d = await opened_arh5.get_force_curve(0, 0)
+            plot_ax.plot(z, d)
+            async with trio.open_nursery() as nursery:
+                top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+                await trio.sleep_forever()
+        top.withdraw()  # weird navbar hiccup on close
+        top.destroy()
 
     async def about_task(self):
         """Display and control the About menu
@@ -231,13 +271,40 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
             # calls root.destroy by default
             self.root.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
 
-            self._build_menus(nursery)
+            # Build menus
+            menu_frame = tk.Menu(self.root, relief='groove', tearoff=False)
+            self.root.config(menu=menu_frame)
+
+            file_menu = tk.Menu(menu_frame, tearoff=False)
+            file_menu.add_command(label='Open...', accelerator='Ctrl+O', underline=0,
+                                  command=partial(nursery.start_soon, self.open_task), )
+            file_menu.bind('<KeyRelease-o>',
+                           func=partial(nursery.start_soon, self.open_task))
+            self.root.bind_all('<Control-KeyPress-o>',
+                               func=impartial(partial(nursery.start_soon, self.open_task)))
+            file_menu.add_command(label='Quit', accelerator='Ctrl+Q', underline=0,
+                                  command=nursery.cancel_scope.cancel, )
+            file_menu.bind('<KeyRelease-q>',
+                           func=nursery.cancel_scope.cancel)
+            self.root.bind_all('<Control-KeyPress-q>',
+                               func=impartial(nursery.cancel_scope.cancel))
+            menu_frame.add_cascade(label='File', menu=file_menu, underline=0)
+
+            help_menu = tk.Menu(menu_frame, tearoff=False)
+            help_menu.add_command(label='About...', accelerator=None, underline=0,
+                                  command=partial(nursery.start_soon, self.about_task), )
+            help_menu.bind('<KeyRelease-a>',
+                           func=partial(nursery.start_soon, self.about_task))
+            self.root.bind_all('<Control-KeyPress-F1>',
+                               func=impartial(partial(nursery.start_soon, self.about_task)))
+            menu_frame.add_cascade(label='Help', menu=help_menu, underline=0)
 
             await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 
 def main():
     root = tk.Tk()
+    root.update_idletasks()
     host = TkHost(root)
     app = MagicGUI(root)
     trio.lowlevel.start_guest_run(
