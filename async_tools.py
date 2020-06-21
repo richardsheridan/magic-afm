@@ -88,6 +88,9 @@ async def convert_ardf(ardf_path, conv_path=r'X:\Data\AFM\Cypher\ARDFtoHDF5.exe'
     return h5file_path
 
 
+NANOMETER_UNIT_CONVERSION = 1e9  # maybe we can intelligently read this from the file someday
+
+
 class ForceMapWorker:
     def __init__(self, h5data):
         self.force_curves = h5data['ForceMap']['0']
@@ -119,7 +122,7 @@ class ForceMapWorker:
 
         # we are happy to throw away data far from the surface to square up the data
         # Also reverse axis zero so data is ordered zsnsr,defl like we did for FFM
-        return defl_zsnsr[::-1, (s - self.minext):(s + self.minret)]
+        return defl_zsnsr[::-1, (s - self.minext):(s + self.minret)] * NANOMETER_UNIT_CONVERSION
 
     def get_force_curve(self, r, c):
         # Because of the nonuniform arrays, each indent gets its own dataset
@@ -145,7 +148,7 @@ class ForceMapWorker:
             s = self.extlens[r, c]
 
             x[r, c, :, :] = self._shared_get_part(curve, s)
-        return x
+        return x * NANOMETER_UNIT_CONVERSION
 
 
 class FFMSingleWorker:
@@ -156,10 +159,10 @@ class FFMSingleWorker:
     def get_force_curve(self, r, c):
         z = self.drive[r, c]
         d = self.defl[r, c]
-        return z, d
+        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
 
     def get_all_curves(self, _poll_for_cancel=None):
-        return np.stack((self.drive, self.defl), axis=-2)
+        return np.stack((self.drive, self.defl), axis=-2) * NANOMETER_UNIT_CONVERSION
 
 
 class FFMTraceRetraceWorker:
@@ -177,14 +180,14 @@ class FFMTraceRetraceWorker:
         else:
             z = self.drive_retrace[r, c]
             d = self.defl_retrace[r, c]
-        return z, d
+        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
 
     def get_all_curves(self, _poll_for_cancel=(lambda: None)):
         drive = np.concatenate((self.drive_trace, self.drive_retrace))
         _poll_for_cancel()
         defl = np.concatenate((self.defl_trace, self.defl_retrace))
         _poll_for_cancel()
-        return np.stack((drive, defl,), axis=-2)
+        return np.stack((drive, defl,), axis=-2) * NANOMETER_UNIT_CONVERSION
 
 
 class AsyncARH5File:
