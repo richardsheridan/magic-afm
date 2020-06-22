@@ -24,10 +24,11 @@ from functools import partial, wraps
 from tkinter import ttk, filedialog
 
 import trio
+import trio.testing
 from matplotlib.backends import _backend_tk
 from matplotlib.backends._backend_tk import FigureCanvasTk
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 from matplotlib.figure import Figure
 from outcome import Error
 
@@ -37,7 +38,7 @@ from async_tools import trs
 
 def NavFigure(parent):
     fig = Figure()
-    canvas = FigureCanvasTkAgg(fig, parent, )
+    canvas = AsyncFigureCanvasTkAgg(fig, parent, )
     navbar = NavigationToolbar2Tk(canvas, parent)
     navbar.grid(row=0, sticky='we')
     parent.grid_rowconfigure(0, weight=0)
@@ -56,28 +57,50 @@ def impartial(fn):
     return impartial_wrapper
 
 
-class FigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
+class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
+        self._parking_lot = trio.lowlevel.ParkingLot()
+        self.draw_idle = self._parking_lot.unpark_all
         super().__init__(figure, master=master, resize_callback=resize_callback)
-        self._idle_draw_tkname = self._tkcanvas.register(self._idle_draw)
-
-    def _idle_draw(self):
-        try:
-            self.draw()
-        finally:
-            self._idle = True
+        # self._idle_draw_tkname = self._tkcanvas.register(self._idle_draw)
 
     def draw_idle(self):
-        # docstring inherited
-        if not self._idle:
-            return
+        assert False, "this should be overridden in __init__"
 
-        self._idle = False
+    async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
+        task_status.started()
+        while True:
+            await self._parking_lot.park()
+            await trio.testing.wait_all_tasks_blocked()
+            self.draw()
 
-        self._idle_callback = self._tkcanvas.tk.call('after', 'idle', self._idle_draw_tkname)
+    # async def draw_async(self):
+    #     if not self._idle:
+    #         return
+    #     self._idle = False
+    #     try:
+    #         await trio.testing.wait_all_tasks_blocked()
+    #         self.draw()
+    #     finally:
+    #         self._idle = True
+
+    # def _idle_draw(self):
+    #     try:
+    #         self.draw()
+    #     finally:
+    #         self._idle = True
+    #
+    # def draw_idle(self):
+    #     # docstring inherited
+    #     if not self._idle:
+    #         return
+    #
+    #     self._idle = False
+    #
+    #     self._idle_callback = self._tkcanvas.tk.call('after', 'idle', self._idle_draw_tkname)
 
     def draw(self):
-        super(FigureCanvasTkAgg, self).draw()
+        super().draw()
         _backend_tk.blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
         # self._master.update_idletasks()
 
@@ -220,9 +243,10 @@ class MagicGUI:
         async with async_tools.AsyncARH5File(filename) as opened_arh5:
             z, d = await opened_arh5.get_force_curve(0, 0)
             plot_ax.plot(z, d)
-            fig.canvas.draw()
             async with trio.open_nursery() as nursery:
                 top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+                await nursery.start(fig.canvas.idle_draw_task)
+                fig.canvas.draw_idle()
                 await trio.sleep_forever()
         top.withdraw()  # weird navbar hiccup on close
         top.destroy()
@@ -322,9 +346,16 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
             await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 
+class NoUpdateTk(tk.Tk):
+    def update(self):
+        assert False, "calls to update have become problematic, so we're blowing up instead of deadlocking"
+
+    def update_idletasks(self):
+        assert False, "calls to update have become problematic, so we're blowing up instead of deadlocking"
+
+
 def main():
-    root = tk.Tk()
-    root.update_idletasks()
+    root = NoUpdateTk()
     host = TkHost(root)
     app = MagicGUI(root)
     trio.lowlevel.start_guest_run(
