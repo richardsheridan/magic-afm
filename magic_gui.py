@@ -20,6 +20,7 @@ A Docstring
 import collections
 import tkinter as tk
 import traceback
+from enum import IntEnum
 from functools import partial, wraps
 from tkinter import ttk, filedialog
 
@@ -30,23 +31,24 @@ from matplotlib.backends._backend_tk import FigureCanvasTk
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 from matplotlib.figure import Figure
+from matplotlib.ticker import ScalarFormatter
 from outcome import Error
 
 import async_tools
 from async_tools import trs
 
 
-def NavFigure(parent):
-    fig = Figure()
-    canvas = AsyncFigureCanvasTkAgg(fig, parent, )
-    navbar = NavigationToolbar2Tk(canvas, parent)
-    navbar.grid(row=0, sticky='we')
-    parent.grid_rowconfigure(0, weight=0)
-    parent.grid_columnconfigure(0, weight=1)
-    canvas.get_tk_widget().grid(row=1, sticky='wens')
-    parent.grid_rowconfigure(1, weight=1)
-    parent.grid_columnconfigure(0, weight=1)
-    return fig
+class TKSTATE(IntEnum):
+    """AND/OR these with a tk.Event to see which keys were held down during it"""
+    SHIFT = 0x0001
+    CAPSLOCK = 0x0002
+    CONTROL = 0x0004
+    LALT = 0x0008
+    NUMLOCK = 0x0010
+    RALT = 0x0080
+    MB1 = 0x0100
+    MB2 = 0x0200
+    MB3 = 0x0400
 
 
 def impartial(fn):
@@ -219,6 +221,7 @@ class MagicGUI:
         """Open a file using a dialog box, then create a window for data analysis
 
         """
+        # Choose file
         filename = await trs(partial(filedialog.askopenfilename,
                                      master=self.root,
                                      filetypes=[('AFM Data', '*.h5 *.ARDF'),
@@ -226,8 +229,9 @@ class MagicGUI:
                                                 ('ARDF', '*.ARDF')]))
         if not filename:
             return  # Cancelled
-
         filename = trio.Path(filename)
+
+        # Convert file if necessary
         if filename.suffix == '.ARDF':
             with trio.CancelScope() as cscope:
                 pbar = PBar(self.root, cancel_callback=cscope.cancel)
@@ -236,17 +240,80 @@ class MagicGUI:
                 return  # Cancelled
             del pbar
 
+        # Build window
         top = tk.Toplevel(self.root)
         top.wm_title(filename.name)
-        fig = NavFigure(top)
-        img_ax, plot_ax = fig.subplots(1, 2)
+
+        fig = Figure(figsize=(7, 2.5))
+        img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.35]))
+        img_ax.set_anchor('W')
+        cax = None
+        fmt = ScalarFormatter()
+        fmt.set_powerlimits((-2, 2))
+
+        canvas = AsyncFigureCanvasTkAgg(fig, top, resize_callback=impartial(fig.tight_layout))
+        navbar = NavigationToolbar2Tk(canvas, top)
+
+        options_frame = tk.Frame(top)
+        image_name_label = tk.Label(options_frame, text='Current image:')
+        image_name_label.pack(side='left')
+        image_name_strvar = tk.StringVar(options_frame, value='Choose an image...')
+        image_name_menu = ttk.Combobox(options_frame, textvariable=image_name_strvar, width=12, state='readonly')
+        image_name_menu.pack(side='left')
+
+        navbar.grid(row=0, sticky='we')
+        top.grid_rowconfigure(0, weight=0)
+        top.grid_columnconfigure(0, weight=1)
+        canvas.get_tk_widget().grid(row=1, sticky='wens')
+        top.grid_rowconfigure(1, weight=1)
+        top.grid_columnconfigure(0, weight=1)
+        options_frame.grid(row=2, sticky='we')
+        top.grid_rowconfigure(2, weight=0)
+        top.grid_columnconfigure(0, weight=1)
+
         async with async_tools.AsyncARH5File(filename) as opened_arh5:
-            z, d = await opened_arh5.get_force_curve(0, 0)
-            plot_ax.plot(z, d)
+            async def change_image_callback():
+                image = await opened_arh5.get_image(image_name_strvar.get())
+
+                nonlocal cax
+                if cax is not None:
+                    cax.clear()
+                img_ax.clear()
+                plot_ax.clear()
+                axesimage = img_ax.imshow(image, picker=True)
+                colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
+                cax = colorbar.ax
+
+                fig.tight_layout()
+                fig.canvas.draw_idle()
+
+            async def plot_pick_callback(pick_event):
+                if pick_event.mouseevent.inaxes is not img_ax:
+                    return
+                if pick_event.mouseevent.button != 1:
+                    return
+                c, r = int(round(pick_event.mouseevent.xdata)), int(round(pick_event.mouseevent.ydata))
+                z, d = await opened_arh5.get_force_curve(r, c)
+                if not pick_event.guiEvent.state & TKSTATE.SHIFT:
+                    plot_ax.clear()
+                plot_ax.plot(z, d)
+                fig.canvas.draw_idle()
+
+            names = opened_arh5.image_names
+            image_name_menu.configure(values=names, width=max(map(len, names)))
+
             async with trio.open_nursery() as nursery:
                 top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+                fig.canvas.mpl_connect('pick_event', partial(nursery.start_soon, plot_pick_callback))
+
                 await nursery.start(fig.canvas.idle_draw_task)
-                fig.canvas.draw_idle()
+                image_name_strvar.trace_add('write', impartial(partial(nursery.start_soon, change_image_callback)))
+                # StringVar.set() won't be effective to plot unless it happens after the trace add AND idle_draw_task
+                for name in ('MapHeight', 'ZSensorTrace'):
+                    if name in names:
+                        image_name_strvar.set(name)
+                        break
+
                 await trio.sleep_forever()
         top.withdraw()  # weird navbar hiccup on close
         top.destroy()
