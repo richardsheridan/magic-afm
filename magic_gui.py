@@ -1,21 +1,22 @@
-"""
-A Docstring
-"""
+"""MagicAFM GUI
 
-# Copyright (C) 2020  Richard J. Sheridan
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
+__author__ = "Richard J. Sheridan"
+__short_license__ = f"""Copyright (C) 2020  {__author__}
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
 
 import collections
 import tkinter as tk
@@ -65,12 +66,19 @@ def impartial(fn):
     return impartial_wrapper
 
 
+class NoUpdateTk(tk.Tk):
+    def update(self):
+        assert False, "calls to update have become problematic, so we're blowing up instead of deadlocking"
+
+    def update_idletasks(self):
+        assert False, "calls to update have become problematic, so we're blowing up instead of deadlocking"
+
+
 class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
         self._parking_lot = trio.lowlevel.ParkingLot()
         self.draw_idle = self._parking_lot.unpark_all
         super().__init__(figure, master=master, resize_callback=resize_callback)
-        # self._idle_draw_tkname = self._tkcanvas.register(self._idle_draw)
 
     def draw_idle(self):
         assert False, "this should be overridden in __init__"
@@ -83,40 +91,13 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
                 await trio.testing.wait_all_tasks_blocked()
             self.draw()
 
-    # async def draw_async(self):
-    #     if not self._idle:
-    #         return
-    #     self._idle = False
-    #     try:
-    #         await trio.testing.wait_all_tasks_blocked()
-    #         self.draw()
-    #     finally:
-    #         self._idle = True
-
-    # def _idle_draw(self):
-    #     try:
-    #         self.draw()
-    #     finally:
-    #         self._idle = True
-    #
-    # def draw_idle(self):
-    #     # docstring inherited
-    #     if not self._idle:
-    #         return
-    #
-    #     self._idle = False
-    #
-    #     self._idle_callback = self._tkcanvas.tk.call('after', 'idle', self._idle_draw_tkname)
-
     def draw(self):
         super().draw()
         _backend_tk.blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
-        # self._master.update_idletasks()
 
     def blit(self, bbox=None):
         _backend_tk.blit(
             self._tkphoto, self.renderer._renderer, (0, 1, 2, 3), bbox=bbox)
-        # self._master.update_idletasks()
 
     def resize(self, event):
         width, height = event.width, event.height
@@ -135,14 +116,6 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         self._tkcanvas.create_image(
             int(width / 2), int(height / 2), image=self._tkphoto)
         self.resize_event()
-        # self.draw() # resize event calls self.draw_idle()...
-
-        # a resizing will in general move the pointer position
-        # relative to the canvas, so process it as a motion notify
-        # event.  An intended side effect of this call is to allow
-        # window raises (which trigger a resize) to get the cursor
-        # position to the mpl event framework so key presses which are
-        # over the axes will work w/o clicks or explicit motion
         self._update_pointer_position(event)
 
 
@@ -219,316 +192,293 @@ class TkHost:
         self.root.destroy()
 
 
-class MagicGUI:
-    def __init__(self, root: tk.Tk):
-        self.root = root
-        self.root.wm_title(self.__class__.__qualname__)
+async def open_task(root):
+    """Open a file using a dialog box, then create a window for data analysis
 
-    async def open_task(self):
-        """Open a file using a dialog box, then create a window for data analysis
+    """
+    # Choose file
+    filename = await trs(partial(filedialog.askopenfilename,
+                                 master=root,
+                                 filetypes=[('AFM Data', '*.h5 *.ARDF'),
+                                            ('AR HDF5', '*.h5'),
+                                            ('ARDF', '*.ARDF')]))
+    if not filename:
+        return  # Cancelled
+    filename = trio.Path(filename)
 
-        """
-        # Choose file
-        filename = await trs(partial(filedialog.askopenfilename,
-                                     master=self.root,
-                                     filetypes=[('AFM Data', '*.h5 *.ARDF'),
-                                                ('AR HDF5', '*.h5'),
-                                                ('ARDF', '*.ARDF')]))
-        if not filename:
+    # Convert file if necessary
+    if filename.suffix == '.ARDF':
+        with trio.CancelScope() as cscope:
+            pbar = PBar(root, cancel_callback=cscope.cancel)
+            filename = await async_tools.convert_ardf(filename, 'ARDFtoHDF5.exe', True, pbar)
+        if cscope.cancel_called:
             return  # Cancelled
-        filename = trio.Path(filename)
+        del pbar
 
-        # Convert file if necessary
-        if filename.suffix == '.ARDF':
-            with trio.CancelScope() as cscope:
-                pbar = PBar(self.root, cancel_callback=cscope.cancel)
-                filename = await async_tools.convert_ardf(filename, 'ARDFtoHDF5.exe', True, pbar)
-            if cscope.cancel_called:
-                return  # Cancelled
-            del pbar
+    # Build window
+    top = tk.Toplevel(root)
+    top.wm_title(filename.name)
 
-        # Build window
-        top = tk.Toplevel(self.root)
-        top.wm_title(filename.name)
+    fig = Figure(figsize=(7, 2.5))
+    img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.35]))
+    img_ax.set_anchor('W')
+    cax = None
+    fmt = ScalarFormatter()
+    fmt.set_powerlimits((-2, 2))
 
-        fig = Figure(figsize=(7, 2.5))
-        img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.35]))
-        img_ax.set_anchor('W')
-        cax = None
-        fmt = ScalarFormatter()
-        fmt.set_powerlimits((-2, 2))
+    canvas = AsyncFigureCanvasTkAgg(fig, top, resize_callback=impartial(fig.tight_layout))
+    navbar = NavigationToolbar2Tk(canvas, top)
 
-        canvas = AsyncFigureCanvasTkAgg(fig, top, resize_callback=impartial(fig.tight_layout))
-        navbar = NavigationToolbar2Tk(canvas, top)
+    options_frame = ttk.Frame(top)
+    image_name_labelframe = ttk.Labelframe(options_frame, text='Current image')
+    image_name_strvar = tk.StringVar(image_name_labelframe, value='Choose an image...')
+    image_name_menu = ttk.Combobox(image_name_labelframe, textvariable=image_name_strvar, width=12,
+                                   state='readonly')
+    image_name_menu.pack(side='left')
+    image_name_labelframe.pack(side='left')
 
-        options_frame = ttk.Frame(top)
-        image_name_labelframe = ttk.Labelframe(options_frame, text='Current image')
-        image_name_strvar = tk.StringVar(image_name_labelframe, value='Choose an image...')
-        image_name_menu = ttk.Combobox(image_name_labelframe, textvariable=image_name_strvar, width=12,
-                                       state='readonly')
-        image_name_menu.pack(side='left')
-        image_name_labelframe.pack(side='left')
+    disp_labelframe = ttk.Labelframe(options_frame, text='Display type')
+    disp_type_var = tk.IntVar(disp_labelframe, value=DISP_TYPE.zd.value)
+    disp_zd_button = ttk.Radiobutton(disp_labelframe, text='z/d', value=DISP_TYPE.zd.value, variable=disp_type_var)
+    disp_zd_button.pack(side='left')
+    disp_deltaf_button = ttk.Radiobutton(disp_labelframe, text='δ/f', value=DISP_TYPE.δf.value,
+                                         variable=disp_type_var)
+    disp_deltaf_button.pack(side='left')
+    disp_labelframe.pack(side='left')
 
-        disp_labelframe = ttk.Labelframe(options_frame, text='Display type')
-        disp_type_var = tk.IntVar(disp_labelframe, value=DISP_TYPE.zd.value)
-        disp_zd_button = ttk.Radiobutton(disp_labelframe, text='z/d', value=DISP_TYPE.zd.value, variable=disp_type_var)
-        disp_zd_button.pack(side='left')
-        disp_deltaf_button = ttk.Radiobutton(disp_labelframe, text='δ/f', value=DISP_TYPE.δf.value,
-                                             variable=disp_type_var)
-        disp_deltaf_button.pack(side='left')
-        disp_labelframe.pack(side='left')
+    fit_labelframe = ttk.Labelframe(options_frame, text='Fit type')
+    fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FIT_MODE.skip.value)
+    fit_skip_button = ttk.Radiobutton(fit_labelframe, text='Skip', value=magic_calculation.FIT_MODE.skip.value,
+                                      variable=fit_intvar)
+    fit_skip_button.pack(side='left')
+    fit_ext_button = ttk.Radiobutton(fit_labelframe, text='Extend', value=magic_calculation.FIT_MODE.extend.value,
+                                     variable=fit_intvar)
+    fit_ext_button.pack(side='left')
+    fit_ret_button = ttk.Radiobutton(fit_labelframe, text='retract', value=magic_calculation.FIT_MODE.retract.value,
+                                     variable=fit_intvar)
+    fit_ret_button.pack(side='left')
+    fit_labelframe.pack(side='left')
 
-        fit_labelframe = ttk.Labelframe(options_frame, text='Fit type')
-        fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FIT_MODE.skip.value)
-        fit_skip_button = ttk.Radiobutton(fit_labelframe, text='Skip', value=magic_calculation.FIT_MODE.skip.value,
-                                          variable=fit_intvar)
-        fit_skip_button.pack(side='left')
-        fit_ext_button = ttk.Radiobutton(fit_labelframe, text='Extend', value=magic_calculation.FIT_MODE.extend.value,
-                                         variable=fit_intvar)
-        fit_ext_button.pack(side='left')
-        fit_ret_button = ttk.Radiobutton(fit_labelframe, text='retract', value=magic_calculation.FIT_MODE.retract.value,
-                                         variable=fit_intvar)
-        fit_ret_button.pack(side='left')
-        fit_labelframe.pack(side='left')
+    navbar.grid(row=0, sticky='we')
+    top.grid_rowconfigure(0, weight=0)
+    top.grid_columnconfigure(0, weight=1)
+    canvas.get_tk_widget().grid(row=1, sticky='wens')
+    top.grid_rowconfigure(1, weight=1)
+    top.grid_columnconfigure(0, weight=1)
+    options_frame.grid(row=2, sticky='we')
+    top.grid_rowconfigure(2, weight=0)
+    top.grid_columnconfigure(0, weight=1)
 
-        navbar.grid(row=0, sticky='we')
-        top.grid_rowconfigure(0, weight=0)
-        top.grid_columnconfigure(0, weight=1)
-        canvas.get_tk_widget().grid(row=1, sticky='wens')
-        top.grid_rowconfigure(1, weight=1)
-        top.grid_columnconfigure(0, weight=1)
-        options_frame.grid(row=2, sticky='we')
-        top.grid_rowconfigure(2, weight=0)
-        top.grid_columnconfigure(0, weight=1)
+    async with async_tools.AsyncARH5File(filename) as opened_arh5:
+        k = float(opened_arh5.notes['SpringConstant'])
 
-        async with async_tools.AsyncARH5File(filename) as opened_arh5:
-            k = float(opened_arh5.notes['SpringConstant'])
+        async def change_image_callback():
+            image = await opened_arh5.get_image(image_name_strvar.get())
 
-            async def change_image_callback():
-                image = await opened_arh5.get_image(image_name_strvar.get())
+            nonlocal cax
+            if cax is not None:
+                cax.clear()
+            img_ax.clear()
+            axesimage = img_ax.imshow(image, picker=True)
+            colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
+            cax = colorbar.ax
 
-                nonlocal cax
-                if cax is not None:
-                    cax.clear()
-                img_ax.clear()
-                axesimage = img_ax.imshow(image, picker=True)
-                colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
-                cax = colorbar.ax
+            fig.tight_layout()
+            fig.canvas.draw_idle()
 
-                fig.tight_layout()
-                fig.canvas.draw_idle()
+        def plot_pick_cancel():
+            pass
 
-            def plot_pick_cancel():
-                pass
+        clear_event = trio.Event()
+        clear_lock = trio.Lock()
 
-            clear_event = trio.Event()
-            clear_lock = trio.Lock()
+        async def plot_pick_callback(event):
+            mouseevent = getattr(event, 'mouseevent', event)
+            if mouseevent.inaxes is not img_ax:
+                return
+            if event.name == 'pick_event' and mouseevent.button != 1:
+                return  # have to click left mouse button to see curve
+            if event.name == 'motion_notify_event' and not event.guiEvent.state & TKSTATE.CONTROL:
+                return  # Have to hold down ctrl to see curves on mouse move
+            x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
+            fit_mode = fit_intvar.get()
+            disp_type = disp_type_var.get()
 
-            async def plot_pick_callback(event):
-                mouseevent = getattr(event, 'mouseevent', event)
-                if mouseevent.inaxes is not img_ax:
-                    return
-                if event.name == 'pick_event' and mouseevent.button != 1:
-                    return  # have to click left mouse button to see curve
-                if event.name == 'motion_notify_event' and not event.guiEvent.state & TKSTATE.CONTROL:
-                    return  # Have to hold down ctrl to see curves on mouse move
-                x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
-                fit_mode = fit_intvar.get()
-                disp_type = disp_type_var.get()
+            nonlocal plot_pick_cancel
+            plot_pick_cancel()
+            with trio.CancelScope() as cancel_scope:
+                plot_pick_cancel = cancel_scope.cancel
 
-                nonlocal plot_pick_cancel
-                plot_pick_cancel()
-                with trio.CancelScope() as cancel_scope:
-                    plot_pick_cancel = cancel_scope.cancel
-
-                    # Do a few long-running jobs, likely to be canceled
-                    z, d, s = await opened_arh5.get_force_curve(y, x)
-                    # Transform data to model units
-                    f = d * k
-                    delta = z - d
-                    if fit_mode:
-                        if fit_mode == magic_calculation.FIT_MODE.extend:
-                            sl = slice(None, s)
-                        elif fit_mode == magic_calculation.FIT_MODE.retract:
-                            sl = slice(s, None)
-                        else:
-                            raise ValueError('Unknown fit_mode: ', fit_mode)
-
-                        beta, beta_err, calc_fun = await trs(magic_calculation.fitfun, delta[sl], f[sl], k, 20, 0,
-                                                             fit_mode,
-                                                             async_tools.make_cancel_poller())
-                        f_fit = calc_fun(delta[sl], *beta)
-                        d_fit = f_fit / k
-
-                if not cancel_scope.cancelled_caught:
-                    nonlocal clear_event
-                    # clear previous artists
-                    if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
-                        async with clear_lock:
-                            clear_event.set()
-                            clear_event = trio.Event()
-                            # wait for artist removals, then relim
-                            with trio.fail_after(1):  # assert nothing is chewing up the event loop
-                                await trio.testing.wait_all_tasks_blocked()
-                            plot_ax.relim()
-                            plot_ax.set_prop_cycle(None)
-                            plot_ax.set_autoscale_on(True)
-
-                    # No awaits after this point until awaiting the clear event!!
-                    artists = []
-                    if disp_type == DISP_TYPE.zd:
-                        artists.extend(plot_ax.plot(z[:s], d[:s]))
-                        artists.extend(plot_ax.plot(z[s:], d[s:]))
-                        if fit_mode:
-                            artists.extend(plot_ax.plot(z[sl], d_fit, '--'))
-                    elif disp_type == DISP_TYPE.δf:
-                        artists.extend(plot_ax.plot(delta[:s], f[:s]))
-                        artists.extend(plot_ax.plot(delta[s:], f[s:]))
-                        if fit_mode:
-                            artists.extend(plot_ax.plot(delta[sl], f_fit, '--'))
+                # Do a few long-running jobs, likely to be canceled
+                z, d, s = await opened_arh5.get_force_curve(y, x)
+                # Transform data to model units
+                f = d * k
+                delta = z - d
+                if fit_mode:
+                    if fit_mode == magic_calculation.FIT_MODE.extend:
+                        sl = slice(None, s)
+                    elif fit_mode == magic_calculation.FIT_MODE.retract:
+                        sl = slice(s, None)
                     else:
-                        raise ValueError('Unknown DISP_TYPE: ', disp_type)
-                    artists.extend(img_ax.plot(x, y,
-                                               marker='X',
-                                               markersize=8,
-                                               linestyle='',
-                                               markeredgecolor='k',
-                                               markerfacecolor=artists[0].get_color()))
-                    fig.canvas.draw_idle()
+                        raise ValueError('Unknown fit_mode: ', fit_mode)
 
-                    # effectively waiting for a non-shift event in any new task
-                    await clear_event.wait()
-                    for artist in artists:
-                        artist.remove()
+                    beta, beta_err, calc_fun = await trs(magic_calculation.fitfun, delta[sl], f[sl], k, 20, 0,
+                                                         fit_mode,
+                                                         async_tools.make_cancel_poller())
+                    f_fit = calc_fun(delta[sl], *beta)
+                    d_fit = f_fit / k
 
-            image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
+            if cancel_scope.cancelled_caught:
+                return
 
-            async with trio.open_nursery() as nursery:
-                top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-                fig.canvas.mpl_connect('motion_notify_event', partial(nursery.start_soon, plot_pick_callback))
-                fig.canvas.mpl_connect('pick_event', partial(nursery.start_soon, plot_pick_callback))
+            nonlocal clear_event
+            # clear previous artists
+            if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
+                async with clear_lock:
+                    clear_event.set()
+                    clear_event = trio.Event()
+                    # wait for artist removals, then relim
+                    with trio.fail_after(1):  # assert nothing is chewing up the event loop
+                        await trio.testing.wait_all_tasks_blocked()
+                    plot_ax.relim()
+                    plot_ax.set_prop_cycle(None)
+                    plot_ax.set_autoscale_on(True)
 
-                await nursery.start(fig.canvas.idle_draw_task)
-                image_name_strvar.trace_add('write', impartial(partial(nursery.start_soon, change_image_callback)))
-                # StringVar.set() won't be effective to plot unless it happens after the trace add AND idle_draw_task
-                for name in ('MapHeight', 'ZSensorTrace'):
-                    if name in opened_arh5.image_names:
-                        image_name_strvar.set(name)
-                        break
+            # No awaits after this point until awaiting the clear event!!
+            artists = []
+            if disp_type == DISP_TYPE.zd:
+                artists.extend(plot_ax.plot(z[:s], d[:s]))
+                artists.extend(plot_ax.plot(z[s:], d[s:]))
+                if fit_mode:
+                    artists.extend(plot_ax.plot(z[sl], d_fit, '--'))
+            elif disp_type == DISP_TYPE.δf:
+                artists.extend(plot_ax.plot(delta[:s], f[:s]))
+                artists.extend(plot_ax.plot(delta[s:], f[s:]))
+                if fit_mode:
+                    artists.extend(plot_ax.plot(delta[sl], f_fit, '--'))
+            else:
+                raise ValueError('Unknown DISP_TYPE: ', disp_type)
+            artists.extend(img_ax.plot(x, y,
+                                       marker='X',
+                                       markersize=8,
+                                       linestyle='',
+                                       markeredgecolor='k',
+                                       markerfacecolor=artists[0].get_color()))
+            fig.canvas.draw_idle()
 
-                await trio.sleep_forever()
-        top.withdraw()  # weird navbar hiccup on close
-        top.destroy()
+            # effectively waiting for a non-shift event in any new task
+            await clear_event.wait()
+            for artist in artists:
+                artist.remove()
 
-    async def about_task(self):
-        """Display and control the About menu
+        image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
 
-        ☒ Make new Toplevel window
-        ☒ Show copyright and version info and maybe something else
-        ☒ display cute progress bar spinners to diagnose event loops
-
-        """
-        top = tk.Toplevel(self.root)
-        top.wm_title(f'About {self.__class__.__qualname__}')
-        shortlicense = """Copyright (C) 2020  Richard J. Sheridan
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""
-        message = tk.Message(top, text=shortlicense)
-        message.pack()
-        opts = dict(mode='indeterminate', maximum=80, length=300)
-        timely_trio_pbar = ttk.Progressbar(top, **opts)
-        timely_trio_pbar.pack()
-        tk_pbar = ttk.Progressbar(top, **opts)
-        tk_pbar.pack()
-        trio_pbar = ttk.Progressbar(top, **opts)
-        trio_pbar.pack()
-
-        interval = 10
-
-        async def pbar_runner():
-            while True:
-                trio_pbar.step()
-                await trio.sleep(interval / 1000)
-
-        async def pbar_runner_timely():
-            t = trio.current_time()
-            while True:
-                t = t + interval / 1000
-                timely_trio_pbar.step()
-                await trio.sleep_until(t)
-
-        # run using tcl event loop
-        tk_pbar.start(interval)
-        # run using trio
         async with trio.open_nursery() as nursery:
             top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-            nursery.start_soon(pbar_runner)
-            nursery.start_soon(pbar_runner_timely)
-        top.destroy()
+            fig.canvas.mpl_connect('motion_notify_event', partial(nursery.start_soon, plot_pick_callback))
+            fig.canvas.mpl_connect('pick_event', partial(nursery.start_soon, plot_pick_callback))
 
-    async def main(self):
-        nursery: trio.Nursery
-        async with trio.open_nursery() as nursery:
-            # calls root.destroy by default
-            self.root.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+            await nursery.start(fig.canvas.idle_draw_task)
+            image_name_strvar.trace_add('write', impartial(partial(nursery.start_soon, change_image_callback)))
+            # StringVar.set() won't be effective to plot unless it happens after the trace add AND idle_draw_task
+            for name in ('MapHeight', 'ZSensorTrace'):
+                if name in opened_arh5.image_names:
+                    image_name_strvar.set(name)
+                    break
 
-            # Build menus
-            menu_frame = tk.Menu(self.root, relief='groove', tearoff=False)
-            self.root.config(menu=menu_frame)
-
-            file_menu = tk.Menu(menu_frame, tearoff=False)
-            file_menu.add_command(label='Open...', accelerator='Ctrl+O', underline=0,
-                                  command=partial(nursery.start_soon, self.open_task), )
-            file_menu.bind('<KeyRelease-o>',
-                           func=partial(nursery.start_soon, self.open_task))
-            self.root.bind_all('<Control-KeyPress-o>',
-                               func=impartial(partial(nursery.start_soon, self.open_task)))
-            file_menu.add_command(label='Quit', accelerator='Ctrl+Q', underline=0,
-                                  command=nursery.cancel_scope.cancel, )
-            file_menu.bind('<KeyRelease-q>',
-                           func=nursery.cancel_scope.cancel)
-            self.root.bind_all('<Control-KeyPress-q>',
-                               func=impartial(nursery.cancel_scope.cancel))
-            menu_frame.add_cascade(label='File', menu=file_menu, underline=0)
-
-            help_menu = tk.Menu(menu_frame, tearoff=False)
-            help_menu.add_command(label='About...', accelerator=None, underline=0,
-                                  command=partial(nursery.start_soon, self.about_task), )
-            help_menu.bind('<KeyRelease-a>',
-                           func=partial(nursery.start_soon, self.about_task))
-            self.root.bind_all('<Control-KeyPress-F1>',
-                               func=impartial(partial(nursery.start_soon, self.about_task)))
-            menu_frame.add_cascade(label='Help', menu=help_menu, underline=0)
-
-            await trio.sleep_forever()  # needed if nursery never starts a long running child
+            await trio.sleep_forever()
+    top.withdraw()  # weird navbar hiccup on close
+    top.destroy()
 
 
-class NoUpdateTk(tk.Tk):
-    def update(self):
-        assert False, "calls to update have become problematic, so we're blowing up instead of deadlocking"
+async def about_task(root):
+    """Display and control the About menu
 
-    def update_idletasks(self):
-        assert False, "calls to update have become problematic, so we're blowing up instead of deadlocking"
+    ☒ Make new Toplevel window
+    ☒ Show copyright and version info and maybe something else
+    ☒ display cute progress bar spinners to diagnose event loops
+
+    """
+    top = tk.Toplevel(root)
+    app_name = __doc__.split('\n', 1)[0]
+    top.wm_title(f'About {app_name}')
+    message = tk.Message(top, text=__short_license__)
+    message.pack()
+    opts = dict(mode='indeterminate', maximum=80, length=300)
+    timely_trio_pbar = ttk.Progressbar(top, **opts)
+    timely_trio_pbar.pack()
+    tk_pbar = ttk.Progressbar(top, **opts)
+    tk_pbar.pack()
+    trio_pbar = ttk.Progressbar(top, **opts)
+    trio_pbar.pack()
+
+    interval = 10
+
+    async def pbar_runner():
+        while True:
+            trio_pbar.step()
+            await trio.sleep(interval / 1000)
+
+    async def pbar_runner_timely():
+        t = trio.current_time()
+        while True:
+            t = t + interval / 1000
+            timely_trio_pbar.step()
+            await trio.sleep_until(t)
+
+    # run using tcl event loop
+    tk_pbar.start(interval)
+    # run using trio
+    async with trio.open_nursery() as nursery:
+        top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+        nursery.start_soon(pbar_runner)
+        nursery.start_soon(pbar_runner_timely)
+    top.destroy()
+
+
+async def amain(root):
+    nursery: trio.Nursery
+    async with trio.open_nursery() as nursery:
+        # calls root.destroy by default
+        root.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+
+        # Build menus
+        menu_frame = tk.Menu(root, relief='groove', tearoff=False)
+        root.config(menu=menu_frame)
+
+        file_menu = tk.Menu(menu_frame, tearoff=False)
+        file_menu.add_command(label='Open...', accelerator='Ctrl+O', underline=0,
+                              command=partial(nursery.start_soon, open_task, root))
+        file_menu.bind('<KeyRelease-o>',
+                       func=partial(nursery.start_soon, open_task, root))
+        root.bind_all('<Control-KeyPress-o>',
+                      func=impartial(partial(nursery.start_soon, open_task, root)))
+        file_menu.add_command(label='Quit', accelerator='Ctrl+Q', underline=0,
+                              command=nursery.cancel_scope.cancel)
+        file_menu.bind('<KeyRelease-q>',
+                       func=nursery.cancel_scope.cancel)
+        root.bind_all('<Control-KeyPress-q>',
+                      func=impartial(nursery.cancel_scope.cancel))
+        menu_frame.add_cascade(label='File', menu=file_menu, underline=0)
+
+        help_menu = tk.Menu(menu_frame, tearoff=False)
+        help_menu.add_command(label='About...', accelerator=None, underline=0,
+                              command=partial(nursery.start_soon, about_task, root))
+        help_menu.bind('<KeyRelease-a>',
+                       func=partial(nursery.start_soon, about_task, root))
+        root.bind_all('<Control-KeyPress-F1>',
+                      func=impartial(partial(nursery.start_soon, about_task, root)))
+        menu_frame.add_cascade(label='Help', menu=help_menu, underline=0)
+
+        await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 
 def main():
     root = NoUpdateTk()
     host = TkHost(root)
-    app = MagicGUI(root)
     trio.lowlevel.start_guest_run(
-        app.main,
+        amain,
+        root,
         run_sync_soon_threadsafe=host.run_sync_soon_threadsafe,
         done_callback=host.done_callback,
     )
