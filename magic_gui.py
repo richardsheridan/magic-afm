@@ -52,6 +52,11 @@ class TKSTATE(IntEnum):
     MB3 = 0x0400
 
 
+class DISP_TYPE(IntEnum):
+    zd = 0
+    δf = 1
+
+
 def impartial(fn):
     @wraps(fn)
     def impartial_wrapper(*a, **kw):
@@ -256,12 +261,35 @@ class MagicGUI:
         canvas = AsyncFigureCanvasTkAgg(fig, top, resize_callback=impartial(fig.tight_layout))
         navbar = NavigationToolbar2Tk(canvas, top)
 
-        options_frame = tk.Frame(top)
-        image_name_label = tk.Label(options_frame, text='Current image:')
-        image_name_label.pack(side='left')
-        image_name_strvar = tk.StringVar(options_frame, value='Choose an image...')
-        image_name_menu = ttk.Combobox(options_frame, textvariable=image_name_strvar, width=12, state='readonly')
+        options_frame = ttk.Frame(top)
+        image_name_labelframe = ttk.Labelframe(options_frame, text='Current image')
+        image_name_strvar = tk.StringVar(image_name_labelframe, value='Choose an image...')
+        image_name_menu = ttk.Combobox(image_name_labelframe, textvariable=image_name_strvar, width=12,
+                                       state='readonly')
         image_name_menu.pack(side='left')
+        image_name_labelframe.pack(side='left')
+
+        disp_labelframe = ttk.Labelframe(options_frame, text='Display type')
+        disp_type_var = tk.IntVar(disp_labelframe, value=DISP_TYPE.zd.value)
+        disp_zd_button = ttk.Radiobutton(disp_labelframe, text='z/d', value=DISP_TYPE.zd.value, variable=disp_type_var)
+        disp_zd_button.pack(side='left')
+        disp_deltaf_button = ttk.Radiobutton(disp_labelframe, text='δ/f', value=DISP_TYPE.δf.value,
+                                             variable=disp_type_var)
+        disp_deltaf_button.pack(side='left')
+        disp_labelframe.pack(side='left')
+
+        fit_labelframe = ttk.Labelframe(options_frame, text='Fit type')
+        fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FIT_MODE.skip.value)
+        fit_skip_button = ttk.Radiobutton(fit_labelframe, text='Skip', value=magic_calculation.FIT_MODE.skip.value,
+                                          variable=fit_intvar)
+        fit_skip_button.pack(side='left')
+        fit_ext_button = ttk.Radiobutton(fit_labelframe, text='Extend', value=magic_calculation.FIT_MODE.extend.value,
+                                         variable=fit_intvar)
+        fit_ext_button.pack(side='left')
+        fit_ret_button = ttk.Radiobutton(fit_labelframe, text='retract', value=magic_calculation.FIT_MODE.retract.value,
+                                         variable=fit_intvar)
+        fit_ret_button.pack(side='left')
+        fit_labelframe.pack(side='left')
 
         navbar.grid(row=0, sticky='we')
         top.grid_rowconfigure(0, weight=0)
@@ -304,19 +332,35 @@ class MagicGUI:
                 if event.name == 'motion_notify_event' and not event.guiEvent.state & TKSTATE.CONTROL:
                     return  # Have to hold down ctrl to see curves on mouse move
                 x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
+                fit_mode = fit_intvar.get()
+                disp_type = disp_type_var.get()
 
                 nonlocal plot_pick_cancel
                 plot_pick_cancel()
                 with trio.CancelScope() as cancel_scope:
                     plot_pick_cancel = cancel_scope.cancel
+
+                    # Do a few long-running jobs, likely to be canceled
                     z, d, s = await opened_arh5.get_force_curve(y, x)
                     # Transform data to model units
-                    f = d[:s] * k
-                    delta = z[:s] - d[:s]
-                    cancel_poller = async_tools.make_cancel_poller()
-                    beta, beta_err, calc_fun = await trs(magic_calculation.fitfun, delta, f, k, 20, 0, cancel_poller)
-                    f_fit = calc_fun(delta, *beta)
-                    d_fit = f / k
+                    f = d * k
+                    delta = z - d
+                    if fit_mode:
+                        if fit_mode == magic_calculation.FIT_MODE.extend:
+                            sl = slice(None, s)
+                        elif fit_mode == magic_calculation.FIT_MODE.retract:
+                            sl = slice(s, None)
+                        else:
+                            raise ValueError('Unknown fit_mode: ', fit_mode)
+
+                        beta, beta_err, calc_fun = await trs(magic_calculation.fitfun, delta[sl], f[sl], k, 20, 0,
+                                                             fit_mode,
+                                                             async_tools.make_cancel_poller())
+                        f_fit = calc_fun(delta[sl], *beta)
+                        d_fit = f_fit / k
+
+                if not cancel_scope.cancelled_caught:
+                    # clear previous artists
                     if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
                         plot_pick_lot.unpark_all()
                         # let them unpark
@@ -324,25 +368,35 @@ class MagicGUI:
                             await trio.testing.wait_all_tasks_blocked()
                         plot_ax.set_prop_cycle(None)
                         plot_ax.relim()
+                        plot_ax.set_autoscale_on(True)
+
                     artists = []
-                    # artists.extend(plot_ax.plot(z[:s], d[:s]))
-                    # artists.extend(plot_ax.plot(z[s:], d[s:]))
-                    artists.extend(plot_ax.plot(delta, f))
-                    artists.extend(plot_ax.plot(delta, f_fit))
+                    if disp_type == DISP_TYPE.zd:
+                        artists.extend(plot_ax.plot(z[:s], d[:s]))
+                        artists.extend(plot_ax.plot(z[s:], d[s:]))
+                        if fit_mode:
+                            artists.extend(plot_ax.plot(z[sl], d_fit, '--'))
+                    elif disp_type == DISP_TYPE.δf:
+                        artists.extend(plot_ax.plot(delta[:s], f[:s]))
+                        artists.extend(plot_ax.plot(delta[s:], f[s:]))
+                        if fit_mode:
+                            artists.extend(plot_ax.plot(delta[sl], f_fit, '--'))
+                    else:
+                        raise ValueError('Unknown DISP_TYPE: ', disp_type)
                     artists.extend(img_ax.plot(x, y,
                                                marker='X',
                                                markersize=8,
                                                linestyle='',
-                                               color=artists[0].get_color()))
+                                               markeredgecolor='k',
+                                               markerfacecolor=artists[0].get_color()))
                     fig.canvas.draw_idle()
 
-                if not cancel_scope.cancelled_caught:
+                    # effectively waiting for a non-shift event in any new task
                     await plot_pick_lot.park()
                     for artist in artists:
                         artist.remove()
 
-            names = opened_arh5.image_names
-            image_name_menu.configure(values=names, width=max(map(len, names)))
+            image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
 
             async with trio.open_nursery() as nursery:
                 top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
@@ -353,7 +407,7 @@ class MagicGUI:
                 image_name_strvar.trace_add('write', impartial(partial(nursery.start_soon, change_image_callback)))
                 # StringVar.set() won't be effective to plot unless it happens after the trace add AND idle_draw_task
                 for name in ('MapHeight', 'ZSensorTrace'):
-                    if name in names:
+                    if name in opened_arh5.image_names:
                         image_name_strvar.set(name)
                         break
 

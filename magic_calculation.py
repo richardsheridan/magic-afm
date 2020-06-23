@@ -16,6 +16,7 @@ A Docstring
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+from enum import IntEnum
 
 import numpy as np
 from scipy.optimize import curve_fit, root_scalar
@@ -457,8 +458,14 @@ def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale, ):
     return a
 
 
+class FIT_MODE(IntEnum):
+    skip = 0
+    extend = 1
+    retract = 2
+
+
 @np.errstate(divide='ignore', invalid='ignore', over='ignore')
-def fitfun(delta, f, k, radius, tau, _poll_for_cancel=lambda: None):
+def fitfun(delta, f, k, radius, tau, fit_mode, _poll_for_cancel=lambda: None):
     # Very course estimate of force curve parameters for initial guess
     imin = np.argmin(f)  # TODO: better way to choose this for low adhesion
     fmin = f[imin]
@@ -473,9 +480,17 @@ def fitfun(delta, f, k, radius, tau, _poll_for_cancel=lambda: None):
         K_guess = 1
     p0 = [K_guess, fc_guess, deltamin, fzero, 1, ]
 
+    assert fit_mode
+    if fit_mode == FIT_MODE.extend:
+        red_curve = red_extend
+    elif fit_mode == FIT_MODE.retract:
+        red_curve = red_retract
+    else:
+        raise ValueError('Unknown fit_mode: ', fit_mode)
+
     def partial_force_curve(delta, K, fc, delta_shift, force_shift, lj_delta_scale, ):
         _poll_for_cancel()
-        return force_curve(red_retract, delta, k, radius, K, fc, tau,
+        return force_curve(red_curve, delta, k, radius, K, fc, tau,
                            delta_shift, force_shift, lj_delta_scale, )
 
     try:
