@@ -24,14 +24,14 @@ import h5py
 import numpy as np
 import trio
 
-trs = partial(trio.to_thread.run_sync, cancellable=True)
+trs = partial(trio.to_thread.run_sync, cancellable=True, limiter=trio.CapacityLimiter(7))
 
 
 def make_cancel_poller():
     """Uses internal undocumented bits so probably super fragile"""
     _cancel_status = trio.lowlevel.current_task()._cancel_status
 
-    def poll_for_cancel():
+    def poll_for_cancel(*args, **kwargs):
         if _cancel_status.effectively_cancelled:
             raise trio.Cancelled._create()
 
@@ -130,7 +130,7 @@ class ForceMapWorker:
         curve = self.force_curves[f'{r}:{c}']  # XXX Read h5data
         s = self.extlens[r, c]
 
-        return self._shared_get_part(curve, s)
+        return (*self._shared_get_part(curve, s), self.minext)
 
     def get_all_curves(self, _poll_for_cancel=(lambda: None)):
         im_r, im_c, num_segments = self.segments.shape
@@ -148,7 +148,7 @@ class ForceMapWorker:
             s = self.extlens[r, c]
 
             x[r, c, :, :] = self._shared_get_part(curve, s)
-        return x * NANOMETER_UNIT_CONVERSION
+        return x * NANOMETER_UNIT_CONVERSION, self.minext
 
 
 class FFMSingleWorker:
@@ -159,10 +159,10 @@ class FFMSingleWorker:
     def get_force_curve(self, r, c):
         z = self.drive[r, c]
         d = self.defl[r, c]
-        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
+        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION, len(z) // 2
 
     def get_all_curves(self, _poll_for_cancel=None):
-        return np.stack((self.drive, self.defl), axis=-2) * NANOMETER_UNIT_CONVERSION
+        return np.stack((self.drive, self.defl), axis=-2) * NANOMETER_UNIT_CONVERSION, self.drive.shape[-1] // 2
 
 
 class FFMTraceRetraceWorker:
@@ -171,31 +171,27 @@ class FFMTraceRetraceWorker:
         self.defl_trace = defl_trace
         self.drive_retrace = drive_retrace
         self.defl_retrace = defl_retrace
-        self.trace = True
 
-    def get_force_curve(self, r, c):
-        if self.trace:
+    def get_force_curve(self, r, c, trace=True):
+        if trace:
             z = self.drive_trace[r, c]
             d = self.defl_trace[r, c]
         else:
             z = self.drive_retrace[r, c]
             d = self.defl_retrace[r, c]
-        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
+        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION, len(z) // 2
 
     def get_all_curves(self, _poll_for_cancel=(lambda: None)):
         drive = np.concatenate((self.drive_trace, self.drive_retrace))
         _poll_for_cancel()
         defl = np.concatenate((self.defl_trace, self.defl_retrace))
         _poll_for_cancel()
-        return np.stack((drive, defl,), axis=-2) * NANOMETER_UNIT_CONVERSION
+        return np.stack((drive, defl,), axis=-2) * NANOMETER_UNIT_CONVERSION, self.drive_trace.shape[-1] // 2
 
 
 class AsyncARH5File:
     def __init__(self, h5file_path):
         self.h5file_path = h5file_path
-        self._h5data = None
-        self.notes = None
-        self._worker = None
 
     async def ainitialize(self):
         h5data = await trs(h5py.File, self.h5file_path, "r")

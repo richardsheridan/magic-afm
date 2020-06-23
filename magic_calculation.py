@@ -457,19 +457,8 @@ def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale, ):
     return a
 
 
-@np.errstate(divide='ignore', invalid='ignore')
-def fitfun(z, d, k, radius, tau, sl=None):
-    # Transform data to model units
-    f = d * k
-    delta = z - d
-
-    # select retract or extend data to fit
-    if sl is None:
-        sl = slice(len(delta) // 2, None)  # retract
-    #         sl = slice(len(delta)//2)      # extend
-    delta = delta[sl]
-    f = f[sl]
-
+@np.errstate(divide='ignore', invalid='ignore', over='ignore')
+def fitfun(delta, f, k, radius, tau, _poll_for_cancel=lambda: None):
     # Very course estimate of force curve parameters for initial guess
     imin = np.argmin(f)  # TODO: better way to choose this for low adhesion
     fmin = f[imin]
@@ -485,6 +474,7 @@ def fitfun(z, d, k, radius, tau, sl=None):
     p0 = [K_guess, fc_guess, deltamin, fzero, 1, ]
 
     def partial_force_curve(delta, K, fc, delta_shift, force_shift, lj_delta_scale, ):
+        _poll_for_cancel()
         return force_curve(red_retract, delta, k, radius, K, fc, tau,
                            delta_shift, force_shift, lj_delta_scale, )
 
@@ -506,7 +496,7 @@ def fitfun(z, d, k, radius, tau, sl=None):
         beta = np.full_like(p0, np.nan)
         cov = np.diag(beta)
 
-    return np.concatenate((beta, np.sqrt(np.diag(cov))))
+    return beta, np.sqrt(np.diag(cov)), partial_force_curve
 
 
 def calc_def_ind_ztru(d, beta, radius, k, tau):

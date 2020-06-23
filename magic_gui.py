@@ -35,6 +35,7 @@ from matplotlib.ticker import ScalarFormatter
 from outcome import Error
 
 import async_tools
+import magic_calculation
 from async_tools import trs
 
 
@@ -273,6 +274,8 @@ class MagicGUI:
         top.grid_columnconfigure(0, weight=1)
 
         async with async_tools.AsyncARH5File(filename) as opened_arh5:
+            k = float(opened_arh5.notes['SpringConstant'])
+
             async def change_image_callback():
                 image = await opened_arh5.get_image(image_name_strvar.get())
 
@@ -306,7 +309,14 @@ class MagicGUI:
                 plot_pick_cancel()
                 with trio.CancelScope() as cancel_scope:
                     plot_pick_cancel = cancel_scope.cancel
-                    z, d = await opened_arh5.get_force_curve(y, x)
+                    z, d, s = await opened_arh5.get_force_curve(y, x)
+                    # Transform data to model units
+                    f = d[:s] * k
+                    delta = z[:s] - d[:s]
+                    cancel_poller = async_tools.make_cancel_poller()
+                    beta, beta_err, calc_fun = await trs(magic_calculation.fitfun, delta, f, k, 20, 0, cancel_poller)
+                    f_fit = calc_fun(delta, *beta)
+                    d_fit = f / k
                     if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
                         plot_pick_lot.unpark_all()
                         # let them unpark
@@ -314,14 +324,22 @@ class MagicGUI:
                             await trio.testing.wait_all_tasks_blocked()
                         plot_ax.set_prop_cycle(None)
                         plot_ax.relim()
-                    line, = plot_ax.plot(z, d)
-                    marker, = img_ax.plot(x, y, marker='X', linestyle='', color=line.get_color())
+                    artists = []
+                    # artists.extend(plot_ax.plot(z[:s], d[:s]))
+                    # artists.extend(plot_ax.plot(z[s:], d[s:]))
+                    artists.extend(plot_ax.plot(delta, f))
+                    artists.extend(plot_ax.plot(delta, f_fit))
+                    artists.extend(img_ax.plot(x, y,
+                                               marker='X',
+                                               markersize=8,
+                                               linestyle='',
+                                               color=artists[0].get_color()))
                     fig.canvas.draw_idle()
 
                 if not cancel_scope.cancelled_caught:
                     await plot_pick_lot.park()
-                    line.remove()
-                    marker.remove()
+                    for artist in artists:
+                        artist.remove()
 
             names = opened_arh5.image_names
             image_name_menu.configure(values=names, width=max(map(len, names)))
