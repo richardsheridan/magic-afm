@@ -73,7 +73,8 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         task_status.started()
         while True:
             await self._parking_lot.park()
-            await trio.testing.wait_all_tasks_blocked()
+            with trio.fail_after(1):  # assert nothing is chewing up the event loop
+                await trio.testing.wait_all_tasks_blocked()
             self.draw()
 
     # async def draw_async(self):
@@ -309,7 +310,7 @@ class MagicGUI:
                     if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
                         plot_pick_lot.unpark_all()
                         # let them unpark
-                        with trio.fail_after(.1):  # asserting nothing is chewing up the event loop
+                        with trio.fail_after(1):  # assert nothing is chewing up the event loop
                             await trio.testing.wait_all_tasks_blocked()
                         plot_ax.set_prop_cycle(None)
                         plot_ax.relim()
