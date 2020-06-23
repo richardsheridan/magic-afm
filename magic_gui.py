@@ -279,7 +279,6 @@ class MagicGUI:
                 if cax is not None:
                     cax.clear()
                 img_ax.clear()
-                plot_ax.clear()
                 axesimage = img_ax.imshow(image, picker=True)
                 colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
                 cax = colorbar.ax
@@ -287,23 +286,48 @@ class MagicGUI:
                 fig.tight_layout()
                 fig.canvas.draw_idle()
 
-            async def plot_pick_callback(pick_event):
-                if pick_event.mouseevent.inaxes is not img_ax:
+            def plot_pick_cancel():
+                pass
+
+            plot_pick_lot = trio.lowlevel.ParkingLot()
+
+            async def plot_pick_callback(event):
+                mouseevent = getattr(event, 'mouseevent', event)
+                if mouseevent.inaxes is not img_ax:
                     return
-                if pick_event.mouseevent.button != 1:
-                    return
-                c, r = int(round(pick_event.mouseevent.xdata)), int(round(pick_event.mouseevent.ydata))
-                z, d = await opened_arh5.get_force_curve(r, c)
-                if not pick_event.guiEvent.state & TKSTATE.SHIFT:
-                    plot_ax.clear()
-                plot_ax.plot(z, d)
-                fig.canvas.draw_idle()
+                if event.name == 'pick_event' and mouseevent.button != 1:
+                    return  # have to click left mouse button to see curve
+                if event.name == 'motion_notify_event' and not event.guiEvent.state & TKSTATE.CONTROL:
+                    return  # Have to hold down ctrl to see curves on mouse move
+                x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
+
+                nonlocal plot_pick_cancel
+                plot_pick_cancel()
+                with trio.CancelScope() as cancel_scope:
+                    plot_pick_cancel = cancel_scope.cancel
+                    z, d = await opened_arh5.get_force_curve(y, x)
+                    if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
+                        plot_pick_lot.unpark_all()
+                        # let them unpark
+                        with trio.fail_after(.1):  # asserting nothing is chewing up the event loop
+                            await trio.testing.wait_all_tasks_blocked()
+                        plot_ax.set_prop_cycle(None)
+                        plot_ax.relim()
+                    line, = plot_ax.plot(z, d)
+                    marker, = img_ax.plot(x, y, marker='X', linestyle='', color=line.get_color())
+                    fig.canvas.draw_idle()
+
+                if not cancel_scope.cancelled_caught:
+                    await plot_pick_lot.park()
+                    line.remove()
+                    marker.remove()
 
             names = opened_arh5.image_names
             image_name_menu.configure(values=names, width=max(map(len, names)))
 
             async with trio.open_nursery() as nursery:
                 top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+                fig.canvas.mpl_connect('motion_notify_event', partial(nursery.start_soon, plot_pick_callback))
                 fig.canvas.mpl_connect('pick_event', partial(nursery.start_soon, plot_pick_callback))
 
                 await nursery.start(fig.canvas.idle_draw_task)
