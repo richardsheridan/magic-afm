@@ -227,6 +227,7 @@ lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))  # de
 # prefactor= (powrat*(bigpow+1)/(lilpow+1))**(1/(bigpow-lilpow))
 # lj_limit_factor = 1
 
+@np.errstate(all='ignore')
 def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset=0):
     """Calculate a leonard-Jones force curve.
     
@@ -464,7 +465,7 @@ class FIT_MODE(IntEnum):
     retract = 2
 
 
-@np.errstate(divide='ignore', invalid='ignore', over='ignore')
+@np.errstate(all='ignore')
 def fitfun(delta, f, k, radius, tau, fit_mode, _poll_for_cancel=lambda: None):
     # Very course estimate of force curve parameters for initial guess
     imin = np.argmin(f)  # TODO: better way to choose this for low adhesion

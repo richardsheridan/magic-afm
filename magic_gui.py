@@ -321,7 +321,8 @@ class MagicGUI:
             def plot_pick_cancel():
                 pass
 
-            plot_pick_lot = trio.lowlevel.ParkingLot()
+            clear_event = trio.Event()
+            clear_lock = trio.Lock()
 
             async def plot_pick_callback(event):
                 mouseevent = getattr(event, 'mouseevent', event)
@@ -360,16 +361,20 @@ class MagicGUI:
                         d_fit = f_fit / k
 
                 if not cancel_scope.cancelled_caught:
+                    nonlocal clear_event
                     # clear previous artists
                     if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
-                        plot_pick_lot.unpark_all()
-                        # let them unpark
-                        with trio.fail_after(1):  # assert nothing is chewing up the event loop
-                            await trio.testing.wait_all_tasks_blocked()
-                        plot_ax.set_prop_cycle(None)
-                        plot_ax.relim()
-                        plot_ax.set_autoscale_on(True)
+                        async with clear_lock:
+                            clear_event.set()
+                            clear_event = trio.Event()
+                            # wait for artist removals, then relim
+                            with trio.fail_after(1):  # assert nothing is chewing up the event loop
+                                await trio.testing.wait_all_tasks_blocked()
+                            plot_ax.relim()
+                            plot_ax.set_prop_cycle(None)
+                            plot_ax.set_autoscale_on(True)
 
+                    # No awaits after this point until awaiting the clear event!!
                     artists = []
                     if disp_type == DISP_TYPE.zd:
                         artists.extend(plot_ax.plot(z[:s], d[:s]))
@@ -392,7 +397,7 @@ class MagicGUI:
                     fig.canvas.draw_idle()
 
                     # effectively waiting for a non-shift event in any new task
-                    await plot_pick_lot.park()
+                    await clear_event.wait()
                     for artist in artists:
                         artist.remove()
 
