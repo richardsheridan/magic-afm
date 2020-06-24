@@ -215,6 +215,11 @@ async def open_task(root):
             return  # Cancelled
         del pbar
 
+    # Actually open and parse key variables
+    opened_arh5 = async_tools.AsyncARH5File(filename)
+    await opened_arh5.ainitialize()
+    k = float(opened_arh5.notes['SpringConstant'])
+
     # Build window
     top = tk.Toplevel(root)
     top.wm_title(filename.name)
@@ -269,132 +274,131 @@ async def open_task(root):
     top.grid_rowconfigure(2, weight=0)
     top.grid_columnconfigure(0, weight=1)
 
-    async with async_tools.AsyncARH5File(filename) as opened_arh5:
-        k = float(opened_arh5.notes['SpringConstant'])
+    image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
 
-        async def change_image_callback():
-            image = await opened_arh5.get_image(image_name_strvar.get())
+    async def change_image_callback():
+        image = await opened_arh5.get_image(image_name_strvar.get())
 
-            nonlocal cax
-            if cax is not None:
-                cax.clear()
-            img_ax.clear()
-            axesimage = img_ax.imshow(image, picker=True)
-            colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
-            cax = colorbar.ax
+        nonlocal cax
+        if cax is not None:
+            cax.clear()
+        img_ax.clear()
+        axesimage = img_ax.imshow(image, picker=True)
+        colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
+        cax = colorbar.ax
 
-            fig.tight_layout()
+        fig.tight_layout()
+        fig.canvas.draw_idle()
+
+    plot_pick_cancel = lambda: None
+    clear_lot = trio.lowlevel.ParkingLot()
+    clear_lock = trio.Lock()
+
+    async def plot_pick_callback(event):
+        # Event Phase
+        # Unpack, filter event and get local copies of nonlocal state
+        with trio.testing.assert_no_checkpoints():
+            mouseevent = getattr(event, 'mouseevent', event)
+            if mouseevent.inaxes is not img_ax:
+                return
+            if event.name == 'pick_event' and mouseevent.button != 1:
+                return  # have to click left mouse button to see curve
+            if event.name == 'motion_notify_event' and not event.guiEvent.state & TKSTATE.CONTROL:
+                return  # Have to hold down ctrl to see curves on mouse move
+            x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
+            fit_mode = fit_intvar.get()
+            disp_type = disp_type_var.get()
+
+        # Calculation phase
+        # Do a few long-running jobs, likely to be canceled
+        nonlocal plot_pick_cancel
+        plot_pick_cancel()
+        with trio.CancelScope() as cancel_scope:
+            plot_pick_cancel = cancel_scope.cancel
+
+            z, d, s = await opened_arh5.get_force_curve(y, x)
+            # Transform data to model units
+            f = d * k
+            delta = z - d
+            if fit_mode:
+                if fit_mode == magic_calculation.FIT_MODE.extend:
+                    sl = slice(None, s)
+                elif fit_mode == magic_calculation.FIT_MODE.retract:
+                    sl = slice(s, None)
+                else:
+                    raise ValueError('Unknown fit_mode: ', fit_mode)
+
+                beta, beta_err, calc_fun = await trs(magic_calculation.fitfun, delta[sl], f[sl], k, 20, 0,
+                                                     fit_mode,
+                                                     async_tools.make_cancel_poller())
+                f_fit = calc_fun(delta[sl], *beta)
+                d_fit = f_fit / k
+
+        if cancel_scope.cancelled_caught:
+            return
+
+        # Clearing Phase
+        # Clear previous artists and reset plots (faster than .clear()?)
+        if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
+            async with clear_lock:
+                clear_lot.unpark_all()
+                # wait for artist removals, then relim
+                with trio.fail_after(1):  # assert nothing is chewing up the event loop
+                    await trio.testing.wait_all_tasks_blocked()
+                plot_ax.relim()
+                plot_ax.set_prop_cycle(None)
+                plot_ax.set_autoscale_on(True)
+
+        # Drawing Phase
+        # Based on local state choose plots and collect artists for deletion
+        with trio.testing.assert_no_checkpoints():
+            artists = []
+            if disp_type == DISP_TYPE.zd:
+                artists.extend(plot_ax.plot(z[:s], d[:s]))
+                artists.extend(plot_ax.plot(z[s:], d[s:]))
+                if fit_mode:
+                    artists.extend(plot_ax.plot(z[sl], d_fit, '--'))
+            elif disp_type == DISP_TYPE.δf:
+                artists.extend(plot_ax.plot(delta[:s], f[:s]))
+                artists.extend(plot_ax.plot(delta[s:], f[s:]))
+                if fit_mode:
+                    artists.extend(plot_ax.plot(delta[sl], f_fit, '--'))
+            else:
+                raise ValueError('Unknown DISP_TYPE: ', disp_type)
+            artists.extend(img_ax.plot(x, y,
+                                       marker='X',
+                                       markersize=8,
+                                       linestyle='',
+                                       markeredgecolor='k',
+                                       markerfacecolor=artists[0].get_color()))
             fig.canvas.draw_idle()
 
-        def plot_pick_cancel():
-            pass
+        # Waiting Phase
+        # effectively waiting for a non-shift event in any new task
+        await clear_lot.park()
+        for artist in artists:
+            artist.remove()
 
-        clear_lot = trio.lowlevel.ParkingLot()
-        clear_lock = trio.Lock()
+    async with trio.open_nursery() as nursery:
+        top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+        fig.canvas.mpl_connect('motion_notify_event', partial(nursery.start_soon, plot_pick_callback))
+        fig.canvas.mpl_connect('pick_event', partial(nursery.start_soon, plot_pick_callback))
 
-        async def plot_pick_callback(event):
-            # Event Phase
-            # Unpack, filter event and get local copies of nonlocal state
-            with trio.testing.assert_no_checkpoints():
-                mouseevent = getattr(event, 'mouseevent', event)
-                if mouseevent.inaxes is not img_ax:
-                    return
-                if event.name == 'pick_event' and mouseevent.button != 1:
-                    return  # have to click left mouse button to see curve
-                if event.name == 'motion_notify_event' and not event.guiEvent.state & TKSTATE.CONTROL:
-                    return  # Have to hold down ctrl to see curves on mouse move
-                x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
-                fit_mode = fit_intvar.get()
-                disp_type = disp_type_var.get()
+        await nursery.start(fig.canvas.idle_draw_task)
+        image_name_strvar.trace_add('write', impartial(partial(nursery.start_soon, change_image_callback)))
+        # StringVar.set() won't be effective to plot unless it happens after the trace add AND idle_draw_task
+        # accidentally, the plot will be drawn later due to resize, but let's not rely on that
+        for name in ('MapHeight', 'ZSensorTrace'):
+            if name in opened_arh5.image_names:
+                image_name_strvar.set(name)
+                break
 
-            # Calculation phase
-            # Do a few long-running jobs, likely to be canceled
-            nonlocal plot_pick_cancel
-            plot_pick_cancel()
-            with trio.CancelScope() as cancel_scope:
-                plot_pick_cancel = cancel_scope.cancel
+        await trio.sleep_forever()
 
-                z, d, s = await opened_arh5.get_force_curve(y, x)
-                # Transform data to model units
-                f = d * k
-                delta = z - d
-                if fit_mode:
-                    if fit_mode == magic_calculation.FIT_MODE.extend:
-                        sl = slice(None, s)
-                    elif fit_mode == magic_calculation.FIT_MODE.retract:
-                        sl = slice(s, None)
-                    else:
-                        raise ValueError('Unknown fit_mode: ', fit_mode)
-
-                    beta, beta_err, calc_fun = await trs(magic_calculation.fitfun, delta[sl], f[sl], k, 20, 0,
-                                                         fit_mode,
-                                                         async_tools.make_cancel_poller())
-                    f_fit = calc_fun(delta[sl], *beta)
-                    d_fit = f_fit / k
-
-            if cancel_scope.cancelled_caught:
-                return
-
-            # Clearing Phase
-            # Clear previous artists and reset plots (faster than .clear()?)
-            if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
-                async with clear_lock:
-                    clear_lot.unpark_all()
-                    # wait for artist removals, then relim
-                    with trio.fail_after(1):  # assert nothing is chewing up the event loop
-                        await trio.testing.wait_all_tasks_blocked()
-                    plot_ax.relim()
-                    plot_ax.set_prop_cycle(None)
-                    plot_ax.set_autoscale_on(True)
-
-            # Drawing Phase
-            # Based on local state choose plots and collect artists for deletion
-            with trio.testing.assert_no_checkpoints():
-                artists = []
-                if disp_type == DISP_TYPE.zd:
-                    artists.extend(plot_ax.plot(z[:s], d[:s]))
-                    artists.extend(plot_ax.plot(z[s:], d[s:]))
-                    if fit_mode:
-                        artists.extend(plot_ax.plot(z[sl], d_fit, '--'))
-                elif disp_type == DISP_TYPE.δf:
-                    artists.extend(plot_ax.plot(delta[:s], f[:s]))
-                    artists.extend(plot_ax.plot(delta[s:], f[s:]))
-                    if fit_mode:
-                        artists.extend(plot_ax.plot(delta[sl], f_fit, '--'))
-                else:
-                    raise ValueError('Unknown DISP_TYPE: ', disp_type)
-                artists.extend(img_ax.plot(x, y,
-                                           marker='X',
-                                           markersize=8,
-                                           linestyle='',
-                                           markeredgecolor='k',
-                                           markerfacecolor=artists[0].get_color()))
-                fig.canvas.draw_idle()
-
-            # Waiting Phase
-            # effectively waiting for a non-shift event in any new task
-            await clear_lot.park()
-            for artist in artists:
-                artist.remove()
-
-        image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
-
-        async with trio.open_nursery() as nursery:
-            top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-            fig.canvas.mpl_connect('motion_notify_event', partial(nursery.start_soon, plot_pick_callback))
-            fig.canvas.mpl_connect('pick_event', partial(nursery.start_soon, plot_pick_callback))
-
-            await nursery.start(fig.canvas.idle_draw_task)
-            image_name_strvar.trace_add('write', impartial(partial(nursery.start_soon, change_image_callback)))
-            # StringVar.set() won't be effective to plot unless it happens after the trace add AND idle_draw_task
-            for name in ('MapHeight', 'ZSensorTrace'):
-                if name in opened_arh5.image_names:
-                    image_name_strvar.set(name)
-                    break
-
-            await trio.sleep_forever()
+    # open_task close phase
     top.withdraw()  # weird navbar hiccup on close
     top.destroy()
+    await opened_arh5.aclose()
 
 
 async def about_task(root):
