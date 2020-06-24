@@ -66,19 +66,54 @@ def impartial(fn):
     return impartial_wrapper
 
 
-class NoUpdateTk(tk.Tk):
-    def update(self):
-        assert False, "calls to update have become problematic, so we're blowing up instead of deadlocking"
-
-    def update_idletasks(self):
-        assert False, "calls to update have become problematic, so we're blowing up instead of deadlocking"
-
-
 class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
         self._parking_lot = trio.lowlevel.ParkingLot()
         self.draw_idle = self._parking_lot.unpark_all
-        super().__init__(figure, master=master, resize_callback=resize_callback)
+        super(FigureCanvasTk, self).__init__(figure)
+        t1, t2, w, h = self.figure.bbox.bounds
+        w, h = int(w), int(h)
+        self._tkcanvas = tk.Canvas(
+            master=master, background="white",
+            width=w, height=h, borderwidth=0, highlightthickness=0)
+        self._tkphoto = tk.PhotoImage(
+            master=self._tkcanvas, width=w, height=h)
+        self._tkcanvas.create_image(w // 2, h // 2, image=self._tkphoto)
+        self._resize_callback = resize_callback
+        self._tkcanvas.bind("<Configure>", self.resize)
+        self._tkcanvas.bind("<Key>", self.key_press)
+        self._tkcanvas.bind("<Motion>", self.motion_notify_event)
+        self._tkcanvas.bind("<Enter>", self.enter_notify_event)
+        self._tkcanvas.bind("<Leave>", self.leave_notify_event)
+        self._tkcanvas.bind("<KeyRelease>", self.key_release)
+        for name in "<Button-1>", "<Button-2>", "<Button-3>":
+            self._tkcanvas.bind(name, self.button_press_event)
+        for name in "<Double-Button-1>", "<Double-Button-2>", "<Double-Button-3>":
+            self._tkcanvas.bind(name, self.button_dblclick_event)
+        for name in "<ButtonRelease-1>", "<ButtonRelease-2>", "<ButtonRelease-3>":
+            self._tkcanvas.bind(name, self.button_release_event)
+
+        # Mouse wheel on Linux generates button 4/5 events
+        for name in "<Button-4>", "<Button-5>":
+            self._tkcanvas.bind(name, self.scroll_event)
+        # Mouse wheel for windows goes to the window with the focus.
+        # Since the canvas won't usually have the focus, bind the
+        # event to the window containing the canvas instead.
+        # See http://wiki.tcl.tk/3893 (mousewheel) for details
+        root = self._tkcanvas.winfo_toplevel()
+        root.bind("<MouseWheel>", self.scroll_event_windows, "+")
+
+        # Can't get destroy events by binding to _tkcanvas. Therefore, bind
+        # to the window and filter.
+        def filter_destroy(evt):
+            if evt.widget is self._tkcanvas:
+                # self._master.update_idletasks()
+                self.close_event()
+
+        root.bind("<Destroy>", filter_destroy, "+")
+
+        self._master = master
+        self._tkcanvas.focus_set()
 
     def draw_idle(self):
         assert False, "this should be overridden in __init__"
@@ -504,7 +539,9 @@ async def main_task(root):
 
 
 def main():
-    root = NoUpdateTk()
+    root = tk.Tk()
+    # sabotage update command so that we crash instead of deadlocking
+    root.tk.call('rename', 'update', 'never_update')
     host = TkHost(root)
     trio.lowlevel.start_guest_run(
         main_task,
