@@ -289,27 +289,31 @@ async def open_task(root):
         def plot_pick_cancel():
             pass
 
-        clear_event = trio.Event()
+        clear_lot = trio.lowlevel.ParkingLot()
         clear_lock = trio.Lock()
 
         async def plot_pick_callback(event):
-            mouseevent = getattr(event, 'mouseevent', event)
-            if mouseevent.inaxes is not img_ax:
-                return
-            if event.name == 'pick_event' and mouseevent.button != 1:
-                return  # have to click left mouse button to see curve
-            if event.name == 'motion_notify_event' and not event.guiEvent.state & TKSTATE.CONTROL:
-                return  # Have to hold down ctrl to see curves on mouse move
-            x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
-            fit_mode = fit_intvar.get()
-            disp_type = disp_type_var.get()
+            # Event Phase
+            # Unpack, filter event and get local copies of nonlocal state
+            with trio.testing.assert_no_checkpoints():
+                mouseevent = getattr(event, 'mouseevent', event)
+                if mouseevent.inaxes is not img_ax:
+                    return
+                if event.name == 'pick_event' and mouseevent.button != 1:
+                    return  # have to click left mouse button to see curve
+                if event.name == 'motion_notify_event' and not event.guiEvent.state & TKSTATE.CONTROL:
+                    return  # Have to hold down ctrl to see curves on mouse move
+                x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
+                fit_mode = fit_intvar.get()
+                disp_type = disp_type_var.get()
 
+            # Calculation phase
+            # Do a few long-running jobs, likely to be canceled
             nonlocal plot_pick_cancel
             plot_pick_cancel()
             with trio.CancelScope() as cancel_scope:
                 plot_pick_cancel = cancel_scope.cancel
 
-                # Do a few long-running jobs, likely to be canceled
                 z, d, s = await opened_arh5.get_force_curve(y, x)
                 # Transform data to model units
                 f = d * k
@@ -331,12 +335,11 @@ async def open_task(root):
             if cancel_scope.cancelled_caught:
                 return
 
-            nonlocal clear_event
-            # clear previous artists
+            # Clearing Phase
+            # Clear previous artists and reset plots (faster than .clear()?)
             if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
                 async with clear_lock:
-                    clear_event.set()
-                    clear_event = trio.Event()
+                    clear_lot.unpark_all()
                     # wait for artist removals, then relim
                     with trio.fail_after(1):  # assert nothing is chewing up the event loop
                         await trio.testing.wait_all_tasks_blocked()
@@ -344,30 +347,33 @@ async def open_task(root):
                     plot_ax.set_prop_cycle(None)
                     plot_ax.set_autoscale_on(True)
 
-            # No awaits after this point until awaiting the clear event!!
-            artists = []
-            if disp_type == DISP_TYPE.zd:
-                artists.extend(plot_ax.plot(z[:s], d[:s]))
-                artists.extend(plot_ax.plot(z[s:], d[s:]))
-                if fit_mode:
-                    artists.extend(plot_ax.plot(z[sl], d_fit, '--'))
-            elif disp_type == DISP_TYPE.δf:
-                artists.extend(plot_ax.plot(delta[:s], f[:s]))
-                artists.extend(plot_ax.plot(delta[s:], f[s:]))
-                if fit_mode:
-                    artists.extend(plot_ax.plot(delta[sl], f_fit, '--'))
-            else:
-                raise ValueError('Unknown DISP_TYPE: ', disp_type)
-            artists.extend(img_ax.plot(x, y,
-                                       marker='X',
-                                       markersize=8,
-                                       linestyle='',
-                                       markeredgecolor='k',
-                                       markerfacecolor=artists[0].get_color()))
-            fig.canvas.draw_idle()
+            # Drawing Phase
+            # Based on local state choose plots and collect artists for deletion
+            with trio.testing.assert_no_checkpoints():
+                artists = []
+                if disp_type == DISP_TYPE.zd:
+                    artists.extend(plot_ax.plot(z[:s], d[:s]))
+                    artists.extend(plot_ax.plot(z[s:], d[s:]))
+                    if fit_mode:
+                        artists.extend(plot_ax.plot(z[sl], d_fit, '--'))
+                elif disp_type == DISP_TYPE.δf:
+                    artists.extend(plot_ax.plot(delta[:s], f[:s]))
+                    artists.extend(plot_ax.plot(delta[s:], f[s:]))
+                    if fit_mode:
+                        artists.extend(plot_ax.plot(delta[sl], f_fit, '--'))
+                else:
+                    raise ValueError('Unknown DISP_TYPE: ', disp_type)
+                artists.extend(img_ax.plot(x, y,
+                                           marker='X',
+                                           markersize=8,
+                                           linestyle='',
+                                           markeredgecolor='k',
+                                           markerfacecolor=artists[0].get_color()))
+                fig.canvas.draw_idle()
 
+            # Waiting Phase
             # effectively waiting for a non-shift event in any new task
-            await clear_event.wait()
+            await clear_lot.park()
             for artist in artists:
                 artist.remove()
 
