@@ -192,36 +192,56 @@ class TkHost:
         self.root.destroy()
 
 
-async def open_callback(nursery, root):
-    """Open a file using a dialog box, then create a window for data analysis
+class ARH5Window(tk.Toplevel):
+    def embed_figure(self, fig):
+        self.canvas = AsyncFigureCanvasTkAgg(fig, self, resize_callback=impartial(fig.tight_layout))
+        self.navbar = NavigationToolbar2Tk(self.canvas, self)
 
-    """
-    # Choose file
-    filename = await trs(partial(filedialog.askopenfilename,
-                                 master=root,
-                                 filetypes=[('AFM Data', '*.h5 *.ARDF'),
-                                            ('AR HDF5', '*.h5'),
-                                            ('ARDF', '*.ARDF')]))
-    if not filename:
-        return  # Cancelled
-    filename = trio.Path(filename)
+        options_frame = ttk.Frame(self)
+        image_name_labelframe = ttk.Labelframe(options_frame, text='Current image')
+        self.image_name_strvar = tk.StringVar(image_name_labelframe, value='Choose an image...')
+        self.image_name_menu = ttk.Combobox(image_name_labelframe, width=12, state='readonly',
+                                            textvariable=self.image_name_strvar, )
+        self.image_name_menu.pack(side='left')
+        image_name_labelframe.pack(side='left')
 
-    # choose handler based on file suffix
-    nursery.start_soon(*
-                       {'.ARDF': (ardf_converter, filename, nursery, root),
-                        '.h5': (arh5_task, filename, root),
-                        }[filename.suffix]
-                       )
+        disp_labelframe = ttk.Labelframe(options_frame, text='Display type')
+        self.disp_type_var = tk.IntVar(disp_labelframe, value=DISP_TYPE.zd.value)
+        self.disp_zd_button = ttk.Radiobutton(disp_labelframe, text='z/d',
+                                              value=DISP_TYPE.zd.value,
+                                              variable=self.disp_type_var)
+        self.disp_zd_button.pack(side='left')
+        self.disp_deltaf_button = ttk.Radiobutton(disp_labelframe, text='δ/f',
+                                                  value=DISP_TYPE.δf.value,
+                                                  variable=self.disp_type_var)
+        self.disp_deltaf_button.pack(side='left')
+        disp_labelframe.pack(side='left')
 
+        fit_labelframe = ttk.Labelframe(options_frame, text='Fit type')
+        self.fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FIT_MODE.skip.value)
+        self.fit_skip_button = ttk.Radiobutton(fit_labelframe, text='Skip',
+                                               value=magic_calculation.FIT_MODE.skip.value,
+                                               variable=self.fit_intvar)
+        self.fit_skip_button.pack(side='left')
+        self.fit_ext_button = ttk.Radiobutton(fit_labelframe, text='Extend',
+                                              value=magic_calculation.FIT_MODE.extend.value,
+                                              variable=self.fit_intvar)
+        self.fit_ext_button.pack(side='left')
+        self.fit_ret_button = ttk.Radiobutton(fit_labelframe, text='retract',
+                                              value=magic_calculation.FIT_MODE.retract.value,
+                                              variable=self.fit_intvar)
+        self.fit_ret_button.pack(side='left')
+        fit_labelframe.pack(side='left')
 
-async def ardf_converter(filename, nursery, root):
-    """Convert ARDF file to ARH5"""
-    with trio.CancelScope() as cscope:
-        pbar = PBar(root, cancel_callback=cscope.cancel)
-        filename = await async_tools.convert_ardf(filename, 'ARDFtoHDF5.exe', True, pbar)
-    if cscope.cancel_called:
-        return
-    nursery.start_soon(arh5_task, filename, root)
+        self.navbar.grid(row=0, sticky='we')
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_columnconfigure(0, weight=1)
+        self.canvas.get_tk_widget().grid(row=1, sticky='wens')
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        options_frame.grid(row=2, sticky='we')
+        self.grid_rowconfigure(2, weight=0)
+        self.grid_columnconfigure(0, weight=1)
 
 
 async def arh5_task(filename, root):
@@ -230,64 +250,22 @@ async def arh5_task(filename, root):
     await opened_arh5.ainitialize()
     k = float(opened_arh5.notes['SpringConstant'])
 
-    # Build window
-    top = tk.Toplevel(root)
-    top.wm_title(filename.name)
-
     fig = Figure(figsize=(7, 2.5))
     img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.35]))
     img_ax.set_anchor('W')
-    cax = None
     fmt = ScalarFormatter()
     fmt.set_powerlimits((-2, 2))
 
-    canvas = AsyncFigureCanvasTkAgg(fig, top, resize_callback=impartial(fig.tight_layout))
-    navbar = NavigationToolbar2Tk(canvas, top)
+    # Build window
+    window = ARH5Window(root)
+    window.embed_figure(fig)
+    window.wm_title(filename.name)
+    window.image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
 
-    options_frame = ttk.Frame(top)
-    image_name_labelframe = ttk.Labelframe(options_frame, text='Current image')
-    image_name_strvar = tk.StringVar(image_name_labelframe, value='Choose an image...')
-    image_name_menu = ttk.Combobox(image_name_labelframe, textvariable=image_name_strvar, width=12,
-                                   state='readonly')
-    image_name_menu.pack(side='left')
-    image_name_labelframe.pack(side='left')
-
-    disp_labelframe = ttk.Labelframe(options_frame, text='Display type')
-    disp_type_var = tk.IntVar(disp_labelframe, value=DISP_TYPE.zd.value)
-    disp_zd_button = ttk.Radiobutton(disp_labelframe, text='z/d', value=DISP_TYPE.zd.value, variable=disp_type_var)
-    disp_zd_button.pack(side='left')
-    disp_deltaf_button = ttk.Radiobutton(disp_labelframe, text='δ/f', value=DISP_TYPE.δf.value,
-                                         variable=disp_type_var)
-    disp_deltaf_button.pack(side='left')
-    disp_labelframe.pack(side='left')
-
-    fit_labelframe = ttk.Labelframe(options_frame, text='Fit type')
-    fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FIT_MODE.skip.value)
-    fit_skip_button = ttk.Radiobutton(fit_labelframe, text='Skip', value=magic_calculation.FIT_MODE.skip.value,
-                                      variable=fit_intvar)
-    fit_skip_button.pack(side='left')
-    fit_ext_button = ttk.Radiobutton(fit_labelframe, text='Extend', value=magic_calculation.FIT_MODE.extend.value,
-                                     variable=fit_intvar)
-    fit_ext_button.pack(side='left')
-    fit_ret_button = ttk.Radiobutton(fit_labelframe, text='retract', value=magic_calculation.FIT_MODE.retract.value,
-                                     variable=fit_intvar)
-    fit_ret_button.pack(side='left')
-    fit_labelframe.pack(side='left')
-
-    navbar.grid(row=0, sticky='we')
-    top.grid_rowconfigure(0, weight=0)
-    top.grid_columnconfigure(0, weight=1)
-    canvas.get_tk_widget().grid(row=1, sticky='wens')
-    top.grid_rowconfigure(1, weight=1)
-    top.grid_columnconfigure(0, weight=1)
-    options_frame.grid(row=2, sticky='we')
-    top.grid_rowconfigure(2, weight=0)
-    top.grid_columnconfigure(0, weight=1)
-
-    image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
+    cax = None
 
     async def change_image_callback():
-        image = await opened_arh5.get_image(image_name_strvar.get())
+        image = await opened_arh5.get_image(window.image_name_strvar.get())
 
         nonlocal cax
         if cax is not None:
@@ -316,8 +294,8 @@ async def arh5_task(filename, root):
             if event.name == 'motion_notify_event' and not event.guiEvent.state & TKSTATE.CONTROL:
                 return  # Have to hold down ctrl to see curves on mouse move
             x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
-            fit_mode = fit_intvar.get()
-            disp_type = disp_type_var.get()
+            fit_mode = window.fit_intvar.get()
+            disp_type = window.disp_type_var.get()
 
         # Calculation phase
         # Do a few long-running jobs, likely to be canceled
@@ -390,25 +368,57 @@ async def arh5_task(filename, root):
             artist.remove()
 
     async with trio.open_nursery() as nursery:
-        top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+        window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
         fig.canvas.mpl_connect('motion_notify_event', partial(nursery.start_soon, plot_pick_callback))
         fig.canvas.mpl_connect('pick_event', partial(nursery.start_soon, plot_pick_callback))
 
         await nursery.start(fig.canvas.idle_draw_task)
-        image_name_strvar.trace_add('write', impartial(partial(nursery.start_soon, change_image_callback)))
+        window.image_name_strvar.trace_add('write', impartial(partial(nursery.start_soon, change_image_callback)))
         # StringVar.set() won't be effective to plot unless it happens after the trace add AND idle_draw_task
         # accidentally, the plot will be drawn later due to resize, but let's not rely on that
         for name in ('MapHeight', 'ZSensorTrace'):
             if name in opened_arh5.image_names:
-                image_name_strvar.set(name)
+                window.image_name_strvar.set(name)
                 break
 
         await trio.sleep_forever()
 
     # open_task close phase
-    top.withdraw()  # weird navbar hiccup on close
-    top.destroy()
+    window.withdraw()  # weird navbar hiccup on close
+    window.destroy()
     await opened_arh5.aclose()
+
+
+async def ardf_converter(filename, nursery, root):
+    """Convert ARDF file to ARH5"""
+    with trio.CancelScope() as cscope:
+        pbar = PBar(root, cancel_callback=cscope.cancel)
+        filename = await async_tools.convert_ardf(filename, 'ARDFtoHDF5.exe', True, pbar)
+    if cscope.cancel_called:
+        return
+    nursery.start_soon(arh5_task, filename, root)
+
+
+async def open_callback(nursery, root):
+    """Open a file using a dialog box, then create a window for data analysis
+
+    """
+    # Choose file
+    filename = await trs(partial(filedialog.askopenfilename,
+                                 master=root,
+                                 filetypes=[('AFM Data', '*.h5 *.ARDF'),
+                                            ('AR HDF5', '*.h5'),
+                                            ('ARDF', '*.ARDF')]))
+    if not filename:
+        return  # Cancelled
+    filename = trio.Path(filename)
+
+    # choose handler based on file suffix
+    nursery.start_soon(*
+                       {'.ARDF': (ardf_converter, filename, nursery, root),
+                        '.h5': (arh5_task, filename, root),
+                        }[filename.suffix]
+                       )
 
 
 async def about_task(root):
@@ -456,7 +466,7 @@ async def about_task(root):
     top.destroy()
 
 
-async def amain(root):
+async def main_task(root):
     nursery: trio.Nursery
     async with trio.open_nursery() as nursery:
         # calls root.destroy by default
@@ -497,7 +507,7 @@ def main():
     root = NoUpdateTk()
     host = TkHost(root)
     trio.lowlevel.start_guest_run(
-        amain,
+        main_task,
         root,
         run_sync_soon_threadsafe=host.run_sync_soon_threadsafe,
         done_callback=host.done_callback,
