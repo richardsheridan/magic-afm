@@ -322,6 +322,7 @@ async def arh5_task(filename, root):
     async def plot_pick_callback(event):
         nonlocal plot_pick_cancel
         nonlocal removals_pending
+
         # Event Phase
         # Unpack, filter event and get local copies of nonlocal state
         with trio.testing.assert_no_checkpoints():
@@ -360,20 +361,20 @@ async def arh5_task(filename, root):
                 f_fit = calc_fun(delta[sl], *beta)
                 d_fit = f_fit / k
 
+            # Clearing Phase
+            # Clear previous artists and reset plots (faster than .clear()?)
+            if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
+                async with clear_lock:
+                    # wait for artist removals, then relim
+                    while removals_pending:
+                        clear_lot.unpark_all()
+                        await trio.sleep(0)
+                    plot_ax.relim()
+                    plot_ax.set_prop_cycle(None)
+                    plot_ax.set_autoscale_on(True)
+
         if cancel_scope.cancelled_caught:
             return
-
-        # Clearing Phase
-        # Clear previous artists and reset plots (faster than .clear()?)
-        if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
-            async with clear_lock:
-                # wait for artist removals, then relim
-                while removals_pending:
-                    clear_lot.unpark_all()
-                    await trio.sleep(0)
-                plot_ax.relim()
-                plot_ax.set_prop_cycle(None)
-                plot_ax.set_autoscale_on(True)
 
         # Drawing Phase
         # Based on local state choose plots and collect artists for deletion
