@@ -192,7 +192,7 @@ class TkHost:
         self.root.destroy()
 
 
-async def open_task(root):
+async def open_callback(nursery, root):
     """Open a file using a dialog box, then create a window for data analysis
 
     """
@@ -206,16 +206,26 @@ async def open_task(root):
         return  # Cancelled
     filename = trio.Path(filename)
 
-    # Convert file if necessary
-    if filename.suffix == '.ARDF':
-        with trio.CancelScope() as cscope:
-            pbar = PBar(root, cancel_callback=cscope.cancel)
-            filename = await async_tools.convert_ardf(filename, 'ARDFtoHDF5.exe', True, pbar)
-        if cscope.cancel_called:
-            return  # Cancelled
-        del pbar
+    # choose handler based on file suffix
+    nursery.start_soon(*
+                       {'.ARDF': (ardf_converter, filename, nursery, root),
+                        '.h5': (arh5_task, filename, root),
+                        }[filename.suffix]
+                       )
 
-    # Actually open and parse key variables
+
+async def ardf_converter(filename, nursery, root):
+    """Convert ARDF file to ARH5"""
+    with trio.CancelScope() as cscope:
+        pbar = PBar(root, cancel_callback=cscope.cancel)
+        filename = await async_tools.convert_ardf(filename, 'ARDFtoHDF5.exe', True, pbar)
+    if cscope.cancel_called:
+        return
+    nursery.start_soon(arh5_task, filename, root)
+
+
+async def arh5_task(filename, root):
+    # open and parse key variables
     opened_arh5 = async_tools.AsyncARH5File(filename)
     await opened_arh5.ainitialize()
     k = float(opened_arh5.notes['SpringConstant'])
@@ -458,11 +468,11 @@ async def amain(root):
 
         file_menu = tk.Menu(menu_frame, tearoff=False)
         file_menu.add_command(label='Open...', accelerator='Ctrl+O', underline=0,
-                              command=partial(nursery.start_soon, open_task, root))
+                              command=partial(nursery.start_soon, open_callback, nursery, root))
         file_menu.bind('<KeyRelease-o>',
-                       func=partial(nursery.start_soon, open_task, root))
+                       func=partial(nursery.start_soon, open_callback, nursery, root))
         root.bind_all('<Control-KeyPress-o>',
-                      func=impartial(partial(nursery.start_soon, open_task, root)))
+                      func=impartial(partial(nursery.start_soon, open_callback, nursery, root)))
         file_menu.add_command(label='Quit', accelerator='Ctrl+Q', underline=0,
                               command=nursery.cancel_scope.cancel)
         file_menu.bind('<KeyRelease-q>',
