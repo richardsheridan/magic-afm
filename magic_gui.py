@@ -25,6 +25,7 @@ from enum import IntEnum
 from functools import partial, wraps
 from tkinter import ttk, filedialog
 
+import outcome
 import trio
 import trio.testing
 from matplotlib.backends import _backend_tk
@@ -33,7 +34,6 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 from matplotlib.figure import Figure
 from matplotlib.ticker import ScalarFormatter
-from outcome import Error
 
 import async_tools
 import magic_calculation
@@ -217,12 +217,12 @@ class TkHost:
         self._q.append(func)
         self.root.call('after', 'idle', self._tk_func_name)
 
-    def done_callback(self, outcome):
+    def done_callback(self, outcome_):
         """End the Tk app.
         """
-        print(f"Outcome: {outcome}")
-        if isinstance(outcome, Error):
-            exc = outcome.error
+        print(f"Trio shutdown. Outcome: {outcome_}")
+        if isinstance(outcome_, outcome.Error):
+            exc = outcome_.error
             traceback.print_exception(type(exc), exc, exc.__traceback__)
         self.root.destroy()
 
@@ -551,7 +551,11 @@ def main():
         run_sync_soon_threadsafe=host.run_sync_soon_threadsafe,
         done_callback=host.done_callback,
     )
-    root.mainloop()
+    outcome_ = outcome.capture(root.mainloop)
+    print('Tk shutdown. Outcome:', outcome_)
+    if isinstance(outcome_, outcome.Error):
+        exc = outcome_.error
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
 
 
 if __name__ == '__main__':
