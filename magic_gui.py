@@ -39,6 +39,8 @@ import async_tools
 import magic_calculation
 from async_tools import trs
 
+LONGEST_IMPERCEPTIBLE_DELAY = .01  # seconds
+
 
 class TKSTATE(IntEnum):
     """AND/OR these with a tk.Event to see which keys were held down during it"""
@@ -122,8 +124,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         task_status.started()
         while True:
             await self._parking_lot.park()
-            with trio.fail_after(1):  # assert nothing is chewing up the event loop
-                await trio.testing.wait_all_tasks_blocked()
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
             self.draw()
 
     def draw(self):
@@ -300,9 +301,9 @@ async def arh5_task(filename, root):
     cax = None
 
     async def change_image_callback():
+        nonlocal cax
         image = await opened_arh5.get_image(window.image_name_strvar.get())
 
-        nonlocal cax
         if cax is not None:
             cax.clear()
         img_ax.clear()
@@ -316,8 +317,11 @@ async def arh5_task(filename, root):
     plot_pick_cancel = lambda: None
     clear_lot = trio.lowlevel.ParkingLot()
     clear_lock = trio.Lock()
+    removals_pending = 0
 
     async def plot_pick_callback(event):
+        nonlocal plot_pick_cancel
+        nonlocal removals_pending
         # Event Phase
         # Unpack, filter event and get local copies of nonlocal state
         with trio.testing.assert_no_checkpoints():
@@ -334,7 +338,6 @@ async def arh5_task(filename, root):
 
         # Calculation phase
         # Do a few long-running jobs, likely to be canceled
-        nonlocal plot_pick_cancel
         plot_pick_cancel()
         with trio.CancelScope() as cancel_scope:
             plot_pick_cancel = cancel_scope.cancel
@@ -364,10 +367,10 @@ async def arh5_task(filename, root):
         # Clear previous artists and reset plots (faster than .clear()?)
         if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
             async with clear_lock:
-                clear_lot.unpark_all()
                 # wait for artist removals, then relim
-                with trio.fail_after(1):  # assert nothing is chewing up the event loop
-                    await trio.testing.wait_all_tasks_blocked()
+                while removals_pending:
+                    clear_lot.unpark_all()
+                    await trio.sleep(0)
                 plot_ax.relim()
                 plot_ax.set_prop_cycle(None)
                 plot_ax.set_autoscale_on(True)
@@ -398,9 +401,12 @@ async def arh5_task(filename, root):
 
         # Waiting Phase
         # effectively waiting for a non-shift event in any new task
+        removals_pending += 1
         await clear_lot.park()
         for artist in artists:
             artist.remove()
+        removals_pending -= 1
+        assert removals_pending >= 0
 
     async with trio.open_nursery() as nursery:
         window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
