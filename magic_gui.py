@@ -449,11 +449,13 @@ async def open_callback(nursery, root):
     filename = trio.Path(filename)
 
     # choose handler based on file suffix
-    nursery.start_soon(*
-                       {'.ARDF': (ardf_converter, filename, nursery, root),
-                        '.h5': (arh5_task, filename, root),
-                        }[filename.suffix]
-                       )
+    suffix = filename.suffix
+    if suffix == '.ARDF':
+        nursery.start_soon(ardf_converter, filename, nursery, root)
+    elif suffix == '.h5':
+        nursery.start_soon(arh5_task, filename, root)
+    else:
+        raise ValueError('Unknown filename suffix: ', suffix)
 
 
 async def about_task(root):
