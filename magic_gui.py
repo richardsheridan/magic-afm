@@ -463,8 +463,6 @@ async def arh5_task(filename, root):
             # simple enough, so keep inline
             colorbar.solids.set_clim(colorbar.norm.vmin, colorbar.norm.vmax)
             fig.canvas.draw_idle()
-        else:
-            raise ValueError("Unknown axes: ", mouseevent.inaxes)
 
     async with trio.open_nursery() as nursery:
         window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
