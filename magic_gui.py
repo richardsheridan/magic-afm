@@ -28,6 +28,7 @@ from tkinter import ttk, filedialog
 import outcome
 import trio
 import trio.testing
+from matplotlib.backend_bases import MouseButton
 from matplotlib.backends import _backend_tk
 from matplotlib.backends._backend_tk import FigureCanvasTk
 from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -42,7 +43,8 @@ from async_tools import trs
 LONGEST_IMPERCEPTIBLE_DELAY = .01  # seconds
 MAX_REMOVAL_ATTEMPTS = 4
 
-class TKSTATE(IntEnum):
+
+class TkState(IntEnum):
     """AND/OR these with a tk.Event to see which keys were held down during it"""
     SHIFT = 0x0001
     CAPSLOCK = 0x0002
@@ -55,7 +57,7 @@ class TKSTATE(IntEnum):
     MB3 = 0x0400
 
 
-class DISP_TYPE(IntEnum):
+class DispKind(IntEnum):
     zd = 0
     δf = 1
 
@@ -242,13 +244,13 @@ class ARH5Window(tk.Toplevel):
         image_name_labelframe.pack(side='left')
 
         disp_labelframe = ttk.Labelframe(options_frame, text='Display type')
-        self.disp_type_var = tk.IntVar(disp_labelframe, value=DISP_TYPE.zd.value)
+        self.disp_type_var = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
         self.disp_zd_button = ttk.Radiobutton(disp_labelframe, text='z/d',
-                                              value=DISP_TYPE.zd.value,
+                                              value=DispKind.zd.value,
                                               variable=self.disp_type_var)
         self.disp_zd_button.pack(side='left')
         self.disp_deltaf_button = ttk.Radiobutton(disp_labelframe, text='δ/f',
-                                                  value=DISP_TYPE.δf.value,
+                                                  value=DispKind.δf.value,
                                                   variable=self.disp_type_var)
         self.disp_deltaf_button.pack(side='left')
         disp_labelframe.pack(side='left')
@@ -298,45 +300,37 @@ async def arh5_task(filename, root):
     window.wm_title(filename.name)
     window.image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
 
-    cax = None
+    colorbar = None
 
     async def change_image_callback():
-        nonlocal cax
-        image = await opened_arh5.get_image(window.image_name_strvar.get())
+        nonlocal colorbar
+        image_array = await opened_arh5.get_image(window.image_name_strvar.get())
 
-        if cax is not None:
+        if colorbar is None:
+            cax = None
+        else:
+            cax = colorbar.ax
             cax.clear()
         img_ax.clear()
-        axesimage = img_ax.imshow(image, picker=True)
-        colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
-        cax = colorbar.ax
+        image_artist = img_ax.imshow(image_array, picker=True)
+        colorbar = fig.colorbar(image_artist, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
+        window.navbar.update()  # let navbar catch new cax in fig
+        # colorbar.ax.set_navigate(True)
+        colorbar.solids.set_picker(True)
 
         fig.tight_layout()
         fig.canvas.draw_idle()
 
     plot_pick_cancel = lambda: None
     clear_lot = trio.lowlevel.ParkingLot()
-    clear_lot.statistics()
     clear_lock = trio.Lock()
-    removals_pending = 0
+    artist_removals_pending = 0
 
-    async def plot_pick_callback(event):
+    async def plot_curve_event_response(x, y, shift_held):
         nonlocal plot_pick_cancel
-        nonlocal removals_pending
-
-        # Event Phase
-        # Unpack, filter event and get local copies of nonlocal state
-        with trio.testing.assert_no_checkpoints():
-            mouseevent = getattr(event, 'mouseevent', event)
-            if mouseevent.inaxes is not img_ax:
-                return
-            if event.name == 'pick_event' and mouseevent.button != 1:
-                return  # have to click left mouse button to see curve
-            if event.name == 'motion_notify_event' and not event.guiEvent.state & TKSTATE.CONTROL:
-                return  # Have to hold down ctrl to see curves on mouse move
-            x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
-            fit_mode = window.fit_intvar.get()
-            disp_type = window.disp_type_var.get()
+        nonlocal artist_removals_pending
+        fit_mode = window.fit_intvar.get()
+        disp_kind = window.disp_type_var.get()
 
         # Calculation phase
         # Do a few long-running jobs, likely to be canceled
@@ -364,13 +358,13 @@ async def arh5_task(filename, root):
 
             # Clearing Phase
             # Clear previous artists and reset plots (faster than .clear()?)
-            if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
+            if not shift_held:
                 async with clear_lock:
                     clear_lot.unpark_all()
                     # wait for artist removals, then relim
                     for _ in range(MAX_REMOVAL_ATTEMPTS):
                         await trio.sleep(0)
-                        if not removals_pending:
+                        if not artist_removals_pending:
                             break
                     else:
                         raise RuntimeError('Too many attempts to remove artists')
@@ -385,18 +379,18 @@ async def arh5_task(filename, root):
         # Based on local state choose plots and collect artists for deletion
         with trio.testing.assert_no_checkpoints():
             artists = []
-            if disp_type == DISP_TYPE.zd:
+            if disp_kind == DispKind.zd:
                 artists.extend(plot_ax.plot(z[:s], d[:s]))
                 artists.extend(plot_ax.plot(z[s:], d[s:]))
                 if fit_mode:
                     artists.extend(plot_ax.plot(z[sl], d_fit, '--'))
-            elif disp_type == DISP_TYPE.δf:
+            elif disp_kind == DispKind.δf:
                 artists.extend(plot_ax.plot(delta[:s], f[:s]))
                 artists.extend(plot_ax.plot(delta[s:], f[s:]))
                 if fit_mode:
                     artists.extend(plot_ax.plot(delta[sl], f_fit, '--'))
             else:
-                raise ValueError('Unknown DISP_TYPE: ', disp_type)
+                raise ValueError('Unknown DispKind: ', disp_kind)
             artists.extend(img_ax.plot(x, y,
                                        marker='X',
                                        markersize=8,
@@ -407,17 +401,44 @@ async def arh5_task(filename, root):
 
         # Waiting Phase
         # effectively waiting for a non-shift event in any new task
-        removals_pending += 1
+        artist_removals_pending += 1
         await clear_lot.park()
         for artist in artists:
             artist.remove()
-        removals_pending -= 1
-        assert removals_pending >= 0
+        artist_removals_pending -= 1
+        assert artist_removals_pending >= 0
+
+    async def mpl_event_callback(event):
+        mouseevent = getattr(event, 'mouseevent', event)
+        control_held = event.guiEvent.state & TkState.CONTROL
+        if event.name == 'motion_notify_event' and not control_held:
+            return
+        shift_held = mouseevent.guiEvent.state & TkState.SHIFT
+        if mouseevent.inaxes is None:
+            return
+        elif mouseevent.inaxes is img_ax:
+            if mouseevent.button != MouseButton.LEFT:
+                return
+            x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
+            await plot_curve_event_response(x, y, shift_held)
+        elif mouseevent.inaxes is colorbar.ax:
+            if mouseevent.button == MouseButton.LEFT:
+                colorbar.norm.vmax = max(mouseevent.ydata, colorbar.norm.vmin)
+            elif mouseevent.button == MouseButton.RIGHT:
+                colorbar.norm.vmin = min(mouseevent.ydata, colorbar.norm.vmax)
+            else:
+                return
+            # Adjust colorbar scale
+            # simple enough, so keep inline
+            colorbar.solids.set_clim(colorbar.norm.vmin, colorbar.norm.vmax)
+            fig.canvas.draw_idle()
+        else:
+            raise ValueError("Unknown axes: ", mouseevent.inaxes)
 
     async with trio.open_nursery() as nursery:
         window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-        fig.canvas.mpl_connect('motion_notify_event', partial(nursery.start_soon, plot_pick_callback))
-        fig.canvas.mpl_connect('pick_event', partial(nursery.start_soon, plot_pick_callback))
+        fig.canvas.mpl_connect('motion_notify_event', partial(nursery.start_soon, mpl_event_callback))
+        fig.canvas.mpl_connect('pick_event', partial(nursery.start_soon, mpl_event_callback))
 
         await nursery.start(fig.canvas.idle_draw_task)
         window.image_name_strvar.trace_add('write', impartial(partial(nursery.start_soon, change_image_callback)))
