@@ -76,7 +76,7 @@ def impartial(fn):
 class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
         self._parking_lot = trio.lowlevel.ParkingLot()
-        self.draw_idle = self._parking_lot.unpark_all
+        self._idle_task_running = False
         super(FigureCanvasTk, self).__init__(figure)
         t1, t2, w, h = self.figure.bbox.bounds
         w, h = int(w), int(h)
@@ -123,14 +123,20 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         self._tkcanvas.focus_set()
 
     def draw_idle(self):
-        assert False, "this should be overridden in __init__"
+        assert self._idle_task_running, "start idle_draw_task first"
+        self._parking_lot.unpark_all()
 
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
+        assert not self._idle_task_running
+        self._idle_task_running = True
         task_status.started()
-        while True:
-            await self._parking_lot.park()
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-            self.draw()
+        try:
+            while True:
+                await self._parking_lot.park()
+                await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+                self.draw()
+        finally:
+            self._idle_task_running = False
 
     def draw(self):
         super().draw()
