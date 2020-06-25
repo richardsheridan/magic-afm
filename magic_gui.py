@@ -40,7 +40,7 @@ import magic_calculation
 from async_tools import trs
 
 LONGEST_IMPERCEPTIBLE_DELAY = .01  # seconds
-
+MAX_REMOVAL_ATTEMPTS = 4
 
 class TKSTATE(IntEnum):
     """AND/OR these with a tk.Event to see which keys were held down during it"""
@@ -316,6 +316,7 @@ async def arh5_task(filename, root):
 
     plot_pick_cancel = lambda: None
     clear_lot = trio.lowlevel.ParkingLot()
+    clear_lot.statistics()
     clear_lock = trio.Lock()
     removals_pending = 0
 
@@ -365,10 +366,14 @@ async def arh5_task(filename, root):
             # Clear previous artists and reset plots (faster than .clear()?)
             if not mouseevent.guiEvent.state & TKSTATE.SHIFT:
                 async with clear_lock:
+                    clear_lot.unpark_all()
                     # wait for artist removals, then relim
-                    while removals_pending:
-                        clear_lot.unpark_all()
+                    for _ in range(MAX_REMOVAL_ATTEMPTS):
                         await trio.sleep(0)
+                        if not removals_pending:
+                            break
+                    else:
+                        raise RuntimeError('Too many attempts to remove artists')
                     plot_ax.relim()
                     plot_ax.set_prop_cycle(None)
                     plot_ax.set_autoscale_on(True)
