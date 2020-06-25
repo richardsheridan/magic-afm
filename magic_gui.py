@@ -24,6 +24,7 @@ import traceback
 from enum import IntEnum
 from functools import partial, wraps
 from tkinter import ttk, filedialog
+from typing import Optional
 
 import outcome
 import trio
@@ -33,8 +34,10 @@ from matplotlib.backends import _backend_tk
 from matplotlib.backends._backend_tk import FigureCanvasTk
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+from matplotlib.colorbar import Colorbar
 from matplotlib.figure import Figure
 from matplotlib.ticker import ScalarFormatter
+from matplotlib.widgets import SubplotTool
 
 import async_tools
 import magic_calculation
@@ -157,6 +160,28 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         self._update_pointer_position(event)
 
 
+class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
+    def teach_navbar_to_use_trio(self, nursery):
+        self._trio_nursery = nursery
+
+    def configure_subplots(self):
+        self._trio_nursery.start_soon(self._aconfigure_subplots)
+
+    async def _aconfigure_subplots(self):
+        toolfig = Figure(figsize=(6, 3))
+        window = tk.Toplevel(self.canvas.get_tk_widget().master)
+        canvas = type(self.canvas)(toolfig, master=window)
+        async with trio.open_nursery() as nursery:
+            await nursery.start(canvas.idle_draw_task)
+            toolfig.subplots_adjust(top=0.9)
+            canvas.tool = SubplotTool(self.canvas.figure, toolfig)
+            # canvas.draw()
+            canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+            # window.grab_set()
+            window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+        window.destroy()
+
+
 class PBar:
     def __init__(self, root=None, maximum=100, grab=True, cancel_callback=None):
         self._cancel_callback = cancel_callback
@@ -233,7 +258,7 @@ class TkHost:
 class ARH5Window(tk.Toplevel):
     def embed_figure(self, fig):
         self.canvas = AsyncFigureCanvasTkAgg(fig, self, resize_callback=impartial(fig.tight_layout))
-        self.navbar = NavigationToolbar2Tk(self.canvas, self)
+        self.navbar = ImprovedNavigationToolbar2Tk(self.canvas, self)
 
         options_frame = ttk.Frame(self)
         image_name_labelframe = ttk.Labelframe(options_frame, text='Current image')
@@ -300,7 +325,7 @@ async def arh5_task(filename, root):
     window.wm_title(filename.name)
     window.image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
 
-    colorbar = None
+    colorbar: Optional[Colorbar] = None
 
     async def change_image_callback():
         nonlocal colorbar
@@ -449,9 +474,10 @@ async def arh5_task(filename, root):
                 window.image_name_strvar.set(name)
                 break
 
+        window.navbar.teach_navbar_to_use_trio(nursery)
         await trio.sleep_forever()
 
-    # open_task close phase
+    # Close phase
     window.withdraw()  # weird navbar hiccup on close
     window.destroy()
     await opened_arh5.aclose()
