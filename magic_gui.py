@@ -553,9 +553,12 @@ async def main_task(root):
 
 
 def main():
+    # make root/parent passing mandatory.
+    tk.NoDefaultRoot()
     root = tk.Tk()
     # sabotage update command so that we crash instead of deadlocking
-    root.tk.call('rename', 'update', 'never_update')
+    # breaks ttk.Combobox, maybe others
+    # root.tk.call('rename', 'update', 'never_update')
     host = TkHost(root)
     trio.lowlevel.start_guest_run(
         main_task,
