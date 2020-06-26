@@ -44,12 +44,13 @@ import async_tools
 import magic_calculation
 from async_tools import trs
 
-LONGEST_IMPERCEPTIBLE_DELAY = .01  # seconds
+LONGEST_IMPERCEPTIBLE_DELAY = 0.01  # seconds
 MAX_REMOVAL_ATTEMPTS = 4
 
 
 class TkState(IntEnum):
     """AND/OR these with a tk.Event to see which keys were held down during it"""
+
     SHIFT = 0x0001
     CAPSLOCK = 0x0002
     CONTROL = 0x0004
@@ -82,10 +83,9 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         t1, t2, w, h = self.figure.bbox.bounds
         w, h = int(w), int(h)
         self._tkcanvas = tk.Canvas(
-            master=master, background="white",
-            width=w, height=h, borderwidth=0, highlightthickness=0)
-        self._tkphoto = tk.PhotoImage(
-            master=self._tkcanvas, width=w, height=h)
+            master=master, background="white", width=w, height=h, borderwidth=0, highlightthickness=0,
+        )
+        self._tkphoto = tk.PhotoImage(master=self._tkcanvas, width=w, height=h)
         self._tkcanvas.create_image(w // 2, h // 2, image=self._tkphoto)
         self._resize_callback = resize_callback
         self._tkcanvas.bind("<Configure>", self.resize)
@@ -144,8 +144,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         _backend_tk.blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
 
     def blit(self, bbox=None):
-        _backend_tk.blit(
-            self._tkphoto, self.renderer._renderer, (0, 1, 2, 3), bbox=bbox)
+        _backend_tk.blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3), bbox=bbox)
 
     def resize(self, event):
         width, height = event.width, event.height
@@ -159,10 +158,8 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         self.figure.set_size_inches(winch, hinch, forward=False)
 
         self._tkcanvas.delete(self._tkphoto)
-        self._tkphoto = tk.PhotoImage(
-            master=self._tkcanvas, width=int(width), height=int(height))
-        self._tkcanvas.create_image(
-            int(width / 2), int(height / 2), image=self._tkphoto)
+        self._tkphoto = tk.PhotoImage(master=self._tkcanvas, width=int(width), height=int(height))
+        self._tkcanvas.create_image(int(width / 2), int(height / 2), image=self._tkphoto)
         self.resize_event()
         self._update_pointer_position(event)
 
@@ -191,7 +188,7 @@ class PBar:
     def __init__(self, root=None, maximum=100, grab=True, cancel_callback=None):
         self._cancel_callback = cancel_callback
         self._top = tk.Toplevel(root)
-        self._top.wm_title('Loading...')
+        self._top.wm_title("Loading...")
         self._top.protocol("WM_DELETE_WINDOW", lambda: None)
         self._n_var = tk.DoubleVar(self._top, value=0)
         self._text_var = tk.StringVar(self._top)
@@ -200,7 +197,7 @@ class PBar:
         self._pbar = ttk.Progressbar(self._top, maximum=maximum, variable=self._n_var, length=450)
         self._pbar.pack()
         if self._cancel_callback is not None:
-            self._butt = ttk.Button(self._top, text='Cancel', command=self.cancel)
+            self._butt = ttk.Button(self._top, text="Cancel", command=self.cancel)
             self._butt.pack()
         if grab:
             self._top.grab_set()
@@ -248,7 +245,7 @@ class TkHost:
         """
         # self.root.after(0, func) # does a fairly intensive wrapping to each func
         self._q.append(func)
-        self.root.call('after', 'idle', self._tk_func_name)
+        self.root.call("after", "idle", self._tk_func_name)
 
     def done_callback(self, outcome_):
         """End the Tk app.
@@ -266,63 +263,64 @@ class ARH5Window(tk.Toplevel):
         self.navbar = ImprovedNavigationToolbar2Tk(self.canvas, self)
 
         options_frame = ttk.Frame(self)
-        image_name_labelframe = ttk.Labelframe(options_frame, text='Current image')
-        self.image_name_strvar = tk.StringVar(image_name_labelframe, value='Choose an image...')
-        self.image_name_menu = ttk.Combobox(image_name_labelframe, width=12, state='readonly',
-                                            textvariable=self.image_name_strvar, )
-        self.image_name_menu.pack(side='left')
-        image_name_labelframe.pack(side='left')
+        image_name_labelframe = ttk.Labelframe(options_frame, text="Current image")
+        self.image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
+        self.image_name_menu = ttk.Combobox(
+            image_name_labelframe, width=12, state="readonly", textvariable=self.image_name_strvar,
+        )
+        self.image_name_menu.pack(side="left")
+        image_name_labelframe.pack(side="left")
 
-        disp_labelframe = ttk.Labelframe(options_frame, text='Display type')
+        disp_labelframe = ttk.Labelframe(options_frame, text="Display type")
         self.disp_type_var = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
-        self.disp_zd_button = ttk.Radiobutton(disp_labelframe, text='z/d',
-                                              value=DispKind.zd.value,
-                                              variable=self.disp_type_var)
-        self.disp_zd_button.pack(side='left')
-        self.disp_deltaf_button = ttk.Radiobutton(disp_labelframe, text='δ/f',
-                                                  value=DispKind.δf.value,
-                                                  variable=self.disp_type_var)
-        self.disp_deltaf_button.pack(side='left')
-        disp_labelframe.pack(side='left')
+        self.disp_zd_button = ttk.Radiobutton(
+            disp_labelframe, text="z/d", value=DispKind.zd.value, variable=self.disp_type_var
+        )
+        self.disp_zd_button.pack(side="left")
+        self.disp_deltaf_button = ttk.Radiobutton(
+            disp_labelframe, text="δ/f", value=DispKind.δf.value, variable=self.disp_type_var
+        )
+        self.disp_deltaf_button.pack(side="left")
+        disp_labelframe.pack(side="left")
 
-        fit_labelframe = ttk.Labelframe(options_frame, text='Fit type')
+        fit_labelframe = ttk.Labelframe(options_frame, text="Fit type")
         self.fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FIT_MODE.skip.value)
-        self.fit_skip_button = ttk.Radiobutton(fit_labelframe, text='Skip',
-                                               value=magic_calculation.FIT_MODE.skip.value,
-                                               variable=self.fit_intvar)
-        self.fit_skip_button.pack(side='left')
-        self.fit_ext_button = ttk.Radiobutton(fit_labelframe, text='Extend',
-                                              value=magic_calculation.FIT_MODE.extend.value,
-                                              variable=self.fit_intvar)
-        self.fit_ext_button.pack(side='left')
-        self.fit_ret_button = ttk.Radiobutton(fit_labelframe, text='retract',
-                                              value=magic_calculation.FIT_MODE.retract.value,
-                                              variable=self.fit_intvar)
-        self.fit_ret_button.pack(side='left')
-        fit_labelframe.pack(side='left')
+        self.fit_skip_button = ttk.Radiobutton(
+            fit_labelframe, text="Skip", value=magic_calculation.FIT_MODE.skip.value, variable=self.fit_intvar
+        )
+        self.fit_skip_button.pack(side="left")
+        self.fit_ext_button = ttk.Radiobutton(
+            fit_labelframe, text="Extend", value=magic_calculation.FIT_MODE.extend.value, variable=self.fit_intvar
+        )
+        self.fit_ext_button.pack(side="left")
+        self.fit_ret_button = ttk.Radiobutton(
+            fit_labelframe, text="retract", value=magic_calculation.FIT_MODE.retract.value, variable=self.fit_intvar
+        )
+        self.fit_ret_button.pack(side="left")
+        fit_labelframe.pack(side="left")
 
-        self.navbar.grid(row=0, sticky='we')
+        self.navbar.grid(row=0, sticky="we")
         self.grid_rowconfigure(0, weight=0)
         self.grid_columnconfigure(0, weight=1)
-        self.canvas.get_tk_widget().grid(row=1, sticky='wens')
+        self.canvas.get_tk_widget().grid(row=1, sticky="wens")
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
-        options_frame.grid(row=2, sticky='we')
+        options_frame.grid(row=2, sticky="we")
         self.grid_rowconfigure(2, weight=0)
         self.grid_columnconfigure(0, weight=1)
 
 
 async def arh5_task(opened_arh5, root):
     # parse key variables
-    k = float(opened_arh5.notes['SpringConstant'])
-    scansize = float(opened_arh5.notes['ScanSize']) * async_tools.NANOMETER_UNIT_CONVERSION
+    k = float(opened_arh5.notes["SpringConstant"])
+    scansize = float(opened_arh5.notes["ScanSize"]) * async_tools.NANOMETER_UNIT_CONVERSION
 
     fig = Figure(figsize=(7, 2.5))
     img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.35]))
-    img_ax.set_anchor('W')
+    img_ax.set_anchor("W")
     # Need to pre-load something into these labels for change_image_callback->tight_layout
-    plot_ax.set_xlabel(' ')
-    plot_ax.set_ylabel(' ')
+    plot_ax.set_xlabel(" ")
+    plot_ax.set_ylabel(" ")
     plot_ax.set_ylim([-1000, 1000])
     plot_ax.set_xlim([-1000, 1000])
     fmt = ScalarFormatter()
@@ -350,15 +348,13 @@ async def arh5_task(opened_arh5, root):
         img_ax.clear()
 
         s = (scansize + scansize / len(image_array)) // 2
-        axesimage = img_ax.imshow(image_array,
-                                  origin='upper' if opened_arh5.scandown else 'lower',
-                                  extent=(-s, s, -s, s,),
-                                  picker=True,
-                                  )
+        axesimage = img_ax.imshow(
+            image_array, origin="upper" if opened_arh5.scandown else "lower", extent=(-s, s, -s, s,), picker=True,
+        )
 
         xmin, xmax, ymin, ymax = axesimage.get_extent()
         rows, cols = axesimage.get_size()
-        if axesimage.origin == 'upper':
+        if axesimage.origin == "upper":
             ymin, ymax = ymax, ymin
         data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
         array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
@@ -367,14 +363,14 @@ async def arh5_task(opened_arh5, root):
         def data_coords_to_array_index(x, y):
             return trans.transform_point([y, x]).round().astype(int)  # row, column
 
-        img_ax.set_ylabel('Y piezo (nm)')
-        img_ax.set_xlabel('X piezo (nm)')
+        img_ax.set_ylabel("Y piezo (nm)")
+        img_ax.set_xlabel("X piezo (nm)")
 
         colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
         window.navbar.update()  # let navbar catch new cax in fig
         # colorbar.ax.set_navigate(True)
         colorbar.solids.set_picker(True)
-        colorbar.ax.set_ylabel(opened_arh5.units_map.get(image_name, 'Volts'))
+        colorbar.ax.set_ylabel(opened_arh5.units_map.get(image_name, "Volts"))
 
         fig.tight_layout()
         fig.canvas.draw_idle()
@@ -406,11 +402,11 @@ async def arh5_task(opened_arh5, root):
                 elif fit_mode == magic_calculation.FIT_MODE.retract:
                     sl = slice(s, None)
                 else:
-                    raise ValueError('Unknown fit_mode: ', fit_mode)
+                    raise ValueError("Unknown fit_mode: ", fit_mode)
 
-                beta, beta_err, calc_fun = await trs(magic_calculation.fitfun, delta[sl], f[sl], k, 20, 0,
-                                                     fit_mode,
-                                                     async_tools.make_cancel_poller())
+                beta, beta_err, calc_fun = await trs(
+                    magic_calculation.fitfun, delta[sl], f[sl], k, 20, 0, fit_mode, async_tools.make_cancel_poller()
+                )
                 f_fit = calc_fun(delta[sl], *beta)
                 d_fit = f_fit / k
 
@@ -425,7 +421,7 @@ async def arh5_task(opened_arh5, root):
                         if not artist_removals_pending:
                             break
                     else:
-                        raise RuntimeError('Too many attempts to remove artists')
+                        raise RuntimeError("Too many attempts to remove artists")
                     plot_ax.relim()
                     plot_ax.set_prop_cycle(None)
                     plot_ax.set_autoscale_on(True)
@@ -438,27 +434,32 @@ async def arh5_task(opened_arh5, root):
         with trio.testing.assert_no_checkpoints():
             artists = []
             if disp_kind == DispKind.zd:
-                plot_ax.set_xlabel('Z piezo (nm)')
-                plot_ax.set_ylabel('Cantilever deflection (nm)')
+                plot_ax.set_xlabel("Z piezo (nm)")
+                plot_ax.set_ylabel("Cantilever deflection (nm)")
                 artists.extend(plot_ax.plot(z[:s], d[:s]))
                 artists.extend(plot_ax.plot(z[s:], d[s:]))
                 if fit_mode:
-                    artists.extend(plot_ax.plot(z[sl], d_fit, '--'))
+                    artists.extend(plot_ax.plot(z[sl], d_fit, "--"))
             elif disp_kind == DispKind.δf:
-                plot_ax.set_xlabel('Indentation depth (nm)')
-                plot_ax.set_ylabel('Indentation force (nm)')
+                plot_ax.set_xlabel("Indentation depth (nm)")
+                plot_ax.set_ylabel("Indentation force (nm)")
                 artists.extend(plot_ax.plot(delta[:s], f[:s]))
                 artists.extend(plot_ax.plot(delta[s:], f[s:]))
                 if fit_mode:
-                    artists.extend(plot_ax.plot(delta[sl], f_fit, '--'))
+                    artists.extend(plot_ax.plot(delta[sl], f_fit, "--"))
             else:
-                raise ValueError('Unknown DispKind: ', disp_kind)
-            artists.extend(img_ax.plot(x, y,
-                                       marker='X',
-                                       markersize=8,
-                                       linestyle='',
-                                       markeredgecolor='k',
-                                       markerfacecolor=artists[0].get_color()))
+                raise ValueError("Unknown DispKind: ", disp_kind)
+            artists.extend(
+                img_ax.plot(
+                    x,
+                    y,
+                    marker="X",
+                    markersize=8,
+                    linestyle="",
+                    markeredgecolor="k",
+                    markerfacecolor=artists[0].get_color(),
+                )
+            )
             fig.canvas.draw_idle()
 
         # Waiting Phase
@@ -471,9 +472,9 @@ async def arh5_task(opened_arh5, root):
         assert artist_removals_pending >= 0
 
     async def mpl_event_callback(event):
-        mouseevent = getattr(event, 'mouseevent', event)
+        mouseevent = getattr(event, "mouseevent", event)
         control_held = event.guiEvent.state & TkState.CONTROL
-        if event.name == 'motion_notify_event' and not control_held:
+        if event.name == "motion_notify_event" and not control_held:
             return
         shift_held = mouseevent.guiEvent.state & TkState.SHIFT
         if mouseevent.inaxes is None:
@@ -496,14 +497,14 @@ async def arh5_task(opened_arh5, root):
 
     async with trio.open_nursery() as nursery:
         window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-        fig.canvas.mpl_connect('motion_notify_event', partial(nursery.start_soon, mpl_event_callback))
-        fig.canvas.mpl_connect('pick_event', partial(nursery.start_soon, mpl_event_callback))
+        fig.canvas.mpl_connect("motion_notify_event", partial(nursery.start_soon, mpl_event_callback))
+        fig.canvas.mpl_connect("pick_event", partial(nursery.start_soon, mpl_event_callback))
 
         await nursery.start(fig.canvas.idle_draw_task)
-        window.image_name_strvar.trace_add('write', impartial(partial(nursery.start_soon, change_image_callback)))
+        window.image_name_strvar.trace_add("write", impartial(partial(nursery.start_soon, change_image_callback)))
         # StringVar.set() won't be effective to plot unless it happens after the trace add AND idle_draw_task
         # accidentally, the plot will be drawn later due to resize, but let's not rely on that
-        for name in ('MapHeight', 'ZSensorTrace'):
+        for name in ("MapHeight", "ZSensorTrace"):
             if name in opened_arh5.image_names:
                 window.image_name_strvar.set(name)
                 break
@@ -520,7 +521,7 @@ async def ardf_converter(filename, root):
     """Convert ARDF file to ARH5"""
     with trio.CancelScope() as cscope:
         pbar = PBar(root, cancel_callback=cscope.cancel)
-        filename = await async_tools.convert_ardf(filename, 'ARDFtoHDF5.exe', True, pbar)
+        filename = await async_tools.convert_ardf(filename, "ARDFtoHDF5.exe", True, pbar)
 
     if cscope.cancel_called:
         return
@@ -534,24 +535,26 @@ async def open_callback(root):
 
     """
     # Choose file
-    filename = await trs(partial(filedialog.askopenfilename,
-                                 master=root,
-                                 filetypes=[('AFM Data', '*.h5 *.ARDF'),
-                                            ('AR HDF5', '*.h5'),
-                                            ('ARDF', '*.ARDF')]))
+    filename = await trs(
+        partial(
+            filedialog.askopenfilename,
+            master=root,
+            filetypes=[("AFM Data", "*.h5 *.ARDF"), ("AR HDF5", "*.h5"), ("ARDF", "*.ARDF"), ],
+        )
+    )
     if not filename:
         return  # Cancelled
     filename = trio.Path(filename)
 
     # choose handler based on file suffix
     suffix = filename.suffix
-    if suffix == '.ARDF':
+    if suffix == ".ARDF":
         await ardf_converter(filename, root)
-    elif suffix == '.h5':
+    elif suffix == ".h5":
         async with async_tools.AsyncARH5File(filename) as opened_arh5:
             await arh5_task(opened_arh5, root)
     else:
-        raise ValueError('Unknown filename suffix: ', suffix)
+        raise ValueError("Unknown filename suffix: ", suffix)
 
 
 async def about_task(root):
@@ -563,11 +566,11 @@ async def about_task(root):
 
     """
     top = tk.Toplevel(root)
-    app_name = __doc__.split('\n', 1)[0]
-    top.wm_title(f'About {app_name}')
+    app_name = __doc__.split("\n", 1)[0]
+    top.wm_title(f"About {app_name}")
     message = tk.Message(top, text=__short_license__)
     message.pack()
-    opts = dict(mode='indeterminate', maximum=80, length=300)
+    opts = dict(mode="indeterminate", maximum=80, length=300)
     timely_trio_pbar = ttk.Progressbar(top, **opts)
     timely_trio_pbar.pack()
     tk_pbar = ttk.Progressbar(top, **opts)
@@ -606,32 +609,27 @@ async def main_task(root):
         root.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
 
         # Build menus
-        menu_frame = tk.Menu(root, relief='groove', tearoff=False)
+        menu_frame = tk.Menu(root, relief="groove", tearoff=False)
         root.config(menu=menu_frame)
 
         file_menu = tk.Menu(menu_frame, tearoff=False)
-        file_menu.add_command(label='Open...', accelerator='Ctrl+O', underline=0,
-                              command=partial(nursery.start_soon, open_callback, root))
-        file_menu.bind('<KeyRelease-o>',
-                       func=partial(nursery.start_soon, open_callback, root))
-        root.bind_all('<Control-KeyPress-o>',
-                      func=impartial(partial(nursery.start_soon, open_callback, root)))
-        file_menu.add_command(label='Quit', accelerator='Ctrl+Q', underline=0,
-                              command=nursery.cancel_scope.cancel)
-        file_menu.bind('<KeyRelease-q>',
-                       func=nursery.cancel_scope.cancel)
-        root.bind_all('<Control-KeyPress-q>',
-                      func=impartial(nursery.cancel_scope.cancel))
-        menu_frame.add_cascade(label='File', menu=file_menu, underline=0)
+        file_menu.add_command(
+            label="Open...", accelerator="Ctrl+O", underline=0, command=partial(nursery.start_soon, open_callback, root)
+        )
+        file_menu.bind("<KeyRelease-o>", func=partial(nursery.start_soon, open_callback, root))
+        root.bind_all("<Control-KeyPress-o>", func=impartial(partial(nursery.start_soon, open_callback, root)))
+        file_menu.add_command(label="Quit", accelerator="Ctrl+Q", underline=0, command=nursery.cancel_scope.cancel)
+        file_menu.bind("<KeyRelease-q>", func=nursery.cancel_scope.cancel)
+        root.bind_all("<Control-KeyPress-q>", func=impartial(nursery.cancel_scope.cancel))
+        menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
 
         help_menu = tk.Menu(menu_frame, tearoff=False)
-        help_menu.add_command(label='About...', accelerator=None, underline=0,
-                              command=partial(nursery.start_soon, about_task, root))
-        help_menu.bind('<KeyRelease-a>',
-                       func=partial(nursery.start_soon, about_task, root))
-        root.bind_all('<Control-KeyPress-F1>',
-                      func=impartial(partial(nursery.start_soon, about_task, root)))
-        menu_frame.add_cascade(label='Help', menu=help_menu, underline=0)
+        help_menu.add_command(
+            label="About...", accelerator=None, underline=0, command=partial(nursery.start_soon, about_task, root)
+        )
+        help_menu.bind("<KeyRelease-a>", func=partial(nursery.start_soon, about_task, root))
+        root.bind_all("<Control-KeyPress-F1>", func=impartial(partial(nursery.start_soon, about_task, root)))
+        menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
         await trio.sleep_forever()  # needed if nursery never starts a long running child
 
@@ -645,17 +643,14 @@ def main():
     # root.tk.call('rename', 'update', 'never_update')
     host = TkHost(root)
     trio.lowlevel.start_guest_run(
-        main_task,
-        root,
-        run_sync_soon_threadsafe=host.run_sync_soon_threadsafe,
-        done_callback=host.done_callback,
+        main_task, root, run_sync_soon_threadsafe=host.run_sync_soon_threadsafe, done_callback=host.done_callback,
     )
     outcome_ = outcome.capture(root.mainloop)
-    print('Tk shutdown. Outcome:', outcome_)
+    print("Tk shutdown. Outcome:", outcome_)
     if isinstance(outcome_, outcome.Error):
         exc = outcome_.error
         traceback.print_exception(type(exc), exc, exc.__traceback__)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
