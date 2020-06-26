@@ -168,23 +168,21 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
 
 class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
     def teach_navbar_to_use_trio(self, nursery):
-        self._trio_nursery = nursery
+        self._parent_nursery = nursery
 
     def configure_subplots(self):
-        self._trio_nursery.start_soon(self._aconfigure_subplots)
+        self._parent_nursery.start_soon(self._aconfigure_subplots)
 
     async def _aconfigure_subplots(self):
-        toolfig = Figure(figsize=(6, 3))
         window = tk.Toplevel(self.canvas.get_tk_widget().master)
+        toolfig = Figure(figsize=(6, 3))
+        toolfig.subplots_adjust(top=0.9)
         canvas = type(self.canvas)(toolfig, master=window)
-        async with trio.open_nursery() as nursery:
-            await nursery.start(canvas.idle_draw_task)
-            toolfig.subplots_adjust(top=0.9)
-            canvas.tool = SubplotTool(self.canvas.figure, toolfig)
-            # canvas.draw()
-            canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-            # window.grab_set()
-            window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        async with trio.open_nursery() as idle_draw_nursery:
+            await idle_draw_nursery.start(canvas.idle_draw_task)
+            SubplotTool(self.canvas.figure, toolfig)
+            window.protocol("WM_DELETE_WINDOW", idle_draw_nursery.cancel_scope.cancel)
         window.destroy()
 
 
