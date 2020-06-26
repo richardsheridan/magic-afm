@@ -302,6 +302,8 @@ class ARH5Window(tk.Toplevel):
         self.fit_ret_button.pack(side="left")
         fit_labelframe.pack(side="left")
 
+        ttk.Sizegrip(options_frame).pack(side="right", anchor="sw")
+
         self.navbar.grid(row=0, sticky="we")
         self.grid_rowconfigure(0, weight=0)
         self.grid_columnconfigure(0, weight=1)
