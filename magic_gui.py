@@ -310,12 +310,15 @@ class ARH5Window(tk.Toplevel):
         self.grid_columnconfigure(0, weight=1)
 
 
+ARH5_FIGURE_SIZE = (8, 2.75)
+
+
 async def arh5_task(opened_arh5, root):
     # parse key variables
     k = float(opened_arh5.notes["SpringConstant"])
     scansize = float(opened_arh5.notes["ScanSize"]) * async_tools.NANOMETER_UNIT_CONVERSION
 
-    fig = Figure(figsize=(7, 2.5))
+    fig = Figure(figsize=ARH5_FIGURE_SIZE)
     img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.35]))
     img_ax.set_anchor("W")
     # Need to pre-load something into these labels for change_image_callback->tight_layout
@@ -442,11 +445,17 @@ async def arh5_task(opened_arh5, root):
                     artists.extend(plot_ax.plot(z[sl], d_fit, "--"))
             elif disp_kind == DispKind.δf:
                 plot_ax.set_xlabel("Indentation depth (nm)")
-                plot_ax.set_ylabel("Indentation force (nm)")
-                artists.extend(plot_ax.plot(delta[:s], f[:s]))
-                artists.extend(plot_ax.plot(delta[s:], f[s:]))
+                plot_ax.set_ylabel("Indentation force (nN)")
                 if fit_mode:
+                    delta -= beta[2]
+                    f -= beta[3]
+                    f_fit -= beta[3]
+                    artists.extend(plot_ax.plot(delta[:s], f[:s]))
+                    artists.extend(plot_ax.plot(delta[s:], f[s:]))
                     artists.extend(plot_ax.plot(delta[sl], f_fit, "--"))
+                else:
+                    artists.extend(plot_ax.plot(delta[:s], f[:s]))
+                    artists.extend(plot_ax.plot(delta[s:], f[s:]))
             else:
                 raise ValueError("Unknown DispKind: ", disp_kind)
             artists.extend(
