@@ -78,6 +78,7 @@ def impartial(fn):
 class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
         self._parking_lot = trio.lowlevel.ParkingLot()
+        self.trio_draw_lock = trio.Lock()
         self._idle_task_running = False
         super(FigureCanvasTk, self).__init__(figure)
         t1, t2, w, h = self.figure.bbox.bounds
@@ -135,7 +136,9 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
             while True:
                 await self._parking_lot.park()
                 await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-                self.draw()
+                async with self.trio_draw_lock:
+                    await trs(super().draw, cancellable=False)
+                    _backend_tk.blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
         finally:
             self._idle_task_running = False
 
@@ -434,7 +437,8 @@ async def arh5_task(opened_arh5, root):
 
         # Drawing Phase
         # Based on local state choose plots and collect artists for deletion
-        with trio.testing.assert_no_checkpoints():
+        async with window.canvas.trio_draw_lock:
+          with trio.testing.assert_no_checkpoints():
             artists = []
             if disp_kind == DispKind.zd:
                 plot_ax.set_xlabel("Z piezo (nm)")
