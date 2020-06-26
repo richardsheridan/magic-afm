@@ -441,42 +441,42 @@ async def arh5_task(opened_arh5, root):
         # Drawing Phase
         # Based on local state choose plots and collect artists for deletion
         async with window.canvas.trio_draw_lock:
-          with trio.testing.assert_no_checkpoints():
-            artists = []
-            if disp_kind == DispKind.zd:
-                plot_ax.set_xlabel("Z piezo (nm)")
-                plot_ax.set_ylabel("Cantilever deflection (nm)")
-                artists.extend(plot_ax.plot(z[:s], d[:s]))
-                artists.extend(plot_ax.plot(z[s:], d[s:]))
-                if fit_mode:
-                    artists.extend(plot_ax.plot(z[sl], d_fit, "--"))
-            elif disp_kind == DispKind.δf:
-                plot_ax.set_xlabel("Indentation depth (nm)")
-                plot_ax.set_ylabel("Indentation force (nN)")
-                if fit_mode:
-                    delta -= beta[2]
-                    f -= beta[3]
-                    f_fit -= beta[3]
-                    artists.extend(plot_ax.plot(delta[:s], f[:s]))
-                    artists.extend(plot_ax.plot(delta[s:], f[s:]))
-                    artists.extend(plot_ax.plot(delta[sl], f_fit, "--"))
+            with trio.testing.assert_no_checkpoints():
+                artists = []
+                if disp_kind == DispKind.zd:
+                    plot_ax.set_xlabel("Z piezo (nm)")
+                    plot_ax.set_ylabel("Cantilever deflection (nm)")
+                    artists.extend(plot_ax.plot(z[:s], d[:s]))
+                    artists.extend(plot_ax.plot(z[s:], d[s:]))
+                    if fit_mode:
+                        artists.extend(plot_ax.plot(z[sl], d_fit, "--"))
+                elif disp_kind == DispKind.δf:
+                    plot_ax.set_xlabel("Indentation depth (nm)")
+                    plot_ax.set_ylabel("Indentation force (nN)")
+                    if fit_mode:
+                        delta -= beta[2]
+                        f -= beta[3]
+                        f_fit -= beta[3]
+                        artists.extend(plot_ax.plot(delta[:s], f[:s]))
+                        artists.extend(plot_ax.plot(delta[s:], f[s:]))
+                        artists.extend(plot_ax.plot(delta[sl], f_fit, "--"))
+                    else:
+                        artists.extend(plot_ax.plot(delta[:s], f[:s]))
+                        artists.extend(plot_ax.plot(delta[s:], f[s:]))
                 else:
-                    artists.extend(plot_ax.plot(delta[:s], f[:s]))
-                    artists.extend(plot_ax.plot(delta[s:], f[s:]))
-            else:
-                raise ValueError("Unknown DispKind: ", disp_kind)
-            artists.extend(
-                img_ax.plot(
-                    x,
-                    y,
-                    marker="X",
-                    markersize=8,
-                    linestyle="",
-                    markeredgecolor="k",
-                    markerfacecolor=artists[0].get_color(),
+                    raise ValueError("Unknown DispKind: ", disp_kind)
+                artists.extend(
+                    img_ax.plot(
+                        x,
+                        y,
+                        marker="X",
+                        markersize=8,
+                        linestyle="",
+                        markeredgecolor="k",
+                        markerfacecolor=artists[0].get_color(),
+                    )
                 )
-            )
-            fig.canvas.draw_idle()
+                fig.canvas.draw_idle()
 
         # Waiting Phase
         # effectively waiting for a non-shift event in any new task
@@ -555,7 +555,7 @@ async def open_callback(root):
         partial(
             filedialog.askopenfilename,
             master=root,
-            filetypes=[("AFM Data", "*.h5 *.ARDF"), ("AR HDF5", "*.h5"), ("ARDF", "*.ARDF"), ],
+            filetypes=[("AFM Data", "*.h5 *.ARDF"), ("AR HDF5", "*.h5"), ("ARDF", "*.ARDF"),],
         )
     )
     if not filename:
