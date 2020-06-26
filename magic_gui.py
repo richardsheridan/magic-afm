@@ -311,10 +311,8 @@ class ARH5Window(tk.Toplevel):
         self.grid_columnconfigure(0, weight=1)
 
 
-async def arh5_task(filename, root):
-    # open and parse key variables
-    opened_arh5 = async_tools.AsyncARH5File(filename)
-    await opened_arh5.ainitialize()
+async def arh5_task(opened_arh5, root):
+    # parse key variables
     k = float(opened_arh5.notes['SpringConstant'])
 
     fig = Figure(figsize=(7, 2.5))
@@ -326,7 +324,7 @@ async def arh5_task(filename, root):
     # Build window
     window = ARH5Window(root)
     window.embed_figure(fig)
-    window.wm_title(filename.name)
+    window.wm_title(opened_arh5.h5file_path.name)
     window.image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
 
     colorbar: Optional[Colorbar] = None
@@ -482,20 +480,22 @@ async def arh5_task(filename, root):
     # Close phase
     window.withdraw()  # weird navbar hiccup on close
     window.destroy()
-    await opened_arh5.aclose()
 
 
-async def ardf_converter(filename, nursery, root):
+async def ardf_converter(filename, root):
     """Convert ARDF file to ARH5"""
     with trio.CancelScope() as cscope:
         pbar = PBar(root, cancel_callback=cscope.cancel)
         filename = await async_tools.convert_ardf(filename, 'ARDFtoHDF5.exe', True, pbar)
+
     if cscope.cancel_called:
         return
-    nursery.start_soon(arh5_task, filename, root)
+
+    async with async_tools.AsyncARH5File(filename) as opened_arh5:
+        await arh5_task(opened_arh5, root)
 
 
-async def open_callback(nursery, root):
+async def open_callback(root):
     """Open a file using a dialog box, then create a window for data analysis
 
     """
@@ -512,9 +512,10 @@ async def open_callback(nursery, root):
     # choose handler based on file suffix
     suffix = filename.suffix
     if suffix == '.ARDF':
-        nursery.start_soon(ardf_converter, filename, nursery, root)
+        await ardf_converter(filename, root)
     elif suffix == '.h5':
-        nursery.start_soon(arh5_task, filename, root)
+        async with async_tools.AsyncARH5File(filename) as opened_arh5:
+            await arh5_task(opened_arh5, root)
     else:
         raise ValueError('Unknown filename suffix: ', suffix)
 
@@ -576,11 +577,11 @@ async def main_task(root):
 
         file_menu = tk.Menu(menu_frame, tearoff=False)
         file_menu.add_command(label='Open...', accelerator='Ctrl+O', underline=0,
-                              command=partial(nursery.start_soon, open_callback, nursery, root))
+                              command=partial(nursery.start_soon, open_callback, root))
         file_menu.bind('<KeyRelease-o>',
-                       func=partial(nursery.start_soon, open_callback, nursery, root))
+                       func=partial(nursery.start_soon, open_callback, root))
         root.bind_all('<Control-KeyPress-o>',
-                      func=impartial(partial(nursery.start_soon, open_callback, nursery, root)))
+                      func=impartial(partial(nursery.start_soon, open_callback, root)))
         file_menu.add_command(label='Quit', accelerator='Ctrl+Q', underline=0,
                               command=nursery.cancel_scope.cancel)
         file_menu.bind('<KeyRelease-q>',
