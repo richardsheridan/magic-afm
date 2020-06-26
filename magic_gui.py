@@ -24,7 +24,7 @@ import traceback
 from enum import IntEnum
 from functools import partial, wraps
 from tkinter import ttk, filedialog
-from typing import Optional
+from typing import Optional, Callable
 
 import outcome
 import trio
@@ -37,6 +37,7 @@ from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 from matplotlib.colorbar import Colorbar
 from matplotlib.figure import Figure
 from matplotlib.ticker import ScalarFormatter
+from matplotlib.transforms import Bbox, BboxTransform
 from matplotlib.widgets import SubplotTool
 
 import async_tools
@@ -314,6 +315,7 @@ class ARH5Window(tk.Toplevel):
 async def arh5_task(opened_arh5, root):
     # parse key variables
     k = float(opened_arh5.notes['SpringConstant'])
+    scansize = float(opened_arh5.notes['ScanSize']) * async_tools.NANOMETER_UNIT_CONVERSION
 
     fig = Figure(figsize=(7, 2.5))
     img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.35]))
@@ -328,9 +330,10 @@ async def arh5_task(opened_arh5, root):
     window.image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
 
     colorbar: Optional[Colorbar] = None
+    data_coords_to_array_index: Optional[Callable] = None
 
     async def change_image_callback():
-        nonlocal colorbar
+        nonlocal colorbar, data_coords_to_array_index
         image_array = await opened_arh5.get_image(window.image_name_strvar.get())
 
         if colorbar is None:
@@ -339,11 +342,27 @@ async def arh5_task(opened_arh5, root):
             cax = colorbar.ax
             cax.clear()
         img_ax.clear()
-        image_artist = img_ax.imshow(image_array, picker=True)
-        colorbar = fig.colorbar(image_artist, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
+
+        axesimage = img_ax.imshow(image_array,
+                                  origin='upper' if opened_arh5.scandown else 'lower',
+                                  extent=(-scansize // 2, scansize // 2, -scansize // 2, scansize // 2),
+                                  picker=True,
+                                  )
+        colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
         window.navbar.update()  # let navbar catch new cax in fig
         # colorbar.ax.set_navigate(True)
         colorbar.solids.set_picker(True)
+
+        def data_coords_to_array_index(x, y):
+            xmin, xmax, ymin, ymax = axesimage.get_extent()
+            rows, cols = axesimage.get_size()
+            if axesimage.origin == 'upper':
+                ymin, ymax = ymax, ymin
+            data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
+            array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
+            trans = BboxTransform(boxin=data_extent, boxout=array_extent)
+            point = trans.transform_point([y, x])
+            return point.round().astype(int)  # row, column
 
         fig.tight_layout()
         fig.canvas.draw_idle()
@@ -365,7 +384,7 @@ async def arh5_task(opened_arh5, root):
         with trio.CancelScope() as cancel_scope:
             plot_pick_cancel = cancel_scope.cancel
 
-            z, d, s = await opened_arh5.get_force_curve(y, x)
+            z, d, s = await opened_arh5.get_force_curve(*data_coords_to_array_index(x, y))
             # Transform data to model units
             f = d * k
             delta = z - d
@@ -446,8 +465,7 @@ async def arh5_task(opened_arh5, root):
         elif mouseevent.inaxes is img_ax:
             if mouseevent.button != MouseButton.LEFT:
                 return
-            x, y = int(round(mouseevent.xdata)), int(round(mouseevent.ydata))
-            await plot_curve_event_response(x, y, shift_held)
+            await plot_curve_event_response(mouseevent.xdata, mouseevent.ydata, shift_held)
         elif mouseevent.inaxes is colorbar.ax:
             if mouseevent.button == MouseButton.LEFT:
                 colorbar.norm.vmax = max(mouseevent.ydata, colorbar.norm.vmin)

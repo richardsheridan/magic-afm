@@ -196,14 +196,13 @@ class AsyncARH5File:
     async def ainitialize(self):
         h5data = await trs(h5py.File, self.h5file_path, "r")
         # The notes have a very regular key-value structure, so we convert to dict for later access
-        notes = await trs(
+        self.notes = await trs(
             lambda: dict(line.split(':', 1)
                          for line in h5data.attrs["Note"].decode('utf8').split('\n')
                          if ':' in line))
         worker = await trs(self._choose_worker, h5data)
         images, image_names = await trs(lambda: (h5data['Image'], list(h5data['Image'].keys())))
         self._h5data = h5data
-        self.notes = notes
         self._worker = worker
         self._images = images
         self.image_names = image_names
@@ -219,9 +218,9 @@ class AsyncARH5File:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.aclose()
 
-    @staticmethod
-    def _choose_worker(h5data):
+    def _choose_worker(self, h5data):
         if 'FFM' in h5data:
+            self.scandown = bool(self.notes['ScanDown'])
             if '1' in h5data['FFM']:
                 worker = FFMTraceRetraceWorker(h5data["FFM"]["0"]["Drive"],
                                                h5data["FFM"]["0"]["Defl"],
@@ -237,6 +236,7 @@ class AsyncARH5File:
                                          h5data["FFM"]["Defl"],
                                          )
         else:
+            self.scandown = bool(self.notes['FMapScanDown'])
             worker = ForceMapWorker(h5data)
         return worker
 
