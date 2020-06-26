@@ -320,6 +320,11 @@ async def arh5_task(opened_arh5, root):
     fig = Figure(figsize=(7, 2.5))
     img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.35]))
     img_ax.set_anchor('W')
+    # Need to pre-load something into these labels for change_image_callback->tight_layout
+    plot_ax.set_xlabel(' ')
+    plot_ax.set_ylabel(' ')
+    plot_ax.set_ylim([-1000, 1000])
+    plot_ax.set_xlim([-1000, 1000])
     fmt = ScalarFormatter()
     fmt.set_powerlimits((-2, 2))
 
@@ -334,7 +339,8 @@ async def arh5_task(opened_arh5, root):
 
     async def change_image_callback():
         nonlocal colorbar, data_coords_to_array_index
-        image_array = await opened_arh5.get_image(window.image_name_strvar.get())
+        image_name = window.image_name_strvar.get()
+        image_array = await opened_arh5.get_image(image_name)
 
         if colorbar is None:
             cax = None
@@ -343,26 +349,32 @@ async def arh5_task(opened_arh5, root):
             cax.clear()
         img_ax.clear()
 
+        s = (scansize + scansize / len(image_array)) // 2
         axesimage = img_ax.imshow(image_array,
                                   origin='upper' if opened_arh5.scandown else 'lower',
-                                  extent=(-scansize // 2, scansize // 2, -scansize // 2, scansize // 2),
+                                  extent=(-s, s, -s, s,),
                                   picker=True,
                                   )
+
+        xmin, xmax, ymin, ymax = axesimage.get_extent()
+        rows, cols = axesimage.get_size()
+        if axesimage.origin == 'upper':
+            ymin, ymax = ymax, ymin
+        data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
+        array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
+        trans = BboxTransform(boxin=data_extent, boxout=array_extent)
+
+        def data_coords_to_array_index(x, y):
+            return trans.transform_point([y, x]).round().astype(int)  # row, column
+
+        img_ax.set_ylabel('Y piezo (nm)')
+        img_ax.set_xlabel('X piezo (nm)')
+
         colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
         window.navbar.update()  # let navbar catch new cax in fig
         # colorbar.ax.set_navigate(True)
         colorbar.solids.set_picker(True)
-
-        def data_coords_to_array_index(x, y):
-            xmin, xmax, ymin, ymax = axesimage.get_extent()
-            rows, cols = axesimage.get_size()
-            if axesimage.origin == 'upper':
-                ymin, ymax = ymax, ymin
-            data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
-            array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
-            trans = BboxTransform(boxin=data_extent, boxout=array_extent)
-            point = trans.transform_point([y, x])
-            return point.round().astype(int)  # row, column
+        colorbar.ax.set_ylabel(opened_arh5.units_map.get(image_name, 'Volts'))
 
         fig.tight_layout()
         fig.canvas.draw_idle()
@@ -426,11 +438,15 @@ async def arh5_task(opened_arh5, root):
         with trio.testing.assert_no_checkpoints():
             artists = []
             if disp_kind == DispKind.zd:
+                plot_ax.set_xlabel('Z piezo (nm)')
+                plot_ax.set_ylabel('Cantilever deflection (nm)')
                 artists.extend(plot_ax.plot(z[:s], d[:s]))
                 artists.extend(plot_ax.plot(z[s:], d[s:]))
                 if fit_mode:
                     artists.extend(plot_ax.plot(z[sl], d_fit, '--'))
             elif disp_kind == DispKind.δf:
+                plot_ax.set_xlabel('Indentation depth (nm)')
+                plot_ax.set_ylabel('Indentation force (nm)')
                 artists.extend(plot_ax.plot(delta[:s], f[:s]))
                 artists.extend(plot_ax.plot(delta[s:], f[s:]))
                 if fit_mode:

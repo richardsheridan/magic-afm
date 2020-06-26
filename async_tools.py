@@ -192,6 +192,7 @@ class FFMTraceRetraceWorker:
 class AsyncARH5File:
     def __init__(self, h5file_path):
         self.h5file_path = h5file_path
+        self.units_map = {}
 
     async def ainitialize(self):
         h5data = await trs(h5py.File, self.h5file_path, "r")
