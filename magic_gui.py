@@ -399,6 +399,9 @@ async def arh5_task(opened_arh5, root):
             plot_pick_cancel = cancel_scope.cancel
 
             z, d, s = await opened_arh5.get_force_curve(*data_coords_to_array_index(x, y))
+            resample_npts = 512
+            s = s * resample_npts // len(z)
+            z, d = await trs(magic_calculation.resample_dset, [z, d], resample_npts, True)
             # Transform data to model units
             f = d * k
             delta = z - d
