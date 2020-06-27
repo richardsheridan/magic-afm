@@ -83,9 +83,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         super(FigureCanvasTk, self).__init__(figure)
         t1, t2, w, h = self.figure.bbox.bounds
         w, h = int(w), int(h)
-        self._tkcanvas = tk.Canvas(
-            master=master, background="white", width=w, height=h, borderwidth=0, highlightthickness=0,
-        )
+        self._tkcanvas = tk.Canvas(master=master, width=w, height=h, borderwidth=0, highlightthickness=0,)
         self._tkphoto = tk.PhotoImage(master=self._tkcanvas, width=w, height=h)
         self._tkcanvas.create_image(w // 2, h // 2, image=self._tkphoto)
         self._resize_callback = resize_callback
@@ -260,70 +258,68 @@ class TkHost:
         self.root.destroy()
 
 
-class ARH5Window(tk.Toplevel):
-    def embed_figure(self, fig):
-        self.canvas = AsyncFigureCanvasTkAgg(fig, self, resize_callback=impartial(fig.tight_layout))
-        self.navbar = ImprovedNavigationToolbar2Tk(self.canvas, self)
+def embed_figure(root, fig, title, image_names):
+    window = tk.Toplevel(root)
+    window.wm_title(title)
+    canvas = AsyncFigureCanvasTkAgg(fig, window, resize_callback=impartial(fig.tight_layout))
+    navbar = ImprovedNavigationToolbar2Tk(canvas, window)
 
-        options_frame = ttk.Frame(self)
-        image_name_labelframe = ttk.Labelframe(options_frame, text="Current image")
-        self.image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
-        self.image_name_menu = ttk.Combobox(
-            image_name_labelframe, width=12, state="readonly", textvariable=self.image_name_strvar,
-        )
-        self.image_name_menu.pack(side="left")
-        image_name_labelframe.pack(side="left")
+    options_frame = ttk.Frame(root)
+    image_name_labelframe = ttk.Labelframe(options_frame, text="Current image")
+    image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
+    image_name_menu = ttk.Combobox(image_name_labelframe, width=12, state="readonly", textvariable=image_name_strvar,)
+    image_name_menu.configure(values=image_names, width=max(map(len, image_names)))
 
-        disp_labelframe = ttk.Labelframe(options_frame, text="Display type")
-        self.disp_type_var = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
-        self.disp_zd_button = ttk.Radiobutton(
-            disp_labelframe, text="z/d", value=DispKind.zd.value, variable=self.disp_type_var
-        )
-        self.disp_zd_button.pack(side="left")
-        self.disp_deltaf_button = ttk.Radiobutton(
-            disp_labelframe, text="δ/f", value=DispKind.δf.value, variable=self.disp_type_var
-        )
-        self.disp_deltaf_button.pack(side="left")
-        disp_labelframe.pack(side="left")
+    image_name_menu.pack(side="left")
+    image_name_labelframe.pack(side="left")
 
-        fit_labelframe = ttk.Labelframe(options_frame, text="Fit type")
-        self.fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FIT_MODE.skip.value)
-        self.fit_skip_button = ttk.Radiobutton(
-            fit_labelframe, text="Skip", value=magic_calculation.FIT_MODE.skip.value, variable=self.fit_intvar
-        )
-        self.fit_skip_button.pack(side="left")
-        self.fit_ext_button = ttk.Radiobutton(
-            fit_labelframe, text="Extend", value=magic_calculation.FIT_MODE.extend.value, variable=self.fit_intvar
-        )
-        self.fit_ext_button.pack(side="left")
-        self.fit_ret_button = ttk.Radiobutton(
-            fit_labelframe, text="retract", value=magic_calculation.FIT_MODE.retract.value, variable=self.fit_intvar
-        )
-        self.fit_ret_button.pack(side="left")
-        fit_labelframe.pack(side="left")
+    disp_labelframe = ttk.Labelframe(options_frame, text="Display type")
+    disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
+    disp_zd_button = ttk.Radiobutton(disp_labelframe, text="z/d", value=DispKind.zd.value, variable=disp_kind_intvar)
+    disp_zd_button.pack(side="left")
+    disp_deltaf_button = ttk.Radiobutton(
+        disp_labelframe, text="δ/f", value=DispKind.δf.value, variable=disp_kind_intvar
+    )
+    disp_deltaf_button.pack(side="left")
+    disp_labelframe.pack(side="left")
 
-        ttk.Sizegrip(options_frame).pack(side="right", anchor="sw")
+    fit_labelframe = ttk.Labelframe(options_frame, text="Fit type")
+    fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FIT_MODE.skip.value)
+    fit_skip_button = ttk.Radiobutton(
+        fit_labelframe, text="Skip", value=magic_calculation.FIT_MODE.skip.value, variable=fit_intvar
+    )
+    fit_skip_button.pack(side="left")
+    fit_ext_button = ttk.Radiobutton(
+        fit_labelframe, text="Extend", value=magic_calculation.FIT_MODE.extend.value, variable=fit_intvar
+    )
+    fit_ext_button.pack(side="left")
+    fit_ret_button = ttk.Radiobutton(
+        fit_labelframe, text="retract", value=magic_calculation.FIT_MODE.retract.value, variable=fit_intvar
+    )
+    fit_ret_button.pack(side="left")
+    fit_labelframe.pack(side="left")
 
-        self.navbar.grid(row=0, sticky="we")
-        self.grid_rowconfigure(0, weight=0)
-        self.grid_columnconfigure(0, weight=1)
-        self.canvas.get_tk_widget().grid(row=1, sticky="wens")
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
-        options_frame.grid(row=2, sticky="we")
-        self.grid_rowconfigure(2, weight=0)
-        self.grid_columnconfigure(0, weight=1)
+    options_frame.grid(row=1, column=0, sticky="nsew")
+
+    size_grip = ttk.Sizegrip(window)
+
+    navbar.grid(row=0, sticky="we")
+    window.grid_rowconfigure(0, weight=0)
+
+    canvas.get_tk_widget().grid(row=1, sticky="wens")
+    window.grid_rowconfigure(1, weight=1)
+    window.grid_columnconfigure(0, weight=1)
+
+    size_grip.grid(row=2, column=1, sticky="es")
+    window.grid_columnconfigure(1, weight=0)
+    return window, canvas, navbar, options_frame, image_name_strvar, disp_kind_intvar, fit_intvar
 
 
 ARH5_FIGURE_SIZE = (8, 2.75)
 
 
-async def arh5_task(opened_arh5, root):
-    # parse key variables
-    k = float(opened_arh5.notes["SpringConstant"])
-    scansize = float(opened_arh5.notes["ScanSize"]) * async_tools.NANOMETER_UNIT_CONVERSION
-
-    fig = Figure(figsize=ARH5_FIGURE_SIZE)
+def create_arh5_figure(figsize=ARH5_FIGURE_SIZE):
+    fig = Figure(figsize, frameon=False)
     img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.35]))
     img_ax.set_anchor("W")
     # Need to pre-load something into these labels for change_image_callback->tight_layout
@@ -331,21 +327,26 @@ async def arh5_task(opened_arh5, root):
     plot_ax.set_ylabel(" ")
     plot_ax.set_ylim([-1000, 1000])
     plot_ax.set_xlim([-1000, 1000])
+    return fig, img_ax, plot_ax
+
+
+async def arh5_task(opened_arh5, root):
+    k = float(opened_arh5.notes["SpringConstant"])
+    scansize = float(opened_arh5.notes["ScanSize"]) * async_tools.NANOMETER_UNIT_CONVERSION
+
+    fig, img_ax, plot_ax = create_arh5_figure()
+    window, canvas, navbar, options_frame, image_name_strvar, disp_kind_intvar, fit_intvar = embed_figure(
+        root, fig, opened_arh5.h5file_path.name, opened_arh5.image_names
+    )
+
     fmt = ScalarFormatter()
     fmt.set_powerlimits((-2, 2))
-
-    # Build window
-    window = ARH5Window(root)
-    window.embed_figure(fig)
-    window.wm_title(opened_arh5.h5file_path.name)
-    window.image_name_menu.configure(values=opened_arh5.image_names, width=max(map(len, opened_arh5.image_names)))
-
     colorbar: Optional[Colorbar] = None
     data_coords_to_array_index: Optional[Callable] = None
 
     async def change_image_callback():
         nonlocal colorbar, data_coords_to_array_index
-        image_name = window.image_name_strvar.get()
+        image_name = image_name_strvar.get()
         image_array = await opened_arh5.get_image(image_name)
 
         if colorbar is None:
@@ -375,13 +376,13 @@ async def arh5_task(opened_arh5, root):
         img_ax.set_xlabel("X piezo (nm)")
 
         colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
-        window.navbar.update()  # let navbar catch new cax in fig
+        navbar.update()  # let navbar catch new cax in fig
         # colorbar.ax.set_navigate(True)
         colorbar.solids.set_picker(True)
         colorbar.ax.set_ylabel(opened_arh5.units_map.get(image_name, "Volts"))
 
         fig.tight_layout()
-        fig.canvas.draw_idle()
+        canvas.draw_idle()
 
     plot_pick_cancel = lambda: None
     clear_lot = trio.lowlevel.ParkingLot()
@@ -391,8 +392,8 @@ async def arh5_task(opened_arh5, root):
     async def plot_curve_event_response(x, y, shift_held):
         nonlocal plot_pick_cancel
         nonlocal artist_removals_pending
-        fit_mode = window.fit_intvar.get()
-        disp_kind = window.disp_type_var.get()
+        fit_mode = fit_intvar.get()
+        disp_kind = disp_kind_intvar.get()
 
         # Calculation phase
         # Do a few long-running jobs, likely to be canceled
@@ -442,7 +443,7 @@ async def arh5_task(opened_arh5, root):
 
         # Drawing Phase
         # Based on local state choose plots and collect artists for deletion
-        async with window.canvas.trio_draw_lock:
+        async with canvas.trio_draw_lock:
             with trio.testing.assert_no_checkpoints():
                 artists = []
                 if disp_kind == DispKind.zd:
@@ -478,7 +479,7 @@ async def arh5_task(opened_arh5, root):
                         markerfacecolor=artists[0].get_color(),
                     )
                 )
-                fig.canvas.draw_idle()
+                canvas.draw_idle()
 
         # Waiting Phase
         # effectively waiting for a non-shift event in any new task
@@ -511,28 +512,31 @@ async def arh5_task(opened_arh5, root):
             # Adjust colorbar scale
             # simple enough, so keep inline
             colorbar.solids.set_clim(colorbar.norm.vmin, colorbar.norm.vmax)
-            fig.canvas.draw_idle()
+            canvas.draw_idle()
 
     async with trio.open_nursery() as nursery:
         window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-        fig.canvas.mpl_connect("motion_notify_event", partial(nursery.start_soon, mpl_event_callback))
-        fig.canvas.mpl_connect("pick_event", partial(nursery.start_soon, mpl_event_callback))
+        funcid_bind_FocusIn = window.bind("<FocusIn>", impartial(options_frame.lift))
+        canvas.mpl_connect("motion_notify_event", partial(nursery.start_soon, mpl_event_callback))
+        canvas.mpl_connect("pick_event", partial(nursery.start_soon, mpl_event_callback))
 
-        await nursery.start(fig.canvas.idle_draw_task)
-        window.image_name_strvar.trace_add("write", impartial(partial(nursery.start_soon, change_image_callback)))
-        # StringVar.set() won't be effective to plot unless it happens after the trace add AND idle_draw_task
+        await nursery.start(canvas.idle_draw_task)
+        image_name_strvar.trace_add("write", impartial(partial(nursery.start_soon, change_image_callback)))
+        # StringVar.set() won't be effective to plot unless it happens after the trace_add AND start(idle_draw_task)
         # accidentally, the plot will be drawn later due to resize, but let's not rely on that
         for name in ("MapHeight", "ZSensorTrace"):
             if name in opened_arh5.image_names:
-                window.image_name_strvar.set(name)
+                image_name_strvar.set(name)
                 break
 
-        window.navbar.teach_navbar_to_use_trio(nursery)
+        navbar.teach_navbar_to_use_trio(nursery)
         await trio.sleep_forever()
 
     # Close phase
+    window.unbind("<FocusIn>", funcid_bind_FocusIn)  # free funcid
     window.withdraw()  # weird navbar hiccup on close
     window.destroy()
+    options_frame.destroy()
 
 
 async def ardf_converter(filename, root):
@@ -649,6 +653,11 @@ async def main_task(root):
         root.bind_all("<Control-KeyPress-F1>", func=impartial(partial(nursery.start_soon, about_task, root)))
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
+        toolbar_frame = ttk.Frame(root)
+        temp_text = ttk.Label(toolbar_frame, text="Eventually some buttons go here!")
+        temp_text.pack()
+        toolbar_frame.grid(row=0, column=0, sticky="ew")
+
         await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 
@@ -656,6 +665,7 @@ def main():
     # make root/parent passing mandatory.
     tk.NoDefaultRoot()
     root = tk.Tk()
+    root.wm_resizable(False, False)
     # sabotage update command so that we crash instead of deadlocking
     # breaks ttk.Combobox, maybe others
     # root.tk.call('rename', 'update', 'never_update')
