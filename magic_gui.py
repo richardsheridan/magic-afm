@@ -596,6 +596,9 @@ async def about_task(root):
     top.wm_title(f"About {app_name}")
     message = tk.Message(top, text=__short_license__)
     message.pack()
+    thread_disp_var = tk.StringVar(top)
+    thread_disp_label = ttk.Label(top, textvariable=thread_disp_var)
+    thread_disp_label.pack()
     opts = dict(mode="indeterminate", maximum=80, length=300)
     timely_trio_pbar = ttk.Progressbar(top, **opts)
     timely_trio_pbar.pack()
@@ -613,16 +616,24 @@ async def about_task(root):
 
     async def pbar_runner_timely():
         t = trio.current_time()
+        t0 = t
         while True:
+            v = (trio.current_time() - t0) * 1000 / interval
+            timely_trio_pbar["value"] = int(round(v))
             t = t + interval / 1000
-            timely_trio_pbar.step()
             await trio.sleep_until(t)
+
+    async def thread_poller_task():
+        while True:
+            thread_disp_var.set(async_tools.cpu_bound_limiter)
+            await trio.sleep(interval / 1000)
 
     # run using tcl event loop
     tk_pbar.start(interval)
     # run using trio
     async with trio.open_nursery() as nursery:
         top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+        nursery.start_soon(thread_poller_task)
         nursery.start_soon(pbar_runner)
         nursery.start_soon(pbar_runner_timely)
     top.destroy()
