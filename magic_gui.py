@@ -44,7 +44,7 @@ import async_tools
 import magic_calculation
 from async_tools import trs
 
-LONGEST_IMPERCEPTIBLE_DELAY = 0.01  # seconds
+LONGEST_IMPERCEPTIBLE_DELAY = 0.06  # seconds
 MAX_REMOVAL_ATTEMPTS = 4
 
 
@@ -384,22 +384,24 @@ async def arh5_task(opened_arh5, root):
         fig.tight_layout()
         canvas.draw_idle()
 
-    plot_pick_cancel = lambda: None
+    cancels_pending = set()
     clear_lot = trio.lowlevel.ParkingLot()
     clear_lock = trio.Lock()
     artist_removals_pending = 0
 
     async def plot_curve_event_response(x, y, shift_held):
-        nonlocal plot_pick_cancel
         nonlocal artist_removals_pending
         fit_mode = fit_intvar.get()
         disp_kind = disp_kind_intvar.get()
 
         # Calculation phase
         # Do a few long-running jobs, likely to be canceled
-        plot_pick_cancel()
+        if not shift_held:
+            for cancel_function in cancels_pending:
+                cancel_function()
+            cancels_pending.clear()
         with trio.CancelScope() as cancel_scope:
-            plot_pick_cancel = cancel_scope.cancel
+            cancels_pending.add(cancel_scope.cancel)
 
             z, d, s = await opened_arh5.get_force_curve(*data_coords_to_array_index(x, y))
             resample_npts = 512
@@ -422,6 +424,12 @@ async def arh5_task(opened_arh5, root):
                 f_fit = calc_fun(delta[sl], *beta)
                 d_fit = f_fit / k
 
+        if cancel_scope.cancelled_caught:
+            return
+        else:
+            cancels_pending.discard(cancel_scope.cancel)
+
+        async with canvas.trio_draw_lock:
             # Clearing Phase
             # Clear previous artists and reset plots (faster than .clear()?)
             if not shift_held:
@@ -438,12 +446,8 @@ async def arh5_task(opened_arh5, root):
                     plot_ax.set_prop_cycle(None)
                     plot_ax.set_autoscale_on(True)
 
-        if cancel_scope.cancelled_caught:
-            return
-
-        # Drawing Phase
-        # Based on local state choose plots and collect artists for deletion
-        async with canvas.trio_draw_lock:
+            # Drawing Phase
+            # Based on local state choose plots and collect artists for deletion
             with trio.testing.assert_no_checkpoints():
                 artists = []
                 if disp_kind == DispKind.zd:
