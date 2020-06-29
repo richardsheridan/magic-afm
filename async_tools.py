@@ -25,7 +25,8 @@ import numpy as np
 import trio
 
 cpu_bound_limiter = trio.CapacityLimiter(7)
-trs = partial(trio.to_thread.run_sync, cancellable=True, limiter=cpu_bound_limiter)
+ctrs = partial(trio.to_thread.run_sync, cancellable=True, limiter=cpu_bound_limiter)
+trs = partial(trio.to_thread.run_sync, cancellable=True)
 
 
 def make_cancel_poller():

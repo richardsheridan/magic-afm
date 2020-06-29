@@ -42,9 +42,9 @@ from matplotlib.widgets import SubplotTool
 
 import async_tools
 import magic_calculation
-from async_tools import trs
+from async_tools import trs, ctrs
 
-LONGEST_IMPERCEPTIBLE_DELAY = 0.06  # seconds
+LONGEST_IMPERCEPTIBLE_DELAY = 0.016  # seconds
 MAX_REMOVAL_ATTEMPTS = 4
 
 
@@ -406,7 +406,7 @@ async def arh5_task(opened_arh5, root):
             z, d, s = await opened_arh5.get_force_curve(*data_coords_to_array_index(x, y))
             resample_npts = 512
             s = s * resample_npts // len(z)
-            z, d = await trs(magic_calculation.resample_dset, [z, d], resample_npts, True)
+            z, d = await ctrs(magic_calculation.resample_dset, [z, d], resample_npts, True)
             # Transform data to model units
             f = d * k
             delta = z - d
@@ -418,7 +418,7 @@ async def arh5_task(opened_arh5, root):
                 else:
                     raise ValueError("Unknown fit_mode: ", fit_mode)
 
-                beta, beta_err, calc_fun = await trs(
+                beta, beta_err, calc_fun = await ctrs(
                     magic_calculation.fitfun, delta[sl], f[sl], k, 20, 0, fit_mode, async_tools.make_cancel_poller()
                 )
                 f_fit = calc_fun(delta[sl], *beta)
@@ -599,6 +599,9 @@ async def about_task(root):
     thread_disp_var = tk.StringVar(top)
     thread_disp_label = ttk.Label(top, textvariable=thread_disp_var)
     thread_disp_label.pack()
+    thread_disp_var2 = tk.StringVar(top)
+    thread_disp_label2 = ttk.Label(top, textvariable=thread_disp_var2)
+    thread_disp_label2.pack()
     opts = dict(mode="indeterminate", maximum=80, length=300)
     timely_trio_pbar = ttk.Progressbar(top, **opts)
     timely_trio_pbar.pack()
@@ -625,7 +628,10 @@ async def about_task(root):
 
     async def thread_poller_task():
         while True:
-            thread_disp_var.set(async_tools.cpu_bound_limiter)
+            thread_disp_var.set("CPU-bound threads:" + repr(async_tools.cpu_bound_limiter).split(",")[1][:-1])
+            thread_disp_var2.set(
+                "Default threads:" + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
+            )
             await trio.sleep(interval / 1000)
 
     # run using tcl event loop
