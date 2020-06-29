@@ -384,7 +384,7 @@ async def arh5_task(opened_arh5, root):
         canvas.draw_idle()
 
     cancels_pending = set()
-    clear_condition = trio.Condition(lock=trio.Lock()) # XXX: Should be StrictFIFOLock after bugfix
+    clear_condition = trio.Condition(lock=trio.Lock())  # XXX: Should be StrictFIFOLock after bugfix
 
     async def plot_curve_event_response(x, y, shift_held):
         plot_ax.set_autoscale_on(True)  # XXX: only needed on first plot. Maybe later make optional?
@@ -394,11 +394,11 @@ async def arh5_task(opened_arh5, root):
         # Calculation phase
         # Do a few long-running jobs, likely to be canceled
         if not shift_held:
-            for cancel_function in cancels_pending:
-                cancel_function()
+            for cancel_scope in cancels_pending:
+                cancel_scope.cancel()
             cancels_pending.clear()
         with trio.CancelScope() as cancel_scope:
-            cancels_pending.add(cancel_scope.cancel)
+            cancels_pending.add(cancel_scope)
 
             z, d, s = await opened_arh5.get_force_curve(*data_coords_to_array_index(x, y))
             resample_npts = 512
@@ -421,10 +421,10 @@ async def arh5_task(opened_arh5, root):
                 f_fit = calc_fun(delta[sl], *beta)
                 d_fit = f_fit / k
 
+        cancels_pending.discard(cancel_scope)
+
         if cancel_scope.cancelled_caught:
             return
-        else:
-            cancels_pending.discard(cancel_scope.cancel)
 
         async with canvas.trio_draw_lock:
             # Clearing Phase
