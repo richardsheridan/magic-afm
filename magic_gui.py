@@ -261,7 +261,7 @@ class TkHost:
 def embed_figure(root, fig, title, image_names):
     window = tk.Toplevel(root)
     window.wm_title(title)
-    canvas = AsyncFigureCanvasTkAgg(fig, window, resize_callback=impartial(fig.tight_layout))
+    canvas = AsyncFigureCanvasTkAgg(fig, window,)
     navbar = ImprovedNavigationToolbar2Tk(canvas, window)
 
     options_frame = ttk.Frame(root)
@@ -494,7 +494,7 @@ async def arh5_task(opened_arh5, root):
         artist_removals_pending -= 1
         assert artist_removals_pending >= 0
 
-    async def mpl_event_callback(event):
+    async def mpl_pick_motion_event_callback(event):
         mouseevent = getattr(event, "mouseevent", event)
         control_held = event.guiEvent.state & TkState.CONTROL
         if event.name == "motion_notify_event" and not control_held:
@@ -518,11 +518,24 @@ async def arh5_task(opened_arh5, root):
             colorbar.solids.set_clim(colorbar.norm.vmin, colorbar.norm.vmax)
             canvas.draw_idle()
 
+    resize_cancels_pending = set()
+
+    async def mpl_resize_event_callback():
+        for cancel_scope in resize_cancels_pending:
+            cancel_scope.cancel()
+        resize_cancels_pending.clear()
+        with trio.CancelScope() as cancel_scope:
+            resize_cancels_pending.add(cancel_scope)
+            async with canvas.trio_draw_lock:
+                await trs(fig.tight_layout, cancellable=False)
+        resize_cancels_pending.discard(cancel_scope)
+
     async with trio.open_nursery() as nursery:
         window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
         funcid_bind_FocusIn = window.bind("<FocusIn>", impartial(options_frame.lift))
-        canvas.mpl_connect("motion_notify_event", partial(nursery.start_soon, mpl_event_callback))
-        canvas.mpl_connect("pick_event", partial(nursery.start_soon, mpl_event_callback))
+        canvas.mpl_connect("motion_notify_event", partial(nursery.start_soon, mpl_pick_motion_event_callback))
+        canvas.mpl_connect("pick_event", partial(nursery.start_soon, mpl_pick_motion_event_callback))
+        canvas.mpl_connect("resize_event", impartial(partial(nursery.start_soon, mpl_resize_event_callback)))
 
         await nursery.start(canvas.idle_draw_task)
         image_name_strvar.trace_add("write", impartial(partial(nursery.start_soon, change_image_callback)))
