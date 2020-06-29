@@ -391,6 +391,7 @@ async def arh5_task(opened_arh5, root):
 
     async def plot_curve_event_response(x, y, shift_held):
         nonlocal artist_removals_pending
+        plot_ax.set_autoscale_on(True)  # XXX: only needed on first plot. Maybe later make optional?
         fit_mode = fit_intvar.get()
         disp_kind = disp_kind_intvar.get()
 
@@ -444,7 +445,6 @@ async def arh5_task(opened_arh5, root):
                         raise RuntimeError("Too many attempts to remove artists")
                     plot_ax.relim()
                     plot_ax.set_prop_cycle(None)
-                    plot_ax.set_autoscale_on(True)
 
             # Drawing Phase
             # Based on local state choose plots and collect artists for deletion
