@@ -45,7 +45,6 @@ import magic_calculation
 from async_tools import trs, ctrs
 
 LONGEST_IMPERCEPTIBLE_DELAY = 0.016  # seconds
-MAX_REMOVAL_ATTEMPTS = 4
 
 
 class TkState(IntEnum):
@@ -385,12 +384,9 @@ async def arh5_task(opened_arh5, root):
         canvas.draw_idle()
 
     cancels_pending = set()
-    clear_lot = trio.lowlevel.ParkingLot()
-    clear_lock = trio.Lock()
-    artist_removals_pending = 0
+    clear_condition = trio.Condition(lock=trio.Lock()) # XXX: Should be StrictFIFOLock after bugfix
 
     async def plot_curve_event_response(x, y, shift_held):
-        nonlocal artist_removals_pending
         plot_ax.set_autoscale_on(True)  # XXX: only needed on first plot. Maybe later make optional?
         fit_mode = fit_intvar.get()
         disp_kind = disp_kind_intvar.get()
@@ -434,17 +430,16 @@ async def arh5_task(opened_arh5, root):
             # Clearing Phase
             # Clear previous artists and reset plots (faster than .clear()?)
             if not shift_held:
-                async with clear_lock:
-                    clear_lot.unpark_all()
-                    # wait for artist removals, then relim
-                    for _ in range(MAX_REMOVAL_ATTEMPTS):
-                        await trio.sleep(0)
-                        if not artist_removals_pending:
-                            break
-                    else:
-                        raise RuntimeError("Too many attempts to remove artists")
-                    plot_ax.relim()
-                    plot_ax.set_prop_cycle(None)
+                async with clear_condition:
+                    clear_condition.notify_all()
+                # Wait for clearing tasks to finish
+                # I think this works because this task moves to the end of the queue to lock
+                # Would it break if this task didn't hold canvas.trio_draw_lock?
+                await clear_condition.acquire()
+                clear_condition.release()
+
+                plot_ax.relim()
+                plot_ax.set_prop_cycle(None)
 
             # Drawing Phase
             # Based on local state choose plots and collect artists for deletion
@@ -487,12 +482,10 @@ async def arh5_task(opened_arh5, root):
 
         # Waiting Phase
         # effectively waiting for a non-shift event in any new task
-        artist_removals_pending += 1
-        await clear_lot.park()
-        for artist in artists:
-            artist.remove()
-        artist_removals_pending -= 1
-        assert artist_removals_pending >= 0
+        async with clear_condition:
+            await clear_condition.wait()
+            for artist in artists:
+                artist.remove()
 
     async def mpl_pick_motion_event_callback(event):
         mouseevent = getattr(event, "mouseevent", event)
