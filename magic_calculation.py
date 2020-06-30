@@ -16,7 +16,7 @@ A Docstring
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-from enum import IntEnum
+import enum
 
 import numpy as np
 from scipy.optimize import curve_fit, root_scalar
@@ -459,10 +459,11 @@ def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale, ):
     return a
 
 
-class FIT_MODE(IntEnum):
-    skip = 0
-    extend = 1
-    retract = 2
+@enum.unique
+class FitMode(enum.IntEnum):
+    SKIP = 0  # needs to be inty and falsy
+    EXTEND = enum.auto()
+    RETRACT = enum.auto()
 
 
 @np.errstate(all='ignore')
@@ -482,9 +483,9 @@ def fitfun(delta, f, k, radius, tau, fit_mode, _poll_for_cancel=lambda: None):
     p0 = [K_guess, fc_guess, deltamin, fzero, 1, ]
 
     assert fit_mode
-    if fit_mode == FIT_MODE.extend:
+    if fit_mode == FitMode.EXTEND:
         red_curve = red_extend
-    elif fit_mode == FIT_MODE.retract:
+    elif fit_mode == FitMode.RETRACT:
         red_curve = red_retract
     else:
         raise ValueError('Unknown fit_mode: ', fit_mode)

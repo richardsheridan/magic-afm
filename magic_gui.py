@@ -21,7 +21,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import collections
 import tkinter as tk
 import traceback
-from enum import IntEnum
+import enum
 from functools import partial, wraps
 from tkinter import ttk, filedialog
 from typing import Optional, Callable
@@ -47,23 +47,26 @@ from async_tools import trs, ctrs
 LONGEST_IMPERCEPTIBLE_DELAY = 0.016  # seconds
 
 
-class TkState(IntEnum):
-    """AND/OR these with a tk.Event to see which keys were held down during it"""
+class TkState(enum.IntFlag):
+    """AND/OR these with a tk.Event.state to see which keys were held down"""
 
-    SHIFT = 0x0001
-    CAPSLOCK = 0x0002
-    CONTROL = 0x0004
-    LALT = 0x0008
-    NUMLOCK = 0x0010
-    RALT = 0x0080
-    MB1 = 0x0100
-    MB2 = 0x0200
-    MB3 = 0x0400
+    # fmt: off
+    SHIFT    = 0b00000000001
+    CAPSLOCK = 0b00000000010
+    CONTROL  = 0b00000000100
+    LALT     = 0b00000001000
+    NUMLOCK  = 0b00000010000
+    RALT     = 0b00010000000
+    MB1      = 0b00100000000
+    MB2      = 0b01000000000
+    MB3      = 0b10000000000
+    # fmt: on
 
 
-class DispKind(IntEnum):
-    zd = 0
-    δf = 1
+@enum.unique
+class DispKind(enum.IntEnum):
+    zd = enum.auto()
+    δf = enum.auto()
 
 
 def impartial(fn):
@@ -283,17 +286,17 @@ def embed_figure(root, fig, title, image_names):
     disp_labelframe.pack(side="left")
 
     fit_labelframe = ttk.Labelframe(options_frame, text="Fit type")
-    fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FIT_MODE.skip.value)
+    fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FitMode.SKIP.value)
     fit_skip_button = ttk.Radiobutton(
-        fit_labelframe, text="Skip", value=magic_calculation.FIT_MODE.skip.value, variable=fit_intvar
+        fit_labelframe, text="Skip", value=magic_calculation.FitMode.SKIP.value, variable=fit_intvar
     )
     fit_skip_button.pack(side="left")
     fit_ext_button = ttk.Radiobutton(
-        fit_labelframe, text="Extend", value=magic_calculation.FIT_MODE.extend.value, variable=fit_intvar
+        fit_labelframe, text="Extend", value=magic_calculation.FitMode.EXTEND.value, variable=fit_intvar
     )
     fit_ext_button.pack(side="left")
     fit_ret_button = ttk.Radiobutton(
-        fit_labelframe, text="retract", value=magic_calculation.FIT_MODE.retract.value, variable=fit_intvar
+        fit_labelframe, text="retract", value=magic_calculation.FitMode.RETRACT.value, variable=fit_intvar
     )
     fit_ret_button.pack(side="left")
     fit_labelframe.pack(side="left")
@@ -408,9 +411,9 @@ async def arh5_task(opened_arh5, root):
             f = d * k
             delta = z - d
             if fit_mode:
-                if fit_mode == magic_calculation.FIT_MODE.extend:
+                if fit_mode == magic_calculation.FitMode.EXTEND:
                     sl = slice(None, s)
-                elif fit_mode == magic_calculation.FIT_MODE.retract:
+                elif fit_mode == magic_calculation.FitMode.RETRACT:
                     sl = slice(s, None)
                 else:
                     raise ValueError("Unknown fit_mode: ", fit_mode)
