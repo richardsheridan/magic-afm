@@ -519,20 +519,28 @@ def fitfun(delta, f, k, radius, tau, fit_mode, _poll_for_cancel=lambda: None):
     return beta, np.sqrt(np.diag(cov)), partial_force_curve
 
 
-def calc_def_ind_ztru(d, beta, radius, k, tau):
+def calc_def_ind_ztru(f, beta, radius, k, tau, fit_mode):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters.
     
     """
     K, fc, delta_shift, force_shift, lj_delta_scale, *_ = beta
 
-    maxforce = d[:len(d) // 25].mean() * k
-    #    maxforce = d[:3].mean()*k
+    assert fit_mode
+    if fit_mode == FitMode.EXTEND:
+        red_curve = red_extend
+        sl = slice(-len(f) // 25, None)
+    elif fit_mode == FitMode.RETRACT:
+        red_curve = red_retract
+        sl = slice(len(f) // 25)
+    else:
+        raise ValueError('Unknown fit_mode: ', fit_mode)
 
+    maxforce = f[sl].mean()
     maxdelta = delta_curve(schwarz_wrap, maxforce, k, radius, K, fc, tau,
                            delta_shift, force_shift, lj_delta_scale, )
     mindelta = delta_curve(schwarz_wrap, fc + force_shift, k, radius, K, fc, tau,
                            delta_shift, force_shift, lj_delta_scale, )
-    zeroindforce = float(force_curve(red_retract, delta_shift, k, radius, K, fc, tau,
+    zeroindforce = float(force_curve(red_curve, delta_shift, k, radius, K, fc, tau,
                                      delta_shift, force_shift, lj_delta_scale, ))
 
     deflection = (maxforce - (fc + force_shift)) / k

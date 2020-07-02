@@ -297,7 +297,7 @@ def embed_figure(root, fig, title, image_names):
     )
     fit_ext_button.pack(side="left")
     fit_ret_button = ttk.Radiobutton(
-        fit_labelframe, text="retract", value=magic_calculation.FitMode.RETRACT.value, variable=fit_intvar
+        fit_labelframe, text="Retract", value=magic_calculation.FitMode.RETRACT.value, variable=fit_intvar
     )
     fit_ret_button.pack(side="left")
     fit_labelframe.pack(side="left")
@@ -413,7 +413,7 @@ async def arh5_task(opened_arh5, root):
             delta = z - d
             if fit_mode:
                 if fit_mode == magic_calculation.FitMode.EXTEND:
-                    sl = slice(None, s)
+                    sl = slice(s)
                 elif fit_mode == magic_calculation.FitMode.RETRACT:
                     sl = slice(s, None)
                 else:
@@ -424,6 +424,9 @@ async def arh5_task(opened_arh5, root):
                 )
                 f_fit = calc_fun(delta[sl], *beta)
                 d_fit = f_fit / k
+                deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
+                    f[sl], beta, 20, k, 0, fit_mode
+                )
 
         cancels_pending.discard(cancel_scope)
 
@@ -462,6 +465,17 @@ async def arh5_task(opened_arh5, root):
                         artists.append(first_artist)
                         artists.extend(plot_ax.plot(delta[s:], f[s:]))
                         artists.extend(plot_ax.plot(delta[sl], f_fit, "--"))
+                        artists.extend(
+                            plot_ax.plot(
+                                indentation,
+                                deflection * k + beta[1],
+                                marker="X",
+                                markersize=8,
+                                linestyle="",
+                                markeredgecolor="k",
+                                markerfacecolor="k",
+                            )
+                        )
                     else:
                         (first_artist,) = plot_ax.plot(delta[:s], f[:s])
                         artists.append(first_artist)
