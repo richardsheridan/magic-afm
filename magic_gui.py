@@ -36,6 +36,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 from matplotlib.colorbar import Colorbar
 from matplotlib.figure import Figure
+from matplotlib.image import AxesImage
 from matplotlib.ticker import ScalarFormatter
 from matplotlib.transforms import Bbox, BboxTransform
 from matplotlib.widgets import SubplotTool
@@ -344,19 +345,19 @@ async def arh5_task(opened_arh5, root):
     fmt = ScalarFormatter()
     fmt.set_powerlimits((-2, 2))
     colorbar: Optional[Colorbar] = None
+    axesimage: Optional[AxesImage] = None
     data_coords_to_array_index: Optional[Callable] = None
 
     async def change_image_callback():
-        nonlocal colorbar, data_coords_to_array_index
+        nonlocal colorbar, axesimage
+        nonlocal data_coords_to_array_index
         image_name = image_name_strvar.get()
         image_array = await opened_arh5.get_image(image_name)
 
-        if colorbar is None:
-            cax = None
-        else:
-            cax = colorbar.ax
-            cax.clear()
-        img_ax.clear()
+        if colorbar is not None:
+            colorbar.remove()
+        if axesimage is not None:
+            axesimage.remove()
 
         s = (scansize + scansize / len(image_array)) // 2
         axesimage = img_ax.imshow(
@@ -377,7 +378,7 @@ async def arh5_task(opened_arh5, root):
         img_ax.set_ylabel("Y piezo (nm)")
         img_ax.set_xlabel("X piezo (nm)")
 
-        colorbar = fig.colorbar(axesimage, cax=cax, ax=img_ax, use_gridspec=True, format=fmt)
+        colorbar = fig.colorbar(axesimage, ax=img_ax, use_gridspec=True, format=fmt)
         navbar.update()  # let navbar catch new cax in fig
         # colorbar.ax.set_navigate(True)
         colorbar.solids.set_picker(True)
@@ -445,7 +446,7 @@ async def arh5_task(opened_arh5, root):
                 if disp_kind == DispKind.zd:
                     plot_ax.set_xlabel("Z piezo (nm)")
                     plot_ax.set_ylabel("Cantilever deflection (nm)")
-                    first_artist, = plot_ax.plot(z[:s], d[:s])
+                    (first_artist,) = plot_ax.plot(z[:s], d[:s])
                     artists.append(first_artist)
                     artists.extend(plot_ax.plot(z[s:], d[s:]))
                     if fit_mode:
@@ -457,14 +458,13 @@ async def arh5_task(opened_arh5, root):
                         delta -= beta[2]
                         f -= beta[3]
                         f_fit -= beta[3]
-                        first_artist, = plot_ax.plot(delta[:s], f[:s])
+                        (first_artist,) = plot_ax.plot(delta[:s], f[:s])
                         artists.append(first_artist)
                         artists.extend(plot_ax.plot(delta[s:], f[s:]))
                         artists.extend(plot_ax.plot(delta[sl], f_fit, "--"))
                     else:
-                        first_artist, = plot_ax.plot(delta[:s], f[:s])
+                        (first_artist,) = plot_ax.plot(delta[:s], f[:s])
                         artists.append(first_artist)
-                        artists.extend(plot_ax.plot(delta[:s], f[:s]))
                         artists.extend(plot_ax.plot(delta[s:], f[s:]))
                 else:
                     raise ValueError("Unknown DispKind: ", disp_kind)
