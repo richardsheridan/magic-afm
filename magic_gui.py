@@ -387,7 +387,7 @@ async def arh5_task(opened_arh5, root):
         canvas.draw_idle()
 
     cancels_pending = set()
-    clear_condition = trio.Condition(lock=trio.Lock())  # XXX: Should be StrictFIFOLock after bugfix
+    artists = []
 
     async def plot_curve_event_response(x, y, shift_held):
         plot_ax.set_autoscale_on(True)  # XXX: only needed on first plot. Maybe later make optional?
@@ -433,25 +433,20 @@ async def arh5_task(opened_arh5, root):
             # Clearing Phase
             # Clear previous artists and reset plots (faster than .clear()?)
             if not shift_held:
-                async with clear_condition:
-                    clear_condition.notify_all()
-                # Wait for clearing tasks to finish
-                # I think this works because this task moves to the end of the queue to lock
-                # Would it break if this task didn't hold canvas.trio_draw_lock?
-                await clear_condition.acquire()
-                clear_condition.release()
-
+                for artist in artists:
+                    artist.remove()
+                artists.clear()
                 plot_ax.relim()
                 plot_ax.set_prop_cycle(None)
 
             # Drawing Phase
             # Based on local state choose plots and collect artists for deletion
             with trio.testing.assert_no_checkpoints():
-                artists = []
                 if disp_kind == DispKind.zd:
                     plot_ax.set_xlabel("Z piezo (nm)")
                     plot_ax.set_ylabel("Cantilever deflection (nm)")
-                    artists.extend(plot_ax.plot(z[:s], d[:s]))
+                    first_artist, = plot_ax.plot(z[:s], d[:s])
+                    artists.append(first_artist)
                     artists.extend(plot_ax.plot(z[s:], d[s:]))
                     if fit_mode:
                         artists.extend(plot_ax.plot(z[sl], d_fit, "--"))
@@ -462,10 +457,13 @@ async def arh5_task(opened_arh5, root):
                         delta -= beta[2]
                         f -= beta[3]
                         f_fit -= beta[3]
-                        artists.extend(plot_ax.plot(delta[:s], f[:s]))
+                        first_artist, = plot_ax.plot(delta[:s], f[:s])
+                        artists.append(first_artist)
                         artists.extend(plot_ax.plot(delta[s:], f[s:]))
                         artists.extend(plot_ax.plot(delta[sl], f_fit, "--"))
                     else:
+                        first_artist, = plot_ax.plot(delta[:s], f[:s])
+                        artists.append(first_artist)
                         artists.extend(plot_ax.plot(delta[:s], f[:s]))
                         artists.extend(plot_ax.plot(delta[s:], f[s:]))
                 else:
@@ -478,17 +476,10 @@ async def arh5_task(opened_arh5, root):
                         markersize=8,
                         linestyle="",
                         markeredgecolor="k",
-                        markerfacecolor=artists[0].get_color(),
+                        markerfacecolor=first_artist.get_color(),
                     )
                 )
                 canvas.draw_idle()
-
-        # Waiting Phase
-        # effectively waiting for a non-shift event in any new task
-        async with clear_condition:
-            await clear_condition.wait()
-            for artist in artists:
-                artist.remove()
 
     async def mpl_pick_motion_event_callback(event):
         mouseevent = getattr(event, "mouseevent", event)
