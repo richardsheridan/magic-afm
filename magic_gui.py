@@ -454,6 +454,7 @@ async def arh5_task(opened_arh5, root):
                     artists.extend(plot_ax.plot(z[s:], d[s:]))
                     if fit_mode:
                         artists.extend(plot_ax.plot(z[sl], d_fit, "--"))
+                        artists.append(plot_ax.axvline(z_true_surface, ls=":", c=first_artist.get_color()))
                 elif disp_kind == DispKind.δf:
                     plot_ax.set_xlabel("Indentation depth (nm)")
                     plot_ax.set_ylabel("Indentation force (nN)")
@@ -469,6 +470,17 @@ async def arh5_task(opened_arh5, root):
                             plot_ax.plot(
                                 indentation,
                                 deflection * k + beta[1],
+                                marker="X",
+                                markersize=8,
+                                linestyle="",
+                                markeredgecolor="k",
+                                markerfacecolor="k",
+                            )
+                        )
+                        artists.extend(
+                            plot_ax.plot(
+                                0,
+                                beta[1],
                                 marker="X",
                                 markersize=8,
                                 linestyle="",
