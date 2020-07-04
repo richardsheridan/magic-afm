@@ -303,6 +303,7 @@ def embed_figure(root, fig, title, image_names):
     fit_labelframe.pack(side="left")
 
     options_frame.grid(row=1, column=0, sticky="nsew")
+    window.bind("<FocusIn>", impartial(options_frame.lift))
 
     size_grip = ttk.Sizegrip(window)
 
@@ -545,7 +546,6 @@ async def arh5_task(opened_arh5, root):
 
     async with trio.open_nursery() as nursery:
         window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-        funcid_bind_FocusIn = window.bind("<FocusIn>", impartial(options_frame.lift))
         canvas.mpl_connect("motion_notify_event", partial(nursery.start_soon, mpl_pick_motion_event_callback))
         canvas.mpl_connect("pick_event", partial(nursery.start_soon, mpl_pick_motion_event_callback))
         canvas.mpl_connect("resize_event", impartial(partial(nursery.start_soon, mpl_resize_event_callback)))
@@ -563,7 +563,6 @@ async def arh5_task(opened_arh5, root):
         await trio.sleep_forever()
 
     # Close phase
-    window.unbind("<FocusIn>", funcid_bind_FocusIn)  # free funcid
     window.withdraw()  # weird navbar hiccup on close
     window.destroy()
     options_frame.destroy()
