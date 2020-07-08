@@ -60,16 +60,15 @@ async def convert_ardf(ardf_path, conv_path=r'X:\Data\AFM\Cypher\ARDFtoHDF5.exe'
 
     async def reading_stdout():
         stdout = []
-        async for stuff in proc.stdout:
-            stdout.append(stuff)
+        async for bytes_ in proc.stdout:
+            stdout.append(bytes_)
         stdout = b''.join(stdout).decode()
         print(stdout)
-        return stdout
 
     async def reading_stderr():
         async for stuff in proc.stderr:
-            i = stuff.rfind(b'\x08')
-            most_recent_numeric_output = stuff[i + 1:-1]
+            i = stuff.rfind(b'\x08') + 1  # first thing on right not a backspace
+            most_recent_numeric_output = stuff[i:-1]  # crop % sign
             if most_recent_numeric_output:
                 pbar.update(float(most_recent_numeric_output.decode()) - pbar.n)
 

@@ -573,12 +573,8 @@ async def ardf_converter(filename, root):
     with trio.CancelScope() as cscope:
         pbar = PBar(root, cancel_callback=cscope.cancel)
         filename = await async_tools.convert_ardf(filename, "ARDFtoHDF5.exe", True, pbar)
-
-    if cscope.cancel_called:
-        return
-
-    async with async_tools.AsyncARH5File(filename) as opened_arh5:
-        await arh5_task(opened_arh5, root)
+        async with async_tools.AsyncARH5File(filename) as opened_arh5:
+            await arh5_task(opened_arh5, root)
 
 
 async def open_callback(root):
