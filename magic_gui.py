@@ -80,7 +80,7 @@ def impartial(fn):
 
 class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
-        self._parking_lot = trio.lowlevel.ParkingLot()
+        self._trio_draw_event = trio.Event()
         self.trio_draw_lock = trio.Lock()
         self._idle_task_running = False
         super(FigureCanvasTk, self).__init__(figure)
@@ -127,7 +127,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
 
     def draw_idle(self):
         assert self._idle_task_running, "start idle_draw_task first"
-        self._parking_lot.unpark_all()
+        self._trio_draw_event.set()
 
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
         assert not self._idle_task_running
@@ -135,9 +135,10 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         task_status.started()
         try:
             while True:
-                await self._parking_lot.park()
+                await self._trio_draw_event.wait()
                 await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
                 async with self.trio_draw_lock:
+                    self._trio_draw_event = trio.Event()
                     await trs(super().draw, cancellable=False)
                     _backend_tk.blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
         finally:
@@ -165,7 +166,6 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         self._tkphoto = tk.PhotoImage(master=self._tkcanvas, width=int(width), height=int(height))
         self._tkcanvas.create_image(int(width / 2), int(height / 2), image=self._tkphoto)
         self.resize_event()
-        self._update_pointer_position(event)
 
 
 class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
