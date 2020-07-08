@@ -215,11 +215,12 @@ class AsyncARH5File:
         h5data = await trs(h5py.File, self.h5file_path, "r")
         # The notes have a very regular key-value structure, so we convert to dict for later access
         self.notes = await trs(
-            lambda: dict(
+            dict,
+            (
                 line.split(":", 1)
                 for line in h5data.attrs["Note"].decode("utf8").split("\n")
                 if ":" in line
-            )
+            ),
         )
         worker = await trs(self._choose_worker, h5data)
         images, image_names = await trs(lambda: (h5data["Image"], list(h5data["Image"].keys())))
