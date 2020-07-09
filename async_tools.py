@@ -86,8 +86,7 @@ async def convert_ardf(
                 nursery.start_soon(reading_stderr)
     except FileNotFoundError as e:
         print(
-            "Please ensure the full path to the Asylum converter",
-            "tool (ARDFtoHDF5.exe) is in the conv_path argument",
+            "Please ensure the full path to the Asylum converter tool ARDFtoHDF5.exe is in the conv_path argument",
             flush=True,
             sep="\n",
         )
