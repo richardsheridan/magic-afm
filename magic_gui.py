@@ -438,10 +438,11 @@ def draw_force_curve(data, plot_ax, options):
     return artists, artists[0].get_color()
 
 
-async def calculate_force_data(z, d, s, options):
+def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
+    cancel_poller()
     resample_npts = 512
     s = s * resample_npts // len(z)
-    z, d = await ctrs(magic_calculation.resample_dset, [z, d], resample_npts, True)
+    z, d = magic_calculation.resample_dset([z, d], resample_npts, True)
     # Transform data to model units
     f = d * options.k
     delta = z - d
@@ -456,17 +457,13 @@ async def calculate_force_data(z, d, s, options):
     else:
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
-    beta, beta_err, calc_fun = await ctrs(
-        partial(
-            magic_calculation.fitfun,
-            delta[sl],
-            f[sl],
-            **dataclasses.asdict(options),
-            _poll_for_cancel=async_tools.make_cancel_poller(),
-        )
+    cancel_poller()
+    beta, beta_err, calc_fun = magic_calculation.fitfun(
+        delta[sl], f[sl], **dataclasses.asdict(options), _poll_for_cancel=cancel_poller,
     )
     f_fit = calc_fun(delta[sl], *beta)
     d_fit = f_fit / options.k
+    cancel_poller()
     deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
         f[sl], beta, **dataclasses.asdict(options)
     )
@@ -581,8 +578,9 @@ async def arh5_task(opened_arh5, root):
             cancels_pending.add(cancel_scope)
 
             force_curve = await opened_arh5.get_force_curve(point.r, point.c)
-            # noinspection PyTypeChecker
-            data = await calculate_force_data(*force_curve, options)
+            data = await ctrs(
+                calculate_force_data, *force_curve, options, async_tools.make_cancel_poller()
+            )
             del force_curve  # contained in data
 
         cancels_pending.discard(cancel_scope)
