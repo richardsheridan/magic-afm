@@ -19,6 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import collections
+import dataclasses
 import tkinter as tk
 import traceback
 import enum
@@ -26,6 +27,7 @@ from functools import partial, wraps
 from tkinter import ttk, filedialog
 from typing import Optional, Callable
 
+import numpy as np
 import outcome
 import trio
 import trio.testing
@@ -70,12 +72,40 @@ class DispKind(enum.IntEnum):
     δf = enum.auto()
 
 
-def impartial(fn):
-    @wraps(fn)
-    def impartial_wrapper(*a, **kw):
-        return fn()
+@dataclasses.dataclass
+class ForceCurveOptions:
+    fit_mode: magic_calculation.FitMode
+    disp_kind: DispKind
+    k: float
+    radius: float = 20
+    tau: float = 0
 
-    return impartial_wrapper
+
+@dataclasses.dataclass
+class ForceCurveData:
+    z: np.ndarray
+    d: np.ndarray
+    s: np.ndarray
+    f: np.ndarray
+    delta: np.ndarray
+    # everything else set only if fit
+    beta: Optional[np.ndarray] = None
+    beta_err: Optional[np.ndarray] = None
+    calc_fun: Optional[Callable] = None
+    sl: Optional[slice] = None
+    f_fit: Optional[np.ndarray] = None
+    d_fit: Optional[np.ndarray] = None
+    defl: Optional[np.ndarray] = None
+    ind: Optional[np.ndarray] = None
+    z_tru: Optional[np.ndarray] = None
+
+
+@dataclasses.dataclass
+class ImagePoint:
+    r: int
+    c: int
+    x: float
+    y: float
 
 
 class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
@@ -266,6 +296,14 @@ class TkHost:
         self.root.destroy()
 
 
+def impartial(fn):
+    @wraps(fn)
+    def impartial_wrapper(*a, **kw):
+        return fn()
+
+    return impartial_wrapper
+
+
 def embed_figure(root, fig, title, image_names):
     window = tk.Toplevel(root)
     window.wm_title(title)
@@ -349,6 +387,107 @@ def create_arh5_figure(figsize=ARH5_FIGURE_SIZE):
     return fig, img_ax, plot_ax
 
 
+def draw_force_curve(data, plot_ax, options):
+    artists = []
+    if options.disp_kind == DispKind.zd:
+        plot_ax.set_xlabel("Z piezo (nm)")
+        plot_ax.set_ylabel("Cantilever deflection (nm)")
+        artists.extend(plot_ax.plot(data.z[: data.s], data.d[: data.s]))
+        artists.extend(plot_ax.plot(data.z[data.s :], data.d[data.s :]))
+        if options.fit_mode:
+            artists.extend(plot_ax.plot(data.z[data.sl], data.d_fit, "--"))
+            artists.append(plot_ax.axvline(data.z_tru, ls=":", c=artists[0].get_color()))
+    elif options.disp_kind == DispKind.δf:
+        plot_ax.set_xlabel("Indentation depth (nm)")
+        plot_ax.set_ylabel("Indentation force (nN)")
+        if options.fit_mode:
+            delta = data.delta - data.beta[2]
+            f = data.f - data.beta[3]
+            f_fit = data.f_fit - data.beta[3]
+            artists.extend(plot_ax.plot(delta[: data.s], f[: data.s]))
+            artists.extend(plot_ax.plot(delta[data.s :], f[data.s :]))
+            artists.extend(plot_ax.plot(delta[data.sl], f_fit, "--"))
+            artists.extend(
+                plot_ax.plot(
+                    data.ind,
+                    data.defl * options.k + data.beta[1],
+                    marker="X",
+                    markersize=8,
+                    linestyle="",
+                    markeredgecolor="k",
+                    markerfacecolor="k",
+                )
+            )
+            artists.extend(
+                plot_ax.plot(
+                    0,
+                    data.beta[1],
+                    marker="X",
+                    markersize=8,
+                    linestyle="",
+                    markeredgecolor="k",
+                    markerfacecolor="k",
+                )
+            )
+        else:
+            (first_artist,) = plot_ax.plot(data.delta[: data.s], data.f[: data.s])
+            artists.append(first_artist)
+            artists.extend(plot_ax.plot(data.delta[data.s :], data.f[data.s :]))
+    else:
+        raise ValueError("Unknown DispKind: ", data.disp_kind)
+    return artists, artists[0].get_color()
+
+
+async def calculate_force_data(z, d, s, options):
+    resample_npts = 512
+    s = s * resample_npts // len(z)
+    z, d = await ctrs(magic_calculation.resample_dset, [z, d], resample_npts, True)
+    # Transform data to model units
+    f = d * options.k
+    delta = z - d
+
+    if not options.fit_mode:
+        return ForceCurveData(s=s, z=z, d=d, f=f, delta=delta,)
+
+    if options.fit_mode == magic_calculation.FitMode.EXTEND:
+        sl = slice(s)
+    elif options.fit_mode == magic_calculation.FitMode.RETRACT:
+        sl = slice(s, None)
+    else:
+        raise ValueError("Unknown fit_mode: ", options.fit_mode)
+
+    beta, beta_err, calc_fun = await ctrs(
+        partial(
+            magic_calculation.fitfun,
+            delta[sl],
+            f[sl],
+            **dataclasses.asdict(options),
+            _poll_for_cancel=async_tools.make_cancel_poller(),
+        )
+    )
+    f_fit = calc_fun(delta[sl], *beta)
+    d_fit = f_fit / options.k
+    deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
+        f[sl], beta, **dataclasses.asdict(options)
+    )
+    return ForceCurveData(
+        s=s,
+        z=z,
+        d=d,
+        f=f,
+        delta=delta,
+        sl=sl,
+        beta=beta,
+        beta_err=beta_err,
+        calc_fun=calc_fun,
+        f_fit=f_fit,
+        d_fit=d_fit,
+        defl=deflection,
+        ind=indentation,
+        z_tru=z_true_surface,
+    )
+
+
 async def arh5_task(opened_arh5, root):
     k = float(opened_arh5.notes["SpringConstant"])
     scansize = float(opened_arh5.notes["ScanSize"]) * async_tools.NANOMETER_UNIT_CONVERSION
@@ -369,10 +508,12 @@ async def arh5_task(opened_arh5, root):
     colorbar: Optional[Colorbar] = None
     axesimage: Optional[AxesImage] = None
     data_coords_to_array_index: Optional[Callable] = None
+    array_index_to_data_coords: Optional[Callable] = None
 
     async def change_image_callback():
         nonlocal colorbar, axesimage
         nonlocal data_coords_to_array_index
+        nonlocal array_index_to_data_coords
         image_name = image_name_strvar.get()
         image_array = await opened_arh5.get_image(image_name)
 
@@ -396,9 +537,14 @@ async def arh5_task(opened_arh5, root):
         data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
         array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
         trans = BboxTransform(boxin=data_extent, boxout=array_extent)
+        invtrans = trans.inverted()
 
         def data_coords_to_array_index(x, y):
             return trans.transform_point([y, x]).round().astype(int)  # row, column
+
+        def array_index_to_data_coords(r, c):
+            y, x = invtrans.transform_point([r, c])  # row, column
+            return x, y
 
         img_ax.set_ylabel("Y piezo (nm)")
         img_ax.set_xlabel("X piezo (nm)")
@@ -415,10 +561,11 @@ async def arh5_task(opened_arh5, root):
     cancels_pending = set()
     artists = []
 
-    async def plot_curve_event_response(x, y, shift_held):
+    async def plot_curve_event_response(point, shift_held):
         plot_ax.set_autoscale_on(True)  # XXX: only needed on first plot. Maybe later make optional?
-        fit_mode = fit_intvar.get()
-        disp_kind = disp_kind_intvar.get()
+        options = ForceCurveOptions(
+            fit_mode=fit_intvar.get(), disp_kind=disp_kind_intvar.get(), k=k
+        )
 
         # Calculation phase
         # Do a few long-running jobs, likely to be canceled
@@ -429,36 +576,10 @@ async def arh5_task(opened_arh5, root):
         with trio.CancelScope() as cancel_scope:
             cancels_pending.add(cancel_scope)
 
-            z, d, s = await opened_arh5.get_force_curve(*data_coords_to_array_index(x, y))
-            resample_npts = 512
-            s = s * resample_npts // len(z)
-            z, d = await ctrs(magic_calculation.resample_dset, [z, d], resample_npts, True)
-            # Transform data to model units
-            f = d * k
-            delta = z - d
-            if fit_mode:
-                if fit_mode == magic_calculation.FitMode.EXTEND:
-                    sl = slice(s)
-                elif fit_mode == magic_calculation.FitMode.RETRACT:
-                    sl = slice(s, None)
-                else:
-                    raise ValueError("Unknown fit_mode: ", fit_mode)
-
-                beta, beta_err, calc_fun = await ctrs(
-                    magic_calculation.fitfun,
-                    delta[sl],
-                    f[sl],
-                    k,
-                    20,
-                    0,
-                    fit_mode,
-                    async_tools.make_cancel_poller(),
-                )
-                f_fit = calc_fun(delta[sl], *beta)
-                d_fit = f_fit / k
-                deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
-                    f[sl], beta, 20, k, 0, fit_mode
-                )
+            force_curve = await opened_arh5.get_force_curve(point.r, point.c)
+            # noinspection PyTypeChecker
+            data = await calculate_force_data(*force_curve, options)
+            del force_curve  # contained in data
 
         cancels_pending.discard(cancel_scope)
 
@@ -476,70 +597,21 @@ async def arh5_task(opened_arh5, root):
                 plot_ax.set_prop_cycle(None)
 
             # Drawing Phase
-            # Based on local state choose plots and collect artists for deletion
-            with trio.testing.assert_no_checkpoints():
-                if disp_kind == DispKind.zd:
-                    plot_ax.set_xlabel("Z piezo (nm)")
-                    plot_ax.set_ylabel("Cantilever deflection (nm)")
-                    (first_artist,) = plot_ax.plot(z[:s], d[:s])
-                    artists.append(first_artist)
-                    artists.extend(plot_ax.plot(z[s:], d[s:]))
-                    if fit_mode:
-                        artists.extend(plot_ax.plot(z[sl], d_fit, "--"))
-                        artists.append(
-                            plot_ax.axvline(z_true_surface, ls=":", c=first_artist.get_color())
-                        )
-                elif disp_kind == DispKind.δf:
-                    plot_ax.set_xlabel("Indentation depth (nm)")
-                    plot_ax.set_ylabel("Indentation force (nN)")
-                    if fit_mode:
-                        delta -= beta[2]
-                        f -= beta[3]
-                        f_fit -= beta[3]
-                        (first_artist,) = plot_ax.plot(delta[:s], f[:s])
-                        artists.append(first_artist)
-                        artists.extend(plot_ax.plot(delta[s:], f[s:]))
-                        artists.extend(plot_ax.plot(delta[sl], f_fit, "--"))
-                        artists.extend(
-                            plot_ax.plot(
-                                indentation,
-                                deflection * k + beta[1],
-                                marker="X",
-                                markersize=8,
-                                linestyle="",
-                                markeredgecolor="k",
-                                markerfacecolor="k",
-                            )
-                        )
-                        artists.extend(
-                            plot_ax.plot(
-                                0,
-                                beta[1],
-                                marker="X",
-                                markersize=8,
-                                linestyle="",
-                                markeredgecolor="k",
-                                markerfacecolor="k",
-                            )
-                        )
-                    else:
-                        (first_artist,) = plot_ax.plot(delta[:s], f[:s])
-                        artists.append(first_artist)
-                        artists.extend(plot_ax.plot(delta[s:], f[s:]))
-                else:
-                    raise ValueError("Unknown DispKind: ", disp_kind)
-                artists.extend(
-                    img_ax.plot(
-                        x,
-                        y,
-                        marker="X",
-                        markersize=8,
-                        linestyle="",
-                        markeredgecolor="k",
-                        markerfacecolor=first_artist.get_color(),
-                    )
+            # Based options choose plots and collect artists for deletion
+            new_artists, color = draw_force_curve(data, plot_ax, options)
+            artists.extend(new_artists)
+            artists.extend(
+                img_ax.plot(
+                    point.x,
+                    point.y,
+                    marker="X",
+                    markersize=8,
+                    linestyle="",
+                    markeredgecolor="k",
+                    markerfacecolor=color,
                 )
-                canvas.draw_idle()
+            )
+            canvas.draw_idle()
 
     async def mpl_pick_motion_event_callback(event):
         mouseevent = getattr(event, "mouseevent", event)
@@ -552,7 +624,10 @@ async def arh5_task(opened_arh5, root):
         elif mouseevent.inaxes is img_ax:
             if mouseevent.button != MouseButton.LEFT:
                 return
-            await plot_curve_event_response(mouseevent.xdata, mouseevent.ydata, shift_held)
+            r, c = data_coords_to_array_index(mouseevent.xdata, mouseevent.ydata)
+            x, y = array_index_to_data_coords(r, c)
+            point = ImagePoint(r, c, x, y)
+            await plot_curve_event_response(point, shift_held)
         elif mouseevent.inaxes is colorbar.ax:
             if mouseevent.button == MouseButton.LEFT:
                 colorbar.norm.vmax = max(mouseevent.ydata, colorbar.norm.vmin)

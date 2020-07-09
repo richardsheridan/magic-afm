@@ -467,7 +467,7 @@ class FitMode(enum.IntEnum):
 
 
 @np.errstate(all='ignore')
-def fitfun(delta, f, k, radius, tau, fit_mode, _poll_for_cancel=lambda: None):
+def fitfun(delta, f, k, radius, tau, fit_mode, _poll_for_cancel=lambda: None, **kwargs):
     # Very course estimate of force curve parameters for initial guess
     imin = np.argmin(f)  # TODO: better way to choose this for low adhesion
     fmin = f[imin]
@@ -519,7 +519,7 @@ def fitfun(delta, f, k, radius, tau, fit_mode, _poll_for_cancel=lambda: None):
     return beta, np.sqrt(np.diag(cov)), partial_force_curve
 
 
-def calc_def_ind_ztru(f, beta, radius, k, tau, fit_mode):
+def calc_def_ind_ztru(f, beta, radius, k, tau, fit_mode, **kwargs):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters.
     
     """
