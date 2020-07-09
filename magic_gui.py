@@ -23,6 +23,7 @@ import dataclasses
 import tkinter as tk
 import traceback
 import enum
+from contextlib import asynccontextmanager
 from functools import partial, wraps
 from tkinter import ttk, filedialog
 from typing import Optional, Callable
@@ -485,6 +486,52 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
     )
 
 
+async def spinner_task(set_spinner, set_normal, task_status):
+    spinner_starter_sendchan: trio.abc.SendChannel
+    spinner_starter_recvchan: trio.abc.ReceiveChannel
+    spinner_starter_sendchan, spinner_starter_recvchan = trio.open_memory_channel(0)
+    spinner_stopper_sendchan: trio.abc.SendChannel
+    spinner_stopper_recvchan: trio.abc.ReceiveChannel
+    spinner_stopper_sendchan, spinner_stopper_recvchan = trio.open_memory_channel(0)
+
+    @asynccontextmanager
+    async def spinner_scope():
+        with trio.CancelScope(shield=True):
+            await spinner_starter_sendchan.send(None)
+            stopper = await spinner_stopper_recvchan.receive()
+        try:
+            yield
+        finally:
+            stopper()
+
+    task_status.started(spinner_scope)
+
+    async def spinner_subtask(task_status):
+        with trio.CancelScope() as cancel_scope:
+            task_status.started(cancel_scope.cancel)
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+            set_spinner()
+
+    reset_due_to_cancel = True
+
+    nursery: trio.Nursery
+    async with trio.open_nursery() as nursery:
+        while True:
+            if reset_due_to_cancel:
+                await spinner_starter_recvchan.receive()
+            interrupt_delayed_spinner = await nursery.start(spinner_subtask)
+            with trio.CancelScope() as cancel_scope:
+                await spinner_stopper_sendchan.send(cancel_scope.cancel)
+                await spinner_starter_recvchan.receive()
+                reset_due_to_cancel = False
+                continue
+
+            # noinspection PyUnreachableCode
+            interrupt_delayed_spinner()
+            set_normal()
+            reset_due_to_cancel = True
+
+
 async def arh5_task(opened_arh5, root):
     k = float(opened_arh5.notes["SpringConstant"])
     scansize = float(opened_arh5.notes["ScanSize"]) * async_tools.NANOMETER_UNIT_CONVERSION
@@ -574,49 +621,53 @@ async def arh5_task(opened_arh5, root):
             for cancel_scope in cancels_pending:
                 cancel_scope.cancel()
             cancels_pending.clear()
-        with trio.CancelScope() as cancel_scope:
-            cancels_pending.add(cancel_scope)
-
-            force_curve = await opened_arh5.get_force_curve(point.r, point.c)
-            data = await ctrs(
-                calculate_force_data, *force_curve, options, async_tools.make_cancel_poller()
-            )
-            del force_curve  # contained in data
-
-        cancels_pending.discard(cancel_scope)
-
-        if cancel_scope.cancelled_caught:
-            existing_points.discard(point)
-            return
-
-        async with canvas.trio_draw_lock:
-            # Clearing Phase
-            # Clear previous artists and reset plots (faster than .clear()?)
-            if not shift_held:
-                for artist in artists:
-                    artist.remove()
-                artists.clear()
-                # confusing set stuff because of ASAP addition above
-                existing_points.intersection_update({point})
-                plot_ax.relim()
-                plot_ax.set_prop_cycle(None)
-
-            # Drawing Phase
-            # Based options choose plots and collect artists for deletion
-            new_artists, color = draw_force_curve(data, plot_ax, options)
-            artists.extend(new_artists)
-            artists.extend(
-                img_ax.plot(
-                    point.x,
-                    point.y,
-                    marker="X",
-                    markersize=8,
-                    linestyle="",
-                    markeredgecolor="k",
-                    markerfacecolor=color,
+        async with spinner_scope():
+            with trio.CancelScope() as cancel_scope:
+                cancels_pending.add(cancel_scope)
+                force_curve = await opened_arh5.get_force_curve(point.r, point.c)
+                data = await ctrs(
+                    calculate_force_data, *force_curve, options, async_tools.make_cancel_poller()
                 )
-            )
-            canvas.draw_idle()
+                del force_curve  # contained in data
+                # XXX: Race condition
+                # cancel can occur after the last call to the above cancel poller
+                # checkpoint make sure to raise Cancelled if it just happened
+                # await trio.sleep(0)
+
+            cancels_pending.discard(cancel_scope)
+
+            if cancel_scope.cancelled_caught:
+                existing_points.discard(point)
+                return
+
+            async with canvas.trio_draw_lock:
+                # Clearing Phase
+                # Clear previous artists and reset plots (faster than .clear()?)
+                if not shift_held:
+                    for artist in artists:
+                        artist.remove()
+                    artists.clear()
+                    # confusing set stuff because of ASAP addition above
+                    existing_points.intersection_update({point})
+                    plot_ax.relim()
+                    plot_ax.set_prop_cycle(None)
+
+                # Drawing Phase
+                # Based options choose plots and collect artists for deletion
+                new_artists, color = draw_force_curve(data, plot_ax, options)
+                artists.extend(new_artists)
+                artists.extend(
+                    img_ax.plot(
+                        point.x,
+                        point.y,
+                        marker="X",
+                        markersize=8,
+                        linestyle="",
+                        markeredgecolor="k",
+                        markerfacecolor=color,
+                    )
+                )
+                canvas.draw_idle()
 
     async def mpl_pick_motion_event_callback(event):
         mouseevent = getattr(event, "mouseevent", event)
@@ -682,6 +733,11 @@ async def arh5_task(opened_arh5, root):
                 break
 
         navbar.teach_navbar_to_use_trio(nursery)
+        spinner_scope = await nursery.start(
+            spinner_task,
+            partial(window.configure, cursor="watch"),
+            partial(window.configure, cursor="arrow"),
+        )
         await trio.sleep_forever()
 
     # Close phase
