@@ -255,6 +255,9 @@ class TkHost:
 
     def done_callback(self, outcome_):
         """End the Tk app.
+
+        Only really ends if self.root is truly the parent of all other Tk objects!
+        thus tk.NoDefaultRoot
         """
         print(f"Trio shutdown. Outcome: {outcome_}")
         if isinstance(outcome_, outcome.Error):
@@ -590,8 +593,9 @@ async def arh5_task(opened_arh5, root):
         image_name_strvar.trace_add(
             "write", impartial(partial(nursery.start_soon, change_image_callback))
         )
-        # StringVar.set() won't be effective to plot unless it happens after the trace_add AND start(idle_draw_task)
-        # accidentally, the plot will be drawn later due to resize, but let's not rely on that
+        # StringVar.set() won't be effective to plot unless it happens after the
+        # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
+        # due to resize, but let's not rely on that!
         for name in ("MapHeight", "ZSensorTrace"):
             if name in opened_arh5.image_names:
                 image_name_strvar.set(name)
