@@ -86,7 +86,9 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         super(FigureCanvasTk, self).__init__(figure)
         t1, t2, w, h = self.figure.bbox.bounds
         w, h = int(w), int(h)
-        self._tkcanvas = tk.Canvas(master=master, width=w, height=h, borderwidth=0, highlightthickness=0,)
+        self._tkcanvas = tk.Canvas(
+            master=master, width=w, height=h, borderwidth=0, highlightthickness=0,
+        )
         self._tkphoto = tk.PhotoImage(master=self._tkcanvas, width=w, height=h)
         self._tkcanvas.create_image(w // 2, h // 2, image=self._tkphoto)
         self._resize_callback = resize_callback
@@ -270,7 +272,9 @@ def embed_figure(root, fig, title, image_names):
     options_frame = ttk.Frame(root)
     image_name_labelframe = ttk.Labelframe(options_frame, text="Current image")
     image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
-    image_name_menu = ttk.Combobox(image_name_labelframe, width=12, state="readonly", textvariable=image_name_strvar,)
+    image_name_menu = ttk.Combobox(
+        image_name_labelframe, width=12, state="readonly", textvariable=image_name_strvar,
+    )
     image_name_menu.configure(values=image_names, width=max(map(len, image_names)))
 
     image_name_menu.pack(side="left")
@@ -278,7 +282,9 @@ def embed_figure(root, fig, title, image_names):
 
     disp_labelframe = ttk.Labelframe(options_frame, text="Display type")
     disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
-    disp_zd_button = ttk.Radiobutton(disp_labelframe, text="z/d", value=DispKind.zd.value, variable=disp_kind_intvar)
+    disp_zd_button = ttk.Radiobutton(
+        disp_labelframe, text="z/d", value=DispKind.zd.value, variable=disp_kind_intvar
+    )
     disp_zd_button.pack(side="left")
     disp_deltaf_button = ttk.Radiobutton(
         disp_labelframe, text="δ/f", value=DispKind.δf.value, variable=disp_kind_intvar
@@ -293,11 +299,17 @@ def embed_figure(root, fig, title, image_names):
     )
     fit_skip_button.pack(side="left")
     fit_ext_button = ttk.Radiobutton(
-        fit_labelframe, text="Extend", value=magic_calculation.FitMode.EXTEND.value, variable=fit_intvar
+        fit_labelframe,
+        text="Extend",
+        value=magic_calculation.FitMode.EXTEND.value,
+        variable=fit_intvar,
     )
     fit_ext_button.pack(side="left")
     fit_ret_button = ttk.Radiobutton(
-        fit_labelframe, text="Retract", value=magic_calculation.FitMode.RETRACT.value, variable=fit_intvar
+        fit_labelframe,
+        text="Retract",
+        value=magic_calculation.FitMode.RETRACT.value,
+        variable=fit_intvar,
     )
     fit_ret_button.pack(side="left")
     fit_labelframe.pack(side="left")
@@ -339,9 +351,15 @@ async def arh5_task(opened_arh5, root):
     scansize = float(opened_arh5.notes["ScanSize"]) * async_tools.NANOMETER_UNIT_CONVERSION
 
     fig, img_ax, plot_ax = create_arh5_figure()
-    window, canvas, navbar, options_frame, image_name_strvar, disp_kind_intvar, fit_intvar = embed_figure(
-        root, fig, opened_arh5.h5file_path.name, opened_arh5.image_names
-    )
+    (
+        window,
+        canvas,
+        navbar,
+        options_frame,
+        image_name_strvar,
+        disp_kind_intvar,
+        fit_intvar,
+    ) = embed_figure(root, fig, opened_arh5.h5file_path.name, opened_arh5.image_names)
 
     fmt = ScalarFormatter()
     fmt.set_powerlimits((-2, 2))
@@ -362,7 +380,10 @@ async def arh5_task(opened_arh5, root):
 
         s = (scansize + scansize / len(image_array)) // 2
         axesimage = img_ax.imshow(
-            image_array, origin="upper" if opened_arh5.scandown else "lower", extent=(-s, s, -s, s,), picker=True,
+            image_array,
+            origin="upper" if opened_arh5.scandown else "lower",
+            extent=(-s, s, -s, s,),
+            picker=True,
         )
 
         xmin, xmax, ymin, ymax = axesimage.get_extent()
@@ -421,7 +442,14 @@ async def arh5_task(opened_arh5, root):
                     raise ValueError("Unknown fit_mode: ", fit_mode)
 
                 beta, beta_err, calc_fun = await ctrs(
-                    magic_calculation.fitfun, delta[sl], f[sl], k, 20, 0, fit_mode, async_tools.make_cancel_poller()
+                    magic_calculation.fitfun,
+                    delta[sl],
+                    f[sl],
+                    k,
+                    20,
+                    0,
+                    fit_mode,
+                    async_tools.make_cancel_poller(),
                 )
                 f_fit = calc_fun(delta[sl], *beta)
                 d_fit = f_fit / k
@@ -455,7 +483,9 @@ async def arh5_task(opened_arh5, root):
                     artists.extend(plot_ax.plot(z[s:], d[s:]))
                     if fit_mode:
                         artists.extend(plot_ax.plot(z[sl], d_fit, "--"))
-                        artists.append(plot_ax.axvline(z_true_surface, ls=":", c=first_artist.get_color()))
+                        artists.append(
+                            plot_ax.axvline(z_true_surface, ls=":", c=first_artist.get_color())
+                        )
                 elif disp_kind == DispKind.δf:
                     plot_ax.set_xlabel("Indentation depth (nm)")
                     plot_ax.set_ylabel("Indentation force (nN)")
@@ -546,12 +576,20 @@ async def arh5_task(opened_arh5, root):
 
     async with trio.open_nursery() as nursery:
         window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-        canvas.mpl_connect("motion_notify_event", partial(nursery.start_soon, mpl_pick_motion_event_callback))
-        canvas.mpl_connect("pick_event", partial(nursery.start_soon, mpl_pick_motion_event_callback))
-        canvas.mpl_connect("resize_event", impartial(partial(nursery.start_soon, mpl_resize_event_callback)))
+        canvas.mpl_connect(
+            "motion_notify_event", partial(nursery.start_soon, mpl_pick_motion_event_callback)
+        )
+        canvas.mpl_connect(
+            "pick_event", partial(nursery.start_soon, mpl_pick_motion_event_callback)
+        )
+        canvas.mpl_connect(
+            "resize_event", impartial(partial(nursery.start_soon, mpl_resize_event_callback))
+        )
 
         await nursery.start(canvas.idle_draw_task)
-        image_name_strvar.trace_add("write", impartial(partial(nursery.start_soon, change_image_callback)))
+        image_name_strvar.trace_add(
+            "write", impartial(partial(nursery.start_soon, change_image_callback))
+        )
         # StringVar.set() won't be effective to plot unless it happens after the trace_add AND start(idle_draw_task)
         # accidentally, the plot will be drawn later due to resize, but let's not rely on that
         for name in ("MapHeight", "ZSensorTrace"):
@@ -653,11 +691,14 @@ async def about_task(root):
     async def state_poller_task():
         while True:
             t = trio.current_time()
-            thread_cpu.set("CPU-bound threads:" + repr(async_tools.cpu_bound_limiter).split(",")[1][:-1])
-            thread_default.set(
-                "Default threads:" + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
+            thread_cpu.set(
+                "CPU-bound threads:" + repr(async_tools.cpu_bound_limiter).split(",")[1][:-1]
             )
-            await trio.sleep_until(t+interval / 1000)
+            thread_default.set(
+                "Default threads:"
+                + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
+            )
+            await trio.sleep_until(t + interval / 1000)
 
     # run using tcl event loop
     tk_pbar.start(interval)
@@ -682,21 +723,33 @@ async def main_task(root):
 
         file_menu = tk.Menu(menu_frame, tearoff=False)
         file_menu.add_command(
-            label="Open...", accelerator="Ctrl+O", underline=0, command=partial(nursery.start_soon, open_callback, root)
+            label="Open...",
+            accelerator="Ctrl+O",
+            underline=0,
+            command=partial(nursery.start_soon, open_callback, root),
         )
         file_menu.bind("<KeyRelease-o>", func=partial(nursery.start_soon, open_callback, root))
-        root.bind_all("<Control-KeyPress-o>", func=impartial(partial(nursery.start_soon, open_callback, root)))
-        file_menu.add_command(label="Quit", accelerator="Ctrl+Q", underline=0, command=nursery.cancel_scope.cancel)
+        root.bind_all(
+            "<Control-KeyPress-o>", func=impartial(partial(nursery.start_soon, open_callback, root))
+        )
+        file_menu.add_command(
+            label="Quit", accelerator="Ctrl+Q", underline=0, command=nursery.cancel_scope.cancel
+        )
         file_menu.bind("<KeyRelease-q>", func=nursery.cancel_scope.cancel)
         root.bind_all("<Control-KeyPress-q>", func=impartial(nursery.cancel_scope.cancel))
         menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
 
         help_menu = tk.Menu(menu_frame, tearoff=False)
         help_menu.add_command(
-            label="About...", accelerator=None, underline=0, command=partial(nursery.start_soon, about_task, root)
+            label="About...",
+            accelerator=None,
+            underline=0,
+            command=partial(nursery.start_soon, about_task, root),
         )
         help_menu.bind("<KeyRelease-a>", func=partial(nursery.start_soon, about_task, root))
-        root.bind_all("<Control-KeyPress-F1>", func=impartial(partial(nursery.start_soon, about_task, root)))
+        root.bind_all(
+            "<Control-KeyPress-F1>", func=impartial(partial(nursery.start_soon, about_task, root))
+        )
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
         toolbar_frame = ttk.Frame(root)
@@ -717,7 +770,10 @@ def main():
     # root.tk.call('rename', 'update', 'never_update')
     host = TkHost(root)
     trio.lowlevel.start_guest_run(
-        main_task, root, run_sync_soon_threadsafe=host.run_sync_soon_threadsafe, done_callback=host.done_callback,
+        main_task,
+        root,
+        run_sync_soon_threadsafe=host.run_sync_soon_threadsafe,
+        done_callback=host.done_callback,
     )
     outcome_ = outcome.capture(root.mainloop)
     print("Tk shutdown. Outcome:", outcome_)
