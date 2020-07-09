@@ -100,7 +100,7 @@ class ForceCurveData:
     z_tru: Optional[np.ndarray] = None
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class ImagePoint:
     r: int
     c: int
@@ -560,8 +560,12 @@ async def arh5_task(opened_arh5, root):
 
     cancels_pending = set()
     artists = []
+    existing_points = set()
 
-    async def plot_curve_event_response(point, shift_held):
+    async def plot_curve_event_response(point: ImagePoint, shift_held):
+        if shift_held and point in existing_points:
+            return
+        existing_points.add(point)  # should be before 1st await
         plot_ax.set_autoscale_on(True)  # XXX: only needed on first plot. Maybe later make optional?
         options = ForceCurveOptions(
             fit_mode=fit_intvar.get(), disp_kind=disp_kind_intvar.get(), k=k
@@ -584,6 +588,7 @@ async def arh5_task(opened_arh5, root):
         cancels_pending.discard(cancel_scope)
 
         if cancel_scope.cancelled_caught:
+            existing_points.discard(point)
             return
 
         async with canvas.trio_draw_lock:
@@ -593,6 +598,8 @@ async def arh5_task(opened_arh5, root):
                 for artist in artists:
                     artist.remove()
                 artists.clear()
+                # confusing set stuff because of ASAP addition above
+                existing_points.intersection_update({point})
                 plot_ax.relim()
                 plot_ax.set_prop_cycle(None)
 
