@@ -408,31 +408,13 @@ def draw_force_curve(data, plot_ax, options):
             artists.extend(plot_ax.plot(delta[: data.s], f[: data.s]))
             artists.extend(plot_ax.plot(delta[data.s :], f[data.s :]))
             artists.extend(plot_ax.plot(delta[data.sl], f_fit, "--"))
-            artists.extend(
-                plot_ax.plot(
-                    data.ind,
-                    data.defl * options.k + data.beta[1],
-                    marker="X",
-                    markersize=8,
-                    linestyle="",
-                    markeredgecolor="k",
-                    markerfacecolor="k",
-                )
+            mopts = dict(
+                marker="X", markersize=8, linestyle="", markeredgecolor="k", markerfacecolor="k",
             )
-            artists.extend(
-                plot_ax.plot(
-                    0,
-                    data.beta[1],
-                    marker="X",
-                    markersize=8,
-                    linestyle="",
-                    markeredgecolor="k",
-                    markerfacecolor="k",
-                )
-            )
+            artists.extend(plot_ax.plot(data.ind, data.defl * options.k + data.beta[1], **mopts,))
+            artists.extend(plot_ax.plot(0, data.beta[1], **mopts,))
         else:
-            (first_artist,) = plot_ax.plot(data.delta[: data.s], data.f[: data.s])
-            artists.append(first_artist)
+            artists.extend(plot_ax.plot(data.delta[: data.s], data.f[: data.s]))
             artists.extend(plot_ax.plot(data.delta[data.s :], data.f[data.s :]))
     else:
         raise ValueError("Unknown DispKind: ", data.disp_kind)
