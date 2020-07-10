@@ -506,30 +506,43 @@ async def spinner_task(set_spinner, set_normal, task_status):
 
     task_status.started(spinner_scope)
 
-    async def spinner_subtask(task_status):
+    async def delayed_spinner(deadline, task_status):
+        # absolute deadline to start spinner means requests chain properly
         with trio.CancelScope() as cancel_scope:
             task_status.started(cancel_scope.cancel)
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+            if deadline < trio.current_time():
+                # betting that a spinner has already been set
+                return
+            await trio.sleep_until(deadline)
             set_spinner()
 
-    reset_due_to_cancel = True
+    def get_deadline():
+        return trio.current_time()+LONGEST_IMPERCEPTIBLE_DELAY*5
 
     nursery: trio.Nursery
     async with trio.open_nursery() as nursery:
+        # wait for first ever spinner scope entry
+        await spinner_starter_recvchan.receive()
+        # absolute deadline to start spinner means requests chain properly
+        deadline = get_deadline()
         while True:
-            if reset_due_to_cancel:
-                await spinner_starter_recvchan.receive()
-            interrupt_delayed_spinner = await nursery.start(spinner_subtask)
+            # get that spinner going
+            cancel_delayed_spinner = await nursery.start(delayed_spinner, deadline)
             with trio.CancelScope() as cancel_scope:
                 await spinner_stopper_sendchan.send(cancel_scope.cancel)
+                # wait for possibly a new scope to enter
                 await spinner_starter_recvchan.receive()
-                reset_due_to_cancel = False
-                continue
+                # deadline = deadline
+                # continue
 
-            # noinspection PyUnreachableCode
-            interrupt_delayed_spinner()
-            set_normal()
-            reset_due_to_cancel = True
+            if cancel_scope.cancelled_caught:
+                # The final outstanding scope exited
+                set_normal()
+                cancel_delayed_spinner()
+                # wait for a new first scope entry
+                await spinner_starter_recvchan.receive()
+                # new first scope, new deadline
+                deadline = get_deadline()
 
 
 async def arh5_task(opened_arh5, root):
