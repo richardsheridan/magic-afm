@@ -67,6 +67,8 @@ async def convert_ardf(
             stdout.append(bytes_)
         stdout = b"".join(stdout).decode()
         print(stdout)
+        if "Failed" in stdout:
+            raise RuntimeError()
 
     async def reading_stderr():
         async for stuff in proc.stderr:

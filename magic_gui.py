@@ -373,7 +373,7 @@ def embed_figure(root, fig, title, image_names):
     return window, canvas, navbar, options_frame, image_name_strvar, disp_kind_intvar, fit_intvar
 
 
-ARH5_FIGURE_SIZE = (8, 2.75)
+ARH5_FIGURE_SIZE = (9.5, 3.5)
 
 
 def create_arh5_figure(figsize=ARH5_FIGURE_SIZE):
@@ -643,7 +643,7 @@ async def arh5_task(opened_arh5, root):
 
                 # Drawing Phase
                 # Based options choose plots and collect artists for deletion
-                new_artists, color = draw_force_curve(data, plot_ax, options)
+                new_artists, color = await ctrs(draw_force_curve, data, plot_ax, options)
                 artists.extend(new_artists)
                 artists.extend(
                     img_ax.plot(
@@ -656,6 +656,29 @@ async def arh5_task(opened_arh5, root):
                         markerfacecolor=color,
                     )
                 )
+                if options.fit_mode:
+                    table = await ctrs(
+                        partial(
+                            plot_ax.table,
+                            [
+                                [
+                                    "{:.2f}±{:.2f}".format(data.beta[0], data.beta_err[0],),
+                                    "{:.2f}±{:.2f}".format(-data.beta[1], -data.beta_err[1]),
+                                    "{:.2f}".format(data.defl),
+                                    "{:.2f}".format(data.ind),
+                                    "{:.2f}".format(data.defl / data.ind),
+                                ],
+                            ],
+                            loc="top",
+                            colLabels=["$M$ (GPa)", "$F_{adh}$ (nN)", "d (nm)", "δ (nm)", "d/δ"],
+                            colLoc="center",
+                        )
+                    )
+
+                    table.auto_set_font_size(False)
+                    table.set_fontsize(9)
+                    artists.append(table)
+                    await ctrs(partial(fig.subplots_adjust, top=0.85))
                 canvas.draw_idle()
 
     async def mpl_pick_motion_event_callback(event):
