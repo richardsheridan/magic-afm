@@ -23,7 +23,9 @@ from functools import partial
 import h5py
 import numpy as np
 import trio
+from threadpoolctl import threadpool_limits
 
+internal_threadpool_limiters = threadpool_limits(1)
 cpu_bound_limiter = trio.CapacityLimiter(7)
 ctrs = partial(trio.to_thread.run_sync, cancellable=True, limiter=cpu_bound_limiter)
 trs = partial(trio.to_thread.run_sync, cancellable=True)
