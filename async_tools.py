@@ -30,6 +30,16 @@ cpu_bound_limiter = trio.CapacityLimiter(7)
 ctrs = partial(trio.to_thread.run_sync, cancellable=True, limiter=cpu_bound_limiter)
 trs = partial(trio.to_thread.run_sync, cancellable=True)
 
+BASIC_ARDF_IMAGE_UNITS = {
+    "Adhesion": "N",
+    "Height": "m",
+    "IndentationHertz": "m",
+    "YoungsHertz": "Pa",
+    "ZSensor": "m",
+    "MapAdhesion": "N",
+    "MapHeight": "m",
+}
+
 
 def make_cancel_poller():
     """Uses internal undocumented bits so probably super fragile"""
@@ -214,7 +224,7 @@ class FFMTraceRetraceWorker:
 class AsyncARH5File:
     def __init__(self, h5file_path):
         self.h5file_path = h5file_path
-        self.units_map = {}
+        self.units_map = BASIC_ARDF_IMAGE_UNITS.copy()
 
     async def ainitialize(self):
         h5data = await trs(h5py.File, self.h5file_path, "r")
@@ -272,3 +282,10 @@ class AsyncARH5File:
 
     async def get_image(self, image_name):
         return await trs(self._images.__getitem__, image_name)
+
+    def get_image_units(self, image_name):
+        if image_name.endswith("Trace"):
+            image_name = image_name[:-5]
+        if image_name.endswith("Retrace"):
+            image_name = image_name[:-6]
+        return self.units_map.get(image_name, "V")

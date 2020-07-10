@@ -50,7 +50,7 @@ from async_tools import trs, ctrs
 
 LONGEST_IMPERCEPTIBLE_DELAY = 0.016  # seconds
 
-matplotlib.rcParams['savefig.dpi'] = 300
+matplotlib.rcParams["savefig.dpi"] = 300
 
 
 class TkState(enum.IntFlag):
@@ -588,7 +588,7 @@ async def arh5_task(opened_arh5, root):
         navbar.update()  # let navbar catch new cax in fig
         # colorbar.ax.set_navigate(True)
         colorbar.solids.set_picker(True)
-        colorbar.ax.set_ylabel(opened_arh5.units_map.get(image_name, "Volts"))
+        colorbar.ax.set_ylabel(image_name + " (" + opened_arh5.get_image_units(image_name) + ")")
 
         fig.tight_layout()
         canvas.draw_idle()
