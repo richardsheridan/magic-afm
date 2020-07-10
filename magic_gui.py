@@ -493,8 +493,9 @@ async def spinner_task(set_spinner, set_normal, task_status):
     @asynccontextmanager
     async def spinner_scope():
         with trio.CancelScope(shield=True):
-            await spinner_starter_sendchan.send(None)
-            stopper = await spinner_stopper_recvchan.receive()
+            with trio.fail_after(1):  # assert this should never really block
+                await spinner_starter_sendchan.send(None)
+                stopper = await spinner_stopper_recvchan.receive()
         try:
             yield
         finally:
