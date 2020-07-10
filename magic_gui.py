@@ -917,6 +917,9 @@ def main():
     tk.NoDefaultRoot()
     root = tk.Tk()
     root.wm_resizable(False, False)
+    root.wm_minsize(300, 20)
+    root.wm_title("Magic AFM")
+    # root.wm_iconbitmap("something.ico")
     # sabotage update command so that we crash instead of deadlocking
     # breaks ttk.Combobox, maybe others
     # root.tk.call('rename', 'update', 'never_update')
