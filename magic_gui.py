@@ -20,21 +20,21 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import collections
 import dataclasses
+import enum
 import tkinter as tk
 import traceback
-import enum
 from contextlib import asynccontextmanager
 from functools import partial, wraps
 from tkinter import ttk, filedialog
 from typing import Optional, Callable
 
+import matplotlib
 import numpy as np
 import outcome
 import trio
 import trio.testing
 from matplotlib.backend_bases import MouseButton
-from matplotlib.backends import _backend_tk
-from matplotlib.backends._backend_tk import FigureCanvasTk
+from matplotlib.backends._backend_tk import FigureCanvasTk, blit as tk_blit
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 from matplotlib.colorbar import Colorbar
@@ -49,6 +49,8 @@ import magic_calculation
 from async_tools import trs, ctrs
 
 LONGEST_IMPERCEPTIBLE_DELAY = 0.016  # seconds
+
+matplotlib.rcParams['savefig.dpi'] = 300
 
 
 class TkState(enum.IntFlag):
@@ -173,16 +175,16 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
                 async with self.trio_draw_lock:
                     self._trio_draw_event = trio.Event()
                     await trs(super().draw, cancellable=False)
-                    _backend_tk.blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
+                    tk_blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
         finally:
             self._idle_task_running = False
 
     def draw(self):
         super().draw()
-        _backend_tk.blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
+        tk_blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
 
     def blit(self, bbox=None):
-        _backend_tk.blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3), bbox=bbox)
+        tk_blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3), bbox=bbox)
 
     def resize(self, event):
         width, height = event.width, event.height
@@ -378,7 +380,7 @@ ARH5_FIGURE_SIZE = (9.5, 3.5)
 
 def create_arh5_figure(figsize=ARH5_FIGURE_SIZE):
     fig = Figure(figsize, frameon=False)
-    img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.35]))
+    img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.5]))
     img_ax.set_anchor("W")
     # Need to pre-load something into these labels for change_image_callback->tight_layout
     plot_ax.set_xlabel(" ")
