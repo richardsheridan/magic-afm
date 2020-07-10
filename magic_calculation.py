@@ -467,7 +467,7 @@ class FitMode(enum.IntEnum):
 
 
 @np.errstate(all='ignore')
-def fitfun(delta, f, k, radius, tau, fit_mode, _poll_for_cancel=lambda: None, **kwargs):
+def fitfun(delta, f, k, radius, tau, fit_mode, cancel_poller=lambda: None, **kwargs):
     # Very course estimate of force curve parameters for initial guess
     imin = np.argmin(f)  # TODO: better way to choose this for low adhesion
     fmin = f[imin]
@@ -491,7 +491,7 @@ def fitfun(delta, f, k, radius, tau, fit_mode, _poll_for_cancel=lambda: None, **
         raise ValueError('Unknown fit_mode: ', fit_mode)
 
     def partial_force_curve(delta, K, fc, delta_shift, force_shift, lj_delta_scale, ):
-        _poll_for_cancel()
+        cancel_poller()
         if np.any(np.isnan((K, fc, delta_shift, force_shift, lj_delta_scale,))):
             print('Fit likely failed: NaNs in params')
             return np.full_like(delta, np.nan)
