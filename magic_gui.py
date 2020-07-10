@@ -487,11 +487,7 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
 
 
 async def spinner_task(set_spinner, set_normal, task_status):
-    spinner_starter_sendchan: trio.abc.SendChannel
-    spinner_starter_recvchan: trio.abc.ReceiveChannel
     spinner_starter_sendchan, spinner_starter_recvchan = trio.open_memory_channel(0)
-    spinner_stopper_sendchan: trio.abc.SendChannel
-    spinner_stopper_recvchan: trio.abc.ReceiveChannel
     spinner_stopper_sendchan, spinner_stopper_recvchan = trio.open_memory_channel(0)
 
     @asynccontextmanager
@@ -510,14 +506,11 @@ async def spinner_task(set_spinner, set_normal, task_status):
         # absolute deadline to start spinner means requests chain properly
         with trio.CancelScope() as cancel_scope:
             task_status.started(cancel_scope.cancel)
-            if deadline < trio.current_time():
-                # betting that a spinner has already been set
-                return
             await trio.sleep_until(deadline)
             set_spinner()
 
     def get_deadline():
-        return trio.current_time()+LONGEST_IMPERCEPTIBLE_DELAY*5
+        return trio.current_time() + LONGEST_IMPERCEPTIBLE_DELAY * 5
 
     nursery: trio.Nursery
     async with trio.open_nursery() as nursery:
@@ -533,12 +526,12 @@ async def spinner_task(set_spinner, set_normal, task_status):
                 # wait for possibly a new scope to enter
                 await spinner_starter_recvchan.receive()
                 # deadline = deadline
-                # continue
+
+            cancel_delayed_spinner()
 
             if cancel_scope.cancelled_caught:
                 # The final outstanding scope exited
                 set_normal()
-                cancel_delayed_spinner()
                 # wait for a new first scope entry
                 await spinner_starter_recvchan.receive()
                 # new first scope, new deadline
