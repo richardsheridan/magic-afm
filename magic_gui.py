@@ -444,7 +444,7 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
 
     cancel_poller()
     beta, beta_err, calc_fun = magic_calculation.fitfun(
-        delta[sl], f[sl], **dataclasses.asdict(options), cancel_poller=cancel_poller, thread_limit=1
+        delta[sl], f[sl], **dataclasses.asdict(options), cancel_poller=cancel_poller,
     )
     f_fit = calc_fun(delta[sl], *beta)
     d_fit = f_fit / options.k
