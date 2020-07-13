@@ -30,16 +30,6 @@ cpu_bound_limiter = trio.CapacityLimiter(4)
 ctrs = partial(trio.to_thread.run_sync, cancellable=True, limiter=cpu_bound_limiter)
 trs = partial(trio.to_thread.run_sync, cancellable=True)
 
-BASIC_ARDF_IMAGE_UNITS = {
-    "Adhesion": "N",
-    "Height": "m",
-    "IndentationHertz": "m",
-    "YoungsHertz": "Pa",
-    "ZSensor": "m",
-    "MapAdhesion": "N",
-    "MapHeight": "m",
-}
-
 
 def make_cancel_poller():
     """Uses internal undocumented bits so probably super fragile"""
@@ -100,7 +90,8 @@ async def convert_ardf(
                 nursery.start_soon(reading_stderr)
     except FileNotFoundError as e:
         print(
-            "Please ensure the full path to the Asylum converter tool ARDFtoHDF5.exe is in the conv_path argument",
+            "Please ensure the full path to the Asylum converter tool "
+            "ARDFtoHDF5.exe is in the conv_path argument",
             flush=True,
             sep="\n",
         )
@@ -222,9 +213,20 @@ class FFMTraceRetraceWorker:
 
 
 class AsyncARH5File:
+
+    _basic_units_map = {
+        "Adhesion": "N",
+        "Height": "m",
+        "IndentationHertz": "m",
+        "YoungsHertz": "Pa",
+        "ZSensor": "m",
+        "MapAdhesion": "N",
+        "MapHeight": "m",
+    }
+
     def __init__(self, h5file_path):
         self.h5file_path = h5file_path
-        self.units_map = BASIC_ARDF_IMAGE_UNITS.copy()
+        self._units_map = self._basic_units_map.copy()
 
     async def ainitialize(self):
         h5data = await trs(h5py.File, self.h5file_path, "r")
@@ -284,8 +286,10 @@ class AsyncARH5File:
         return await trs(self._images.__getitem__, image_name)
 
     def get_image_units(self, image_name):
+        # python 3.9+
+        # image_name = image_name.removesuffix("Trace").removesuffix("Retrace")
         if image_name.endswith("Trace"):
             image_name = image_name[:-5]
         if image_name.endswith("Retrace"):
             image_name = image_name[:-6]
-        return self.units_map.get(image_name, "V")
+        return self._units_map.get(image_name, "V")
