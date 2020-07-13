@@ -454,8 +454,8 @@ def delta_curve(red_curve, force, k, radius, K, fc, tau,
 def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale, ):
     """So that schwarz can be directly jammed into delta_curve"""
     a = schwarz_red(red_force, red_fc, 1)
-    if np.isnan(a):
-        raise ValueError('nans abound', red_force, red_fc)
+    # if np.isnan(a):
+    #     raise ValueError('nans abound', red_force, red_fc)
     return a
 
 

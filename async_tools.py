@@ -165,7 +165,7 @@ class ForceMapWorker:
             s = self.extlens[r, c]
 
             x[r, c, :, :] = self._shared_get_part(curve, s)
-        return x * NANOMETER_UNIT_CONVERSION, self.minext
+        return x, self.minext
 
 
 class FFMSingleWorker:
@@ -227,6 +227,12 @@ class AsyncARH5File:
     def __init__(self, h5file_path):
         self.h5file_path = h5file_path
         self._units_map = self._basic_units_map.copy()
+        self._calc_images = {}
+        self._h5_image_names = set()
+
+    @property
+    def image_names(self):
+        return self._calc_images.keys() | self._h5_image_names
 
     async def ainitialize(self):
         h5data = await trs(h5py.File, self.h5file_path, "r")
@@ -240,11 +246,11 @@ class AsyncARH5File:
             ),
         )
         worker = await trs(self._choose_worker, h5data)
-        images, image_names = await trs(lambda: (h5data["Image"], list(h5data["Image"].keys())))
+        images, image_names = await trs(lambda: (h5data["Image"], set(h5data["Image"].keys())))
         self._h5data = h5data
         self._worker = worker
         self._images = images
-        self.image_names = image_names
+        self._h5_image_names = image_names
 
     async def aclose(self):
         with trio.CancelScope(shield=True):
@@ -283,6 +289,8 @@ class AsyncARH5File:
         return await trs(self._worker.get_all_curves, make_cancel_poller())
 
     async def get_image(self, image_name):
+        if image_name in self._calc_images:
+            return self._calc_images[image_name]
         return await trs(self._images.__getitem__, image_name)
 
     def get_image_units(self, image_name):
@@ -293,3 +301,26 @@ class AsyncARH5File:
         if image_name.endswith("Retrace"):
             image_name = image_name[:-6]
         return self._units_map.get(image_name, "V")
+
+    def add_image(self, image_name, units, image):
+        self._units_map[image_name] = units
+        self._calc_images[image_name] = image
+
+
+async def thread_map(sync_fn, job_items, *args):
+    job_items = list(job_items)
+
+    async def thread_worker(item, i, send_chan):
+        async with send_chan:
+            result = await ctrs(sync_fn, item, *args)
+            await send_chan.send((i, result))
+
+    send_chan, recv_chan = trio.open_memory_channel(0)
+    async with trio.open_nursery() as nursery:
+        for i, item in enumerate(job_items):
+            nursery.start_soon(thread_worker, item, i, send_chan.clone())
+        await send_chan.aclose()
+        async for i, result in recv_chan:
+            job_items[i] = result
+
+    return job_items

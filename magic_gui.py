@@ -46,7 +46,7 @@ from matplotlib.widgets import SubplotTool
 
 import async_tools
 import magic_calculation
-from async_tools import trs, ctrs
+from async_tools import trs, ctrs, thread_map
 
 LONGEST_IMPERCEPTIBLE_DELAY = 0.016  # seconds
 
@@ -314,12 +314,14 @@ def embed_figure(root, fig, title, image_names):
     navbar = ImprovedNavigationToolbar2Tk(canvas, window)
 
     options_frame = ttk.Frame(root)
+    calc_props_button = ttk.Button(options_frame, text="Calculate Property Maps")
+    calc_props_button.pack()
     image_name_labelframe = ttk.Labelframe(options_frame, text="Current image")
     image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
     image_name_menu = ttk.Combobox(
         image_name_labelframe, width=12, state="readonly", textvariable=image_name_strvar,
     )
-    image_name_menu.configure(values=image_names, width=max(map(len, image_names)))
+    image_name_menu.configure(values=list(image_names), width=max(map(len, image_names)))
 
     image_name_menu.pack(side="left")
     image_name_labelframe.pack(side="left")
@@ -372,7 +374,17 @@ def embed_figure(root, fig, title, image_names):
 
     size_grip.grid(row=2, column=1, sticky="es")
     window.grid_columnconfigure(1, weight=0)
-    return window, canvas, navbar, options_frame, image_name_strvar, disp_kind_intvar, fit_intvar
+    return (
+        window,
+        canvas,
+        navbar,
+        options_frame,
+        image_name_strvar,
+        disp_kind_intvar,
+        fit_intvar,
+        calc_props_button,
+        image_name_menu,
+    )
 
 
 ARH5_FIGURE_SIZE = (9.5, 3.5)
@@ -470,6 +482,67 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
     )
 
 
+async def arh5_prop_map_callback(
+    opened_arh5, fit_intvar, disp_kind_intvar, k, spinner_scope, image_name_menu
+):
+    # pbar.set_description("Calculating force maps")
+    options = ForceCurveOptions(fit_mode=fit_intvar.get(), disp_kind=disp_kind_intvar.get(), k=k)
+    if options.fit_mode == magic_calculation.FitMode.SKIP:
+        return
+    async with spinner_scope():
+        data, s = await opened_arh5.get_all_curves()
+        img_shape = data.shape[:2]
+        npts = data.shape[-1]
+        z = data[:, :, 0, :].reshape((-1, npts))
+        d = data[:, :, 1, :].reshape((-1, npts))
+        resample_npts = 512
+        s = s * resample_npts // npts
+        z, d = await thread_map(magic_calculation.resample_dset, [z, d], resample_npts, True)
+        # Transform data to model units
+        f = d * options.k
+        delta = z - d
+        del z, d, data
+
+    if options.fit_mode == magic_calculation.FitMode.EXTEND:
+        sl = slice(s)
+    elif options.fit_mode == magic_calculation.FitMode.RETRACT:
+        sl = slice(s, None)
+    else:
+        raise ValueError("Unknown fit_mode: ", options.fit_mode)
+
+    property_names_units = {
+        "CalcIndentationModulus": "GPa",
+        "CalcAdhesionForce": "nN",
+        "CalcDeflection": "nm",
+        "CalcIndentation": "nm",
+        "CalcTrueHeight": "nm",  # Hi z -> lo h
+    }
+    properties = np.empty(len(f), dtype=np.dtype([(name, "f4") for name in property_names_units]),)
+
+    def calc_properties(i, cancel_poller):
+        cancel_poller()
+        beta, beta_err, calc_fun = magic_calculation.fitfun(
+            delta[i, sl], f[i, sl], **dataclasses.asdict(options), cancel_poller=cancel_poller,
+        )
+        cancel_poller()
+        if np.all(np.isfinite(beta)):
+            deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
+                f[sl], beta, **dataclasses.asdict(options)
+            )
+            properties[i] = beta[0], -beta[1], deflection, indentation, -z_true_surface
+        else:
+            properties[i] = np.nan
+
+    await thread_map(calc_properties, range(len(f)), async_tools.make_cancel_poller())
+
+    combobox_values = list(image_name_menu.cget("values"))
+    properties = properties.reshape((*img_shape, -1,))
+    for name in property_names_units:
+        opened_arh5.add_image(name, property_names_units[name], properties[name].squeeze())
+        combobox_values.append(name)
+    image_name_menu.configure(values=combobox_values)
+
+
 async def spinner_task(set_spinner, set_normal, task_status):
     spinner_starter_sendchan, spinner_starter_recvchan = trio.open_memory_channel(0)
     spinner_stopper_sendchan, spinner_stopper_recvchan = trio.open_memory_channel(0)
@@ -536,6 +609,8 @@ async def arh5_task(opened_arh5, root):
         image_name_strvar,
         disp_kind_intvar,
         fit_intvar,
+        calc_props_button,
+        image_name_menu,
     ) = embed_figure(root, fig, opened_arh5.h5file_path.name, opened_arh5.image_names)
 
     fmt = ScalarFormatter()
@@ -751,6 +826,18 @@ async def arh5_task(opened_arh5, root):
             spinner_task,
             partial(window.configure, cursor="watch"),
             partial(window.configure, cursor="arrow"),
+        )
+        calc_props_button.configure(
+            command=partial(
+                nursery.start_soon,
+                arh5_prop_map_callback,
+                opened_arh5,
+                fit_intvar,
+                disp_kind_intvar,
+                k,
+                spinner_scope,
+                image_name_menu,
+            )
         )
         await trio.sleep_forever()
 
