@@ -516,6 +516,7 @@ async def arh5_prop_map_callback(
         "CalcDeflection": "nm",
         "CalcIndentation": "nm",
         "CalcTrueHeight": "nm",  # Hi z -> lo h
+        "CalcIndentationRatio": "",
     }
     properties = np.empty(len(f), dtype=np.dtype([(name, "f4") for name in property_names_units]),)
 
@@ -529,7 +530,14 @@ async def arh5_prop_map_callback(
             deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
                 f[sl], beta, **dataclasses.asdict(options)
             )
-            properties[i] = beta[0], -beta[1], deflection, indentation, -z_true_surface
+            properties[i] = (
+                beta[0],
+                -beta[1],
+                deflection,
+                indentation,
+                -z_true_surface,
+                deflection / indentation,
+            )
         else:
             properties[i] = np.nan
 
