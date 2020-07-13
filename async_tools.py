@@ -74,10 +74,10 @@ async def convert_ardf(
     pbar.set_description("Converting " + str(ardf_path))
 
     async def reading_stdout():
-        stdout = []
+        stdout = bytearray()
         async for bytes_ in proc.stdout:
-            stdout.append(bytes_)
-        stdout = b"".join(stdout).decode()
+            stdout.extend(bytes_)
+        stdout = stdout.decode()
         print(stdout)
         if "Failed" in stdout:
             raise RuntimeError()
