@@ -307,99 +307,170 @@ def impartial(fn):
     return impartial_wrapper
 
 
-def embed_figure(root, fig, title, image_names):
-    window = tk.Toplevel(root)
-    window.wm_title(title)
-    canvas = AsyncFigureCanvasTkAgg(fig, window,)
-    navbar = ImprovedNavigationToolbar2Tk(canvas, window)
+class ARDFWindow(tk.Toplevel):
+    default_figsize = (9.5, 3.5)
 
-    options_frame = ttk.Frame(root)
-    calc_props_button = ttk.Button(options_frame, text="Calculate Property Maps")
-    calc_props_button.pack()
-    image_name_labelframe = ttk.Labelframe(options_frame, text="Current image")
-    image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
-    image_name_menu = ttk.Combobox(
-        image_name_labelframe, width=12, state="readonly", textvariable=image_name_strvar,
-    )
-    image_name_menu.configure(values=list(image_names), width=max(map(len, image_names)))
+    def __init__(self, root, title=None, figsize=default_figsize, **kwargs):
+        super().__init__(root, **kwargs)
+        self.wm_title(title)
 
-    image_name_menu.pack(side="left")
-    image_name_labelframe.pack(side="left")
+        self.fig = Figure(figsize, frameon=False)
+        self.canvas = AsyncFigureCanvasTkAgg(self.fig, self)
+        self.navbar = ImprovedNavigationToolbar2Tk(self.canvas, self)
+        self.img_ax, self.plot_ax = img_ax, plot_ax = self.fig.subplots(
+            1, 2, gridspec_kw=dict(width_ratios=[1, 1.5])
+        )
+        img_ax.set_anchor("W")
+        # Need to pre-load something into these labels for change_image_callback->tight_layout
+        plot_ax.set_xlabel(" ")
+        plot_ax.set_ylabel(" ")
+        plot_ax.set_ylim([-1000, 1000])
+        plot_ax.set_xlim([-1000, 1000])
 
-    disp_labelframe = ttk.Labelframe(options_frame, text="Display type")
-    disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
-    disp_zd_button = ttk.Radiobutton(
-        disp_labelframe, text="z/d", value=DispKind.zd.value, variable=disp_kind_intvar
-    )
-    disp_zd_button.pack(side="left")
-    disp_deltaf_button = ttk.Radiobutton(
-        disp_labelframe, text="δ/f", value=DispKind.δf.value, variable=disp_kind_intvar
-    )
-    disp_deltaf_button.pack(side="left")
-    disp_labelframe.pack(side="left")
+        self.options_frame = ttk.Frame(root)
+        self.calc_props_button = ttk.Button(self.options_frame, text="Calculate Property Maps")
+        self.calc_props_button.pack()
+        image_name_labelframe = ttk.Labelframe(self.options_frame, text="Current image")
+        self.image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
+        self.image_name_menu = ttk.Combobox(
+            image_name_labelframe, width=12, state="readonly", textvariable=self.image_name_strvar,
+        )
 
-    fit_labelframe = ttk.Labelframe(options_frame, text="Fit type")
-    fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FitMode.SKIP.value)
-    fit_skip_button = ttk.Radiobutton(
-        fit_labelframe, text="Skip", value=magic_calculation.FitMode.SKIP.value, variable=fit_intvar
-    )
-    fit_skip_button.pack(side="left")
-    fit_ext_button = ttk.Radiobutton(
-        fit_labelframe,
-        text="Extend",
-        value=magic_calculation.FitMode.EXTEND.value,
-        variable=fit_intvar,
-    )
-    fit_ext_button.pack(side="left")
-    fit_ret_button = ttk.Radiobutton(
-        fit_labelframe,
-        text="Retract",
-        value=magic_calculation.FitMode.RETRACT.value,
-        variable=fit_intvar,
-    )
-    fit_ret_button.pack(side="left")
-    fit_labelframe.pack(side="left")
+        self.image_name_menu.pack(side="left")
+        image_name_labelframe.pack(side="left")
 
-    options_frame.grid(row=1, column=0, sticky="nsew")
-    window.bind("<FocusIn>", impartial(options_frame.lift))
+        disp_labelframe = ttk.Labelframe(self.options_frame, text="Display type")
+        self.disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
+        disp_zd_button = ttk.Radiobutton(
+            disp_labelframe, text="z/d", value=DispKind.zd.value, variable=self.disp_kind_intvar
+        )
+        disp_zd_button.pack(side="left")
+        disp_deltaf_button = ttk.Radiobutton(
+            disp_labelframe, text="δ/f", value=DispKind.δf.value, variable=self.disp_kind_intvar
+        )
+        disp_deltaf_button.pack(side="left")
+        disp_labelframe.pack(side="left")
 
-    size_grip = ttk.Sizegrip(window)
+        fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit type")
+        self.fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FitMode.SKIP.value)
+        fit_skip_button = ttk.Radiobutton(
+            fit_labelframe,
+            text="Skip",
+            value=magic_calculation.FitMode.SKIP.value,
+            variable=self.fit_intvar,
+        )
+        fit_skip_button.pack(side="left")
+        fit_ext_button = ttk.Radiobutton(
+            fit_labelframe,
+            text="Extend",
+            value=magic_calculation.FitMode.EXTEND.value,
+            variable=self.fit_intvar,
+        )
+        fit_ext_button.pack(side="left")
+        fit_ret_button = ttk.Radiobutton(
+            fit_labelframe,
+            text="Retract",
+            value=magic_calculation.FitMode.RETRACT.value,
+            variable=self.fit_intvar,
+        )
+        fit_ret_button.pack(side="left")
+        fit_labelframe.pack(side="left")
 
-    navbar.grid(row=0, sticky="we")
-    window.grid_rowconfigure(0, weight=0)
+        self.options_frame.grid(row=1, column=0, sticky="nsew")
+        # yes, cheating on trio here
+        self.bind("<FocusIn>", impartial(self.options_frame.lift))
 
-    canvas.get_tk_widget().grid(row=1, sticky="wens")
-    window.grid_rowconfigure(1, weight=1)
-    window.grid_columnconfigure(0, weight=1)
+        size_grip = ttk.Sizegrip(self)
 
-    size_grip.grid(row=2, column=1, sticky="es")
-    window.grid_columnconfigure(1, weight=0)
-    return (
-        window,
-        canvas,
-        navbar,
-        options_frame,
-        image_name_strvar,
-        disp_kind_intvar,
-        fit_intvar,
-        calc_props_button,
-        image_name_menu,
-    )
+        self.navbar.grid(row=0, sticky="we")
+        self.grid_rowconfigure(0, weight=0)
 
+        self.canvas.get_tk_widget().grid(row=1, sticky="wens")
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1)
 
-ARH5_FIGURE_SIZE = (9.5, 3.5)
+        size_grip.grid(row=2, column=1, sticky="es")
+        self.grid_columnconfigure(1, weight=0)
 
+    def set_image_names(self, image_names):
+        self.image_name_menu.configure(values=list(image_names), width=max(map(len, image_names)))
 
-def create_arh5_figure(figsize=ARH5_FIGURE_SIZE):
-    fig = Figure(figsize, frameon=False)
-    img_ax, plot_ax = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 1.5]))
-    img_ax.set_anchor("W")
-    # Need to pre-load something into these labels for change_image_callback->tight_layout
-    plot_ax.set_xlabel(" ")
-    plot_ax.set_ylabel(" ")
-    plot_ax.set_ylim([-1000, 1000])
-    plot_ax.set_xlim([-1000, 1000])
-    return fig, img_ax, plot_ax
+    async def arh5_prop_map_callback(self, opened_arh5, k, spinner_scope):
+        # pbar.set_description("Calculating force maps")
+        options = ForceCurveOptions(
+            fit_mode=self.fit_intvar.get(), disp_kind=self.disp_kind_intvar.get(), k=k
+        )
+        if options.fit_mode == magic_calculation.FitMode.SKIP:
+            return
+        async with spinner_scope():
+            data, s = await opened_arh5.get_all_curves()
+            img_shape = data.shape[:2]
+            npts = data.shape[-1]
+            z = data[:, :, 0, :].reshape((-1, npts))
+            d = data[:, :, 1, :].reshape((-1, npts))
+            resample_npts = 512
+            s = s * resample_npts // npts
+            z, d = await thread_map(magic_calculation.resample_dset, [z, d], resample_npts, True)
+            # Transform data to model units
+            f = d * options.k
+            delta = z - d
+            del z, d, data
+
+        if options.fit_mode == magic_calculation.FitMode.EXTEND:
+            sl = slice(s)
+        elif options.fit_mode == magic_calculation.FitMode.RETRACT:
+            sl = slice(s, None)
+        else:
+            raise ValueError("Unknown fit_mode: ", options.fit_mode)
+
+        property_names_units = {
+            "CalcIndentationModulus": "GPa",
+            "CalcAdhesionForce": "nN",
+            "CalcDeflection": "nm",
+            "CalcIndentation": "nm",
+            "CalcTrueHeight": "nm",  # Hi z -> lo h
+            "CalcIndentationRatio": "",
+        }
+        properties = np.empty(
+            len(f), dtype=np.dtype([(name, "f4") for name in property_names_units]),
+        )
+
+        def calc_properties(i, cancel_poller):
+            cancel_poller()
+            beta, beta_err, calc_fun = magic_calculation.fitfun(
+                delta[i, sl], f[i, sl], **dataclasses.asdict(options), cancel_poller=cancel_poller,
+            )
+            cancel_poller()
+            if np.all(np.isfinite(beta)):
+                deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
+                    f[sl], beta, **dataclasses.asdict(options)
+                )
+                properties[i] = (
+                    beta[0],
+                    -beta[1],
+                    deflection,
+                    indentation,
+                    -z_true_surface,
+                    deflection / indentation,
+                )
+            else:
+                properties[i] = np.nan
+
+        await thread_map(calc_properties, range(len(f)), async_tools.make_cancel_poller())
+
+        combobox_values = list(self.image_name_menu.cget("values"))
+        properties = properties.reshape((*img_shape, -1,))
+        for name in property_names_units:
+            opened_arh5.add_image(name, property_names_units[name], properties[name].squeeze())
+            combobox_values.append(name)
+        self.image_name_menu.configure(values=combobox_values)
+
+    def teach_buttons_to_use_trio(self, nursery, opened_arh5, k, spinner_scope):
+        self.calc_props_button.configure(
+            command=partial(
+                nursery.start_soon, self.arh5_prop_map_callback, opened_arh5, k, spinner_scope,
+            )
+        )
 
 
 def draw_force_curve(data, plot_ax, options):
@@ -482,75 +553,6 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
     )
 
 
-async def arh5_prop_map_callback(
-    opened_arh5, fit_intvar, disp_kind_intvar, k, spinner_scope, image_name_menu
-):
-    # pbar.set_description("Calculating force maps")
-    options = ForceCurveOptions(fit_mode=fit_intvar.get(), disp_kind=disp_kind_intvar.get(), k=k)
-    if options.fit_mode == magic_calculation.FitMode.SKIP:
-        return
-    async with spinner_scope():
-        data, s = await opened_arh5.get_all_curves()
-        img_shape = data.shape[:2]
-        npts = data.shape[-1]
-        z = data[:, :, 0, :].reshape((-1, npts))
-        d = data[:, :, 1, :].reshape((-1, npts))
-        resample_npts = 512
-        s = s * resample_npts // npts
-        z, d = await thread_map(magic_calculation.resample_dset, [z, d], resample_npts, True)
-        # Transform data to model units
-        f = d * options.k
-        delta = z - d
-        del z, d, data
-
-    if options.fit_mode == magic_calculation.FitMode.EXTEND:
-        sl = slice(s)
-    elif options.fit_mode == magic_calculation.FitMode.RETRACT:
-        sl = slice(s, None)
-    else:
-        raise ValueError("Unknown fit_mode: ", options.fit_mode)
-
-    property_names_units = {
-        "CalcIndentationModulus": "GPa",
-        "CalcAdhesionForce": "nN",
-        "CalcDeflection": "nm",
-        "CalcIndentation": "nm",
-        "CalcTrueHeight": "nm",  # Hi z -> lo h
-        "CalcIndentationRatio": "",
-    }
-    properties = np.empty(len(f), dtype=np.dtype([(name, "f4") for name in property_names_units]),)
-
-    def calc_properties(i, cancel_poller):
-        cancel_poller()
-        beta, beta_err, calc_fun = magic_calculation.fitfun(
-            delta[i, sl], f[i, sl], **dataclasses.asdict(options), cancel_poller=cancel_poller,
-        )
-        cancel_poller()
-        if np.all(np.isfinite(beta)):
-            deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
-                f[sl], beta, **dataclasses.asdict(options)
-            )
-            properties[i] = (
-                beta[0],
-                -beta[1],
-                deflection,
-                indentation,
-                -z_true_surface,
-                deflection / indentation,
-            )
-        else:
-            properties[i] = np.nan
-
-    await thread_map(calc_properties, range(len(f)), async_tools.make_cancel_poller())
-
-    combobox_values = list(image_name_menu.cget("values"))
-    properties = properties.reshape((*img_shape, -1,))
-    for name in property_names_units:
-        opened_arh5.add_image(name, property_names_units[name], properties[name].squeeze())
-        combobox_values.append(name)
-    image_name_menu.configure(values=combobox_values)
-
-
 async def spinner_task(set_spinner, set_normal, task_status):
     spinner_starter_sendchan, spinner_starter_recvchan = trio.open_memory_channel(0)
     spinner_stopper_sendchan, spinner_stopper_recvchan = trio.open_memory_channel(0)
@@ -608,18 +610,8 @@ async def arh5_task(opened_arh5, root):
     k = float(opened_arh5.notes["SpringConstant"])
     scansize = float(opened_arh5.notes["ScanSize"]) * async_tools.NANOMETER_UNIT_CONVERSION
 
-    fig, img_ax, plot_ax = create_arh5_figure()
-    (
-        window,
-        canvas,
-        navbar,
-        options_frame,
-        image_name_strvar,
-        disp_kind_intvar,
-        fit_intvar,
-        calc_props_button,
-        image_name_menu,
-    ) = embed_figure(root, fig, opened_arh5.h5file_path.name, opened_arh5.image_names)
+    window = ARDFWindow(root, opened_arh5.h5file_path.name)
+    window.set_image_names(opened_arh5.image_names)
 
     fmt = ScalarFormatter()
     fmt.set_powerlimits((-2, 2))
@@ -632,7 +624,7 @@ async def arh5_task(opened_arh5, root):
         nonlocal colorbar, axesimage
         nonlocal data_coords_to_array_index
         nonlocal array_index_to_data_coords
-        image_name = image_name_strvar.get()
+        image_name = window.image_name_strvar.get()
         image_array = await opened_arh5.get_image(image_name)
 
         if colorbar is not None:
@@ -641,7 +633,7 @@ async def arh5_task(opened_arh5, root):
             axesimage.remove()
 
         s = (scansize + scansize / len(image_array)) // 2
-        axesimage = img_ax.imshow(
+        axesimage = window.img_ax.imshow(
             image_array,
             origin="upper" if opened_arh5.scandown else "lower",
             extent=(-s, s, -s, s,),
@@ -664,17 +656,17 @@ async def arh5_task(opened_arh5, root):
             y, x = invtrans.transform_point([r, c])  # row, column
             return x, y
 
-        img_ax.set_ylabel("Y piezo (nm)")
-        img_ax.set_xlabel("X piezo (nm)")
+        window.img_ax.set_ylabel("Y piezo (nm)")
+        window.img_ax.set_xlabel("X piezo (nm)")
 
-        colorbar = fig.colorbar(axesimage, ax=img_ax, use_gridspec=True, format=fmt)
-        navbar.update()  # let navbar catch new cax in fig
+        colorbar = window.fig.colorbar(axesimage, ax=window.img_ax, use_gridspec=True, format=fmt)
+        window.navbar.update()  # let navbar catch new cax in fig
         # colorbar.ax.set_navigate(True)
         colorbar.solids.set_picker(True)
         colorbar.ax.set_ylabel(image_name + " (" + opened_arh5.get_image_units(image_name) + ")")
 
-        fig.tight_layout()
-        canvas.draw_idle()
+        window.fig.tight_layout()
+        window.canvas.draw_idle()
 
     cancels_pending = set()
     artists = []
@@ -684,9 +676,11 @@ async def arh5_task(opened_arh5, root):
         if shift_held and point in existing_points:
             return
         existing_points.add(point)  # should be before 1st await
-        plot_ax.set_autoscale_on(True)  # XXX: only needed on first plot. Maybe later make optional?
+        window.plot_ax.set_autoscale_on(
+            True
+        )  # XXX: only needed on first plot. Maybe later make optional?
         options = ForceCurveOptions(
-            fit_mode=fit_intvar.get(), disp_kind=disp_kind_intvar.get(), k=k
+            fit_mode=window.fit_intvar.get(), disp_kind=window.disp_kind_intvar.get(), k=k
         )
 
         # Calculation phase
@@ -714,7 +708,7 @@ async def arh5_task(opened_arh5, root):
                 existing_points.discard(point)
                 return
 
-            async with canvas.trio_draw_lock:
+            async with window.canvas.trio_draw_lock:
                 # Clearing Phase
                 # Clear previous artists and reset plots (faster than .clear()?)
                 if not shift_held:
@@ -723,15 +717,15 @@ async def arh5_task(opened_arh5, root):
                     artists.clear()
                     # confusing set stuff because of ASAP addition above
                     existing_points.intersection_update({point})
-                    plot_ax.relim()
-                    plot_ax.set_prop_cycle(None)
+                    window.plot_ax.relim()
+                    window.plot_ax.set_prop_cycle(None)
 
                 # Drawing Phase
                 # Based options choose plots and collect artists for deletion
-                new_artists, color = await ctrs(draw_force_curve, data, plot_ax, options)
+                new_artists, color = await ctrs(draw_force_curve, data, window.plot_ax, options)
                 artists.extend(new_artists)
                 artists.extend(
-                    img_ax.plot(
+                    window.img_ax.plot(
                         point.x,
                         point.y,
                         marker="X",
@@ -744,7 +738,7 @@ async def arh5_task(opened_arh5, root):
                 if options.fit_mode:
                     table = await ctrs(
                         partial(
-                            plot_ax.table,
+                            window.plot_ax.table,
                             [
                                 [
                                     "{:.2f}±{:.2f}".format(data.beta[0], data.beta_err[0],),
@@ -763,8 +757,8 @@ async def arh5_task(opened_arh5, root):
                     table.auto_set_font_size(False)
                     table.set_fontsize(9)
                     artists.append(table)
-                    await ctrs(partial(fig.subplots_adjust, top=0.85))
-                canvas.draw_idle()
+                    await ctrs(partial(window.fig.subplots_adjust, top=0.85))
+                window.canvas.draw_idle()
 
     async def mpl_pick_motion_event_callback(event):
         mouseevent = getattr(event, "mouseevent", event)
@@ -774,7 +768,7 @@ async def arh5_task(opened_arh5, root):
         shift_held = mouseevent.guiEvent.state & TkState.SHIFT
         if mouseevent.inaxes is None:
             return
-        elif mouseevent.inaxes is img_ax:
+        elif mouseevent.inaxes is window.img_ax:
             if mouseevent.button != MouseButton.LEFT:
                 return
             r, c = data_coords_to_array_index(mouseevent.xdata, mouseevent.ydata)
@@ -791,7 +785,7 @@ async def arh5_task(opened_arh5, root):
             # Adjust colorbar scale
             # simple enough, so keep inline
             colorbar.solids.set_clim(colorbar.norm.vmin, colorbar.norm.vmax)
-            canvas.draw_idle()
+            window.canvas.draw_idle()
 
     resize_cancels_pending = set()
 
@@ -801,24 +795,24 @@ async def arh5_task(opened_arh5, root):
         resize_cancels_pending.clear()
         with trio.CancelScope() as cancel_scope:
             resize_cancels_pending.add(cancel_scope)
-            async with canvas.trio_draw_lock:
-                await trs(fig.tight_layout, cancellable=False)
+            async with window.canvas.trio_draw_lock:
+                await trs(window.fig.tight_layout, cancellable=False)
         resize_cancels_pending.discard(cancel_scope)
 
     async with trio.open_nursery() as nursery:
         window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-        canvas.mpl_connect(
+        window.canvas.mpl_connect(
             "motion_notify_event", partial(nursery.start_soon, mpl_pick_motion_event_callback)
         )
-        canvas.mpl_connect(
+        window.canvas.mpl_connect(
             "pick_event", partial(nursery.start_soon, mpl_pick_motion_event_callback)
         )
-        canvas.mpl_connect(
+        window.canvas.mpl_connect(
             "resize_event", impartial(partial(nursery.start_soon, mpl_resize_event_callback))
         )
 
-        await nursery.start(canvas.idle_draw_task)
-        image_name_strvar.trace_add(
+        await nursery.start(window.canvas.idle_draw_task)
+        window.image_name_strvar.trace_add(
             "write", impartial(partial(nursery.start_soon, change_image_callback))
         )
         # StringVar.set() won't be effective to plot unless it happens after the
@@ -826,33 +820,22 @@ async def arh5_task(opened_arh5, root):
         # due to resize, but let's not rely on that!
         for name in ("MapHeight", "ZSensorTrace"):
             if name in opened_arh5.image_names:
-                image_name_strvar.set(name)
+                window.image_name_strvar.set(name)
                 break
 
-        navbar.teach_navbar_to_use_trio(nursery)
+        window.navbar.teach_navbar_to_use_trio(nursery)
         spinner_scope = await nursery.start(
             spinner_task,
             partial(window.configure, cursor="watch"),
             partial(window.configure, cursor="arrow"),
         )
-        calc_props_button.configure(
-            command=partial(
-                nursery.start_soon,
-                arh5_prop_map_callback,
-                opened_arh5,
-                fit_intvar,
-                disp_kind_intvar,
-                k,
-                spinner_scope,
-                image_name_menu,
-            )
-        )
+        window.teach_buttons_to_use_trio(nursery, opened_arh5, k, spinner_scope)
         await trio.sleep_forever()
 
     # Close phase
+    window.options_frame.destroy()
     window.withdraw()  # weird navbar hiccup on close
     window.destroy()
-    options_frame.destroy()
 
 
 async def ardf_converter(filename, root):
