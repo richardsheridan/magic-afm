@@ -168,7 +168,10 @@ class ForceMapWorker:
             s = self.extlens[r, c]
 
             x[r, c, :, :] = self._shared_get_part(curve, s)
-        return x, self.minext
+        z = x[:, :, 0, :]
+        d = x[:, :, 1, :]
+        s = self.minext
+        return z, d, s
 
 
 class FFMSingleWorker:
@@ -181,11 +184,14 @@ class FFMSingleWorker:
         d = self.defl[r, c]
         return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION, len(z) // 2
 
-    def get_all_curves(self, _poll_for_cancel=None):
-        return (
-            np.stack((self.drive, self.defl), axis=-2) * NANOMETER_UNIT_CONVERSION,
-            self.drive.shape[-1] // 2,
-        )
+    def get_all_curves(self, _poll_for_cancel=(lambda: None)):
+        _poll_for_cancel()
+        z = self.drive[:] * NANOMETER_UNIT_CONVERSION
+        _poll_for_cancel()
+        d = self.defl[:] * NANOMETER_UNIT_CONVERSION
+        _poll_for_cancel()
+        s = self.drive.shape[-1] // 2
+        return z, d, s
 
 
 class FFMTraceRetraceWorker:
@@ -194,9 +200,10 @@ class FFMTraceRetraceWorker:
         self.defl_trace = defl_trace
         self.drive_retrace = drive_retrace
         self.defl_retrace = defl_retrace
+        self.trace = True
 
-    def get_force_curve(self, r, c, trace=True):
-        if trace:
+    def get_force_curve(self, r, c):
+        if self.trace:
             z = self.drive_trace[r, c]
             d = self.defl_trace[r, c]
         else:
@@ -205,14 +212,18 @@ class FFMTraceRetraceWorker:
         return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION, len(z) // 2
 
     def get_all_curves(self, _poll_for_cancel=(lambda: None)):
-        drive = np.concatenate((self.drive_trace, self.drive_retrace))
         _poll_for_cancel()
-        defl = np.concatenate((self.defl_trace, self.defl_retrace))
+        if self.trace:
+            z = self.drive_trace[:] * NANOMETER_UNIT_CONVERSION
+            _poll_for_cancel()
+            d = self.defl_trace[:] * NANOMETER_UNIT_CONVERSION
+        else:
+            z = self.drive_retrace[:] * NANOMETER_UNIT_CONVERSION
+            _poll_for_cancel()
+            d = self.defl_retrace[:] * NANOMETER_UNIT_CONVERSION
         _poll_for_cancel()
-        return (
-            np.stack((drive, defl,), axis=-2) * NANOMETER_UNIT_CONVERSION,
-            self.drive_trace.shape[-1] // 2,
-        )
+        s = self.drive_trace.shape[-1] // 2
+        return z, d, s
 
 
 class AsyncARH5File:
@@ -233,6 +244,16 @@ class AsyncARH5File:
         self._calc_images = {}
         self._h5_image_names = set()
         self.params = {}
+        self._trace = None
+
+    @property
+    def trace(self):
+        return self._trace
+
+    @trace.setter
+    def trace(self, trace):
+        self._worker.trace = trace
+        self._trace = trace
 
     @property
     def image_names(self):
@@ -282,6 +303,7 @@ class AsyncARH5File:
                     h5data["FFM"]["1"]["Drive"],
                     h5data["FFM"]["1"]["Defl"],
                 )
+                self._trace = True
             elif "0" in h5data["FFM"]:
                 worker = FFMSingleWorker(h5data["FFM"]["0"]["Drive"], h5data["FFM"]["0"]["Defl"],)
             else:
@@ -316,12 +338,14 @@ class AsyncARH5File:
         self._calc_images[image_name] = image
 
 
-async def thread_map(sync_fn, job_items, *args):
+async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bound_limiter):
     job_items = list(job_items)
 
     async def thread_worker(item, i, send_chan):
         async with send_chan:
-            result = await ctrs(sync_fn, item, *args)
+            result = await trio.to_thread.run_sync(
+                sync_fn, item, *args, cancellable=cancellable, limiter=limiter
+            )
             await send_chan.send((i, result))
 
     send_chan, recv_chan = trio.open_memory_channel(0)
@@ -345,10 +369,11 @@ async def spinner_task(set_spinner, set_normal, task_status):
             with trio.fail_after(15):  # assert this should never really block
                 await spinner_starter_sendchan.send(None)
                 stopper = await spinner_stopper_recvchan.receive()
-        try:
-            yield
-        finally:
-            stopper()
+        with trio.CancelScope() as cancel_scope:
+            try:
+                yield cancel_scope
+            finally:
+                stopper()
 
     task_status.started(spinner_scope)
 

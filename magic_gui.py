@@ -221,13 +221,16 @@ class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
 
 
 class PBar:
-    def __init__(self, root=None, maximum=100, grab=True, cancel_callback=None):
+    def __init__(
+        self, parent=None, title="Loading...", maximum=100, grab=True, cancel_callback=None
+    ):
         self._cancel_callback = cancel_callback
-        self._top = tk.Toplevel(root)
-        self._top.wm_title("Loading...")
+        self._top = tk.Toplevel(parent)
         self._top.protocol("WM_DELETE_WINDOW", lambda: None)
+        self._top.wm_title(title)
         self._n_var = tk.DoubleVar(self._top, value=0)
         self._text_var = tk.StringVar(self._top)
+        self._text_var.set(title)
         self._label = ttk.Label(self._top, textvariable=self._text_var, padding=5, wraplength=600)
         self._label.pack()
         self._pbar = ttk.Progressbar(self._top, maximum=maximum, variable=self._n_var, length=450)
@@ -241,12 +244,22 @@ class PBar:
     def set_description(self, desc):
         self._text_var.set(desc)
 
+    def set_title(self, title):
+        self._top.wm_title(title)
+
+    def set_maximum(self, maximum):
+        self._pbar.configure(maximum=maximum)
+
     def update(self, value):
         self._pbar.step(value)
 
     @property
     def n(self):
         return self._n_var.get()
+
+    @n.setter
+    def n(self, n):
+        self._n_var.set(n)
 
     def cancel(self):
         if self._cancel_callback is not None:
@@ -420,70 +433,101 @@ class ARDFWindow:
             disp_kind=self.disp_kind_intvar.get(),
             k=self.opened_arh5.params["k"],
         )
-        if options.fit_mode == magic_calculation.FitMode.SKIP:
-            return
-        async with self.spinner_scope():
-            data, s = await self.opened_arh5.get_all_curves()
-            img_shape = data.shape[:2]
-            npts = data.shape[-1]
-            z = data[:, :, 0, :].reshape((-1, npts))
-            d = data[:, :, 1, :].reshape((-1, npts))
+        if not options.fit_mode:
+            raise ValueError("Property map button should have been disabled")
+        async with self.spinner_scope() as cancel_scope:
+            pbar = PBar(self.tkwindow, grab=False, cancel_callback=cancel_scope.cancel)
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+            z, d, s = await self.opened_arh5.get_all_curves()
+            img_shape = z.shape[:2]
+            npts = z.shape[-1]
+            z = z.reshape((-1, npts))
+            d = d.reshape((-1, npts))
             resample_npts = 512
             s = s * resample_npts // npts
-            z, d = await async_tools.thread_map(
-                magic_calculation.resample_dset, [z, d], resample_npts, True
-            )
+            pbar.set_title("Calculating...")
+            pbar.set_description(f"Resampling force curves to {resample_npts} points...")
+            pbar.n = 0
+            pbar.set_maximum(2)
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+
+            def resample_helper(x):
+                x = magic_calculation.resample_dset(x, resample_npts, True)
+                pbar.update(1)
+                return x
+
+            z, d = await async_tools.thread_map(resample_helper, [z, d])
             # Transform data to model units
             f = d * options.k
             delta = z - d
-            del z, d, data
+            del z, d
 
-        if options.fit_mode == magic_calculation.FitMode.EXTEND:
-            sl = slice(s)
-        elif options.fit_mode == magic_calculation.FitMode.RETRACT:
-            sl = slice(s, None)
-        else:
-            raise ValueError("Unknown fit_mode: ", options.fit_mode)
-
-        property_names_units = {
-            "CalcIndentationModulus": "GPa",
-            "CalcAdhesionForce": "nN",
-            "CalcDeflection": "nm",
-            "CalcIndentation": "nm",
-            "CalcTrueHeight": "nm",  # Hi z -> lo h
-            "CalcIndentationRatio": "",
-        }
-        properties = np.empty(
-            len(f), dtype=np.dtype([(name, "f4") for name in property_names_units]),
-        )
-
-        def calc_properties(i, cancel_poller):
-            cancel_poller()
-            beta, beta_err, calc_fun = magic_calculation.fitfun(
-                delta[i, sl], f[i, sl], **dataclasses.asdict(options), cancel_poller=cancel_poller,
-            )
-            cancel_poller()
-            if np.all(np.isfinite(beta)):
-                deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
-                    f[sl], beta, **dataclasses.asdict(options)
-                )
-                properties[i] = (
-                    beta[0],
-                    -beta[1],
-                    deflection,
-                    indentation,
-                    -z_true_surface,
-                    deflection / indentation,
-                )
+            if options.fit_mode == magic_calculation.FitMode.EXTEND:
+                sl = slice(s)
+            elif options.fit_mode == magic_calculation.FitMode.RETRACT:
+                sl = slice(s, None)
             else:
-                properties[i] = np.nan
+                raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
-        await async_tools.thread_map(
-            calc_properties, range(len(f)), async_tools.make_cancel_poller()
-        )
+            property_names_units = {
+                "CalcIndentationModulus": "GPa",
+                "CalcAdhesionForce": "nN",
+                "CalcDeflection": "nm",
+                "CalcIndentation": "nm",
+                "CalcTrueHeight": "nm",  # Hi z -> lo h
+                "CalcIndentationRatio": "",
+            }
+            properties = np.empty(
+                len(f), dtype=np.dtype([(name, "f4") for name in property_names_units]),
+            )
+
+            pbar.n = 0
+            pbar.set_maximum(len(properties))
+            pbar.set_description("Fitting force curves...")
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+
+            def calc_properties(i, cancel_poller):
+                """This task has essentially private access to delta, f, and properties
+                so it's totally cool to do this side-effect-full stuff in threads
+                as long as they don't step on each other"""
+                cancel_poller()
+                beta, beta_err, calc_fun = magic_calculation.fitfun(
+                    delta[i, sl],
+                    f[i, sl],
+                    **dataclasses.asdict(options),
+                    cancel_poller=cancel_poller,
+                )
+                cancel_poller()
+
+                if np.all(np.isfinite(beta)):
+                    deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
+                        f[sl], beta, **dataclasses.asdict(options)
+                    )
+                    properties[i] = (
+                        beta[0],
+                        -beta[1],
+                        deflection,
+                        indentation,
+                        -z_true_surface,
+                        deflection / indentation,
+                    )
+                else:
+                    properties[i] = np.nan
+                pbar.update(1)
+
+            await async_tools.thread_map(
+                calc_properties, range(len(f)), async_tools.make_cancel_poller()
+            )
+            await trio.sleep(0)  # check for race condition cancel at end of pool
+
+        pbar.close()
+        if cancel_scope.cancelled_caught:
+            return
 
         combobox_values = list(self.image_name_menu.cget("values"))
         properties = properties.reshape((*img_shape, -1,))
+
+        # Actually write out results to external world
         for name in property_names_units:
             self.opened_arh5.add_image(name, property_names_units[name], properties[name].squeeze())
             combobox_values.append(name)
@@ -707,9 +751,7 @@ class ARDFWindow:
                 command=partial(nursery.start_soon, self.arh5_prop_map_callback,)
             )
             self.spinner_scope = await nursery.start(
-                async_tools.spinner_task,
-                self.spinner_start,
-                self.spinner_stop,
+                async_tools.spinner_task, self.spinner_start, self.spinner_stop,
             )
             await trio.sleep_forever()
 
