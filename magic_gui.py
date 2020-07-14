@@ -307,16 +307,16 @@ def impartial(fn):
     return impartial_wrapper
 
 
-class ARDFWindow(tk.Toplevel):
+class ARDFWindow:
     default_figsize = (9.5, 3.5)
 
     def __init__(self, root, title=None, figsize=default_figsize, **kwargs):
-        super().__init__(root, **kwargs)
-        self.wm_title(title)
+        self.tkwindow = window = tk.Toplevel(root, **kwargs)
+        window.wm_title(title)
 
         self.fig = Figure(figsize, frameon=False)
-        self.canvas = AsyncFigureCanvasTkAgg(self.fig, self)
-        self.navbar = ImprovedNavigationToolbar2Tk(self.canvas, self)
+        self.canvas = AsyncFigureCanvasTkAgg(self.fig, window)
+        self.navbar = ImprovedNavigationToolbar2Tk(self.canvas, window)
         self.img_ax, self.plot_ax = img_ax, plot_ax = self.fig.subplots(
             1, 2, gridspec_kw=dict(width_ratios=[1, 1.5])
         )
@@ -333,7 +333,10 @@ class ARDFWindow(tk.Toplevel):
         image_name_labelframe = ttk.Labelframe(self.options_frame, text="Current image")
         self.image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
         self.image_name_menu = ttk.Combobox(
-            image_name_labelframe, width=12, state="readonly", textvariable=self.image_name_strvar,
+            image_name_labelframe,
+            width=12,
+            state="readonly",
+            textvariable=self.image_name_strvar,
         )
 
         self.image_name_menu.pack(side="left")
@@ -378,19 +381,19 @@ class ARDFWindow(tk.Toplevel):
 
         self.options_frame.grid(row=1, column=0, sticky="nsew")
         # yes, cheating on trio here
-        self.bind("<FocusIn>", impartial(self.options_frame.lift))
+        window.bind("<FocusIn>", impartial(self.options_frame.lift))
 
-        size_grip = ttk.Sizegrip(self)
+        size_grip = ttk.Sizegrip(window)
 
         self.navbar.grid(row=0, sticky="we")
-        self.grid_rowconfigure(0, weight=0)
+        window.grid_rowconfigure(0, weight=0)
 
         self.canvas.get_tk_widget().grid(row=1, sticky="wens")
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+        window.grid_rowconfigure(1, weight=1)
+        window.grid_columnconfigure(0, weight=1)
 
         size_grip.grid(row=2, column=1, sticky="es")
-        self.grid_columnconfigure(1, weight=0)
+        window.grid_columnconfigure(1, weight=0)
 
     def set_image_names(self, image_names):
         self.image_name_menu.configure(values=list(image_names), width=max(map(len, image_names)))
@@ -800,7 +803,7 @@ async def arh5_task(opened_arh5, root):
         resize_cancels_pending.discard(cancel_scope)
 
     async with trio.open_nursery() as nursery:
-        window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+        window.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
         window.canvas.mpl_connect(
             "motion_notify_event", partial(nursery.start_soon, mpl_pick_motion_event_callback)
         )
@@ -826,16 +829,16 @@ async def arh5_task(opened_arh5, root):
         window.navbar.teach_navbar_to_use_trio(nursery)
         spinner_scope = await nursery.start(
             spinner_task,
-            partial(window.configure, cursor="watch"),
-            partial(window.configure, cursor="arrow"),
+            partial(window.tkwindow.configure, cursor="watch"),
+            partial(window.tkwindow.configure, cursor="arrow"),
         )
         window.teach_buttons_to_use_trio(nursery, opened_arh5, k, spinner_scope)
         await trio.sleep_forever()
 
     # Close phase
     window.options_frame.destroy()
-    window.withdraw()  # weird navbar hiccup on close
-    window.destroy()
+    window.tkwindow.withdraw()  # weird navbar hiccup on close
+    window.tkwindow.destroy()
 
 
 async def ardf_converter(filename, root):
