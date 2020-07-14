@@ -341,7 +341,9 @@ class ARDFWindow:
 
         # Options and buttons
         self.options_frame = ttk.Frame(root)
-        self.calc_props_button = ttk.Button(self.options_frame, text="Calculate Property Maps")
+        self.calc_props_button = ttk.Button(
+            self.options_frame, text="Calculate Property Maps", state="disabled"
+        )
         self.calc_props_button.pack()
         image_name_labelframe = ttk.Labelframe(self.options_frame, text="Current image")
         self.image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
@@ -390,8 +392,16 @@ class ARDFWindow:
         fit_labelframe.pack(side="left")
 
         self.options_frame.grid(row=1, column=0, sticky="nsew")
+
         # yes, cheating on trio here
         window.bind("<FocusIn>", impartial(self.options_frame.lift))
+
+        def button_helper(*a, **kw):
+            self.calc_props_button.configure(
+                state="normal" if self.fit_intvar.get() else "disabled"
+            )
+
+        self.fit_intvar.trace_add("write", button_helper)
 
         # Window widgets
         size_grip = ttk.Sizegrip(window)
