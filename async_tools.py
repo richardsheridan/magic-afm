@@ -26,7 +26,7 @@ import numpy as np
 import trio
 from threadpoolctl import threadpool_limits
 
-from magic_gui import LONGEST_IMPERCEPTIBLE_DELAY
+LONGEST_IMPERCEPTIBLE_DELAY = 0.016  # seconds
 
 internal_threadpool_limiters = threadpool_limits(1)
 cpu_bound_limiter = trio.CapacityLimiter(4)
@@ -232,6 +232,7 @@ class AsyncARH5File:
         self._units_map = self._basic_units_map.copy()
         self._calc_images = {}
         self._h5_image_names = set()
+        self.params = {}
 
     @property
     def image_names(self):
@@ -254,6 +255,11 @@ class AsyncARH5File:
         self._worker = worker
         self._images = images
         self._h5_image_names = image_names
+
+        self.params = dict(
+            k=float(self.notes["SpringConstant"]),
+            scansize=float(self.notes["ScanSize"]) * NANOMETER_UNIT_CONVERSION,
+        )
 
     async def aclose(self):
         with trio.CancelScope(shield=True):

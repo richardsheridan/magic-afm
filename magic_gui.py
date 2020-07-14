@@ -45,9 +45,7 @@ from matplotlib.widgets import SubplotTool
 
 import async_tools
 import magic_calculation
-from async_tools import trs, ctrs, thread_map, spinner_task
-
-LONGEST_IMPERCEPTIBLE_DELAY = 0.016  # seconds
+from async_tools import trs, ctrs, LONGEST_IMPERCEPTIBLE_DELAY
 
 matplotlib.rcParams["savefig.dpi"] = 300
 
@@ -309,10 +307,12 @@ def impartial(fn):
 class ARDFWindow:
     default_figsize = (9.5, 3.5)
 
-    def __init__(self, root, title=None, figsize=default_figsize, **kwargs):
+    def __init__(self, root, opened_arh5, figsize=default_figsize, **kwargs):
+        self.opened_arh5 = opened_arh5
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
-        window.wm_title(title)
+        window.wm_title(self.opened_arh5.h5file_path.name)
 
+        # Build figure
         self.fig = Figure(figsize, frameon=False)
         self.canvas = AsyncFigureCanvasTkAgg(self.fig, window)
         self.navbar = ImprovedNavigationToolbar2Tk(self.canvas, window)
@@ -326,16 +326,14 @@ class ARDFWindow:
         plot_ax.set_ylim([-1000, 1000])
         plot_ax.set_xlim([-1000, 1000])
 
+        # Options and buttons
         self.options_frame = ttk.Frame(root)
         self.calc_props_button = ttk.Button(self.options_frame, text="Calculate Property Maps")
         self.calc_props_button.pack()
         image_name_labelframe = ttk.Labelframe(self.options_frame, text="Current image")
         self.image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
         self.image_name_menu = ttk.Combobox(
-            image_name_labelframe,
-            width=12,
-            state="readonly",
-            textvariable=self.image_name_strvar,
+            image_name_labelframe, width=12, state="readonly", textvariable=self.image_name_strvar,
         )
 
         self.image_name_menu.pack(side="left")
@@ -382,6 +380,7 @@ class ARDFWindow:
         # yes, cheating on trio here
         window.bind("<FocusIn>", impartial(self.options_frame.lift))
 
+        # Window widgets
         size_grip = ttk.Sizegrip(window)
 
         self.navbar.grid(row=0, sticky="we")
@@ -394,25 +393,46 @@ class ARDFWindow:
         size_grip.grid(row=2, column=1, sticky="es")
         window.grid_columnconfigure(1, weight=0)
 
+        # Finalize pure ARDFWindow stuff
+        self.set_image_names(self.opened_arh5.image_names)
+
+        # change_image_callback stuff
+        self.cb_fmt = ScalarFormatter()
+        self.cb_fmt.set_powerlimits((-2, 2))
+        self.colorbar: Optional[Colorbar] = None
+        self.axesimage: Optional[AxesImage] = None
+
+        # plot_curve_event_response stuff
+        self.cancels_pending = set()
+        self.artists = []
+        self.existing_points = set()
+
+        # mpl_resize_event_callback
+        self.resize_cancels_pending = set()
+
     def set_image_names(self, image_names):
         self.image_name_menu.configure(values=list(image_names), width=max(map(len, image_names)))
 
-    async def arh5_prop_map_callback(self, opened_arh5, k, spinner_scope):
+    async def arh5_prop_map_callback(self):
         # pbar.set_description("Calculating force maps")
         options = ForceCurveOptions(
-            fit_mode=self.fit_intvar.get(), disp_kind=self.disp_kind_intvar.get(), k=k
+            fit_mode=self.fit_intvar.get(),
+            disp_kind=self.disp_kind_intvar.get(),
+            k=self.opened_arh5.params["k"],
         )
         if options.fit_mode == magic_calculation.FitMode.SKIP:
             return
-        async with spinner_scope():
-            data, s = await opened_arh5.get_all_curves()
+        async with self.spinner_scope():
+            data, s = await self.opened_arh5.get_all_curves()
             img_shape = data.shape[:2]
             npts = data.shape[-1]
             z = data[:, :, 0, :].reshape((-1, npts))
             d = data[:, :, 1, :].reshape((-1, npts))
             resample_npts = 512
             s = s * resample_npts // npts
-            z, d = await thread_map(magic_calculation.resample_dset, [z, d], resample_npts, True)
+            z, d = await async_tools.thread_map(
+                magic_calculation.resample_dset, [z, d], resample_npts, True
+            )
             # Transform data to model units
             f = d * options.k
             delta = z - d
@@ -458,21 +478,245 @@ class ARDFWindow:
             else:
                 properties[i] = np.nan
 
-        await thread_map(calc_properties, range(len(f)), async_tools.make_cancel_poller())
+        await async_tools.thread_map(
+            calc_properties, range(len(f)), async_tools.make_cancel_poller()
+        )
 
         combobox_values = list(self.image_name_menu.cget("values"))
         properties = properties.reshape((*img_shape, -1,))
         for name in property_names_units:
-            opened_arh5.add_image(name, property_names_units[name], properties[name].squeeze())
+            self.opened_arh5.add_image(name, property_names_units[name], properties[name].squeeze())
             combobox_values.append(name)
         self.image_name_menu.configure(values=combobox_values)
 
-    def teach_buttons_to_use_trio(self, nursery, opened_arh5, k, spinner_scope):
-        self.calc_props_button.configure(
-            command=partial(
-                nursery.start_soon, self.arh5_prop_map_callback, opened_arh5, k, spinner_scope,
-            )
+    async def change_image_callback(self):
+        image_name = self.image_name_strvar.get()
+        image_array = await self.opened_arh5.get_image(image_name)
+
+        if self.colorbar is not None:
+            self.colorbar.remove()
+        if self.axesimage is not None:
+            self.axesimage.remove()
+
+        scansize = self.opened_arh5.params["scansize"]
+        s = (scansize + scansize / len(image_array)) // 2
+        self.axesimage = self.img_ax.imshow(
+            image_array,
+            origin="upper" if self.opened_arh5.scandown else "lower",
+            extent=(-s, s, -s, s,),
+            picker=True,
         )
+
+        xmin, xmax, ymin, ymax = self.axesimage.get_extent()
+        rows, cols = self.axesimage.get_size()
+        if self.axesimage.origin == "upper":
+            ymin, ymax = ymax, ymin
+        data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
+        array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
+        self.trans = BboxTransform(boxin=data_extent, boxout=array_extent)
+        self.invtrans = self.trans.inverted()
+
+        self.img_ax.set_ylabel("Y piezo (nm)")
+        self.img_ax.set_xlabel("X piezo (nm)")
+
+        self.colorbar = self.fig.colorbar(
+            self.axesimage, ax=self.img_ax, use_gridspec=True, format=self.cb_fmt
+        )
+        self.navbar.update()  # let navbar catch new cax in fig
+        # colorbar.ax.set_navigate(True)
+        self.colorbar.solids.set_picker(True)
+        self.colorbar.ax.set_ylabel(
+            image_name + " (" + self.opened_arh5.get_image_units(image_name) + ")"
+        )
+
+        self.fig.tight_layout()
+        self.canvas.draw_idle()
+
+    def data_coords_to_array_index(self, x, y):
+        return self.trans.transform_point([y, x]).round().astype(int)  # row, column
+
+    def array_index_to_data_coords(self, r, c):
+        y, x = self.invtrans.transform_point([r, c])  # row, column
+        return x, y
+
+    async def plot_curve_event_response(self, point: ImagePoint, shift_held):
+        if shift_held and point in self.existing_points:
+            return
+        self.existing_points.add(point)  # should be before 1st await
+        self.plot_ax.set_autoscale_on(
+            True
+        )  # XXX: only needed on first plot. Maybe later make optional?
+        options = ForceCurveOptions(
+            fit_mode=self.fit_intvar.get(),
+            disp_kind=self.disp_kind_intvar.get(),
+            k=self.opened_arh5.params["k"],
+        )
+
+        # Calculation phase
+        # Do a few long-running jobs, likely to be canceled
+        if not shift_held:
+            for cancel_scope in self.cancels_pending:
+                cancel_scope.cancel()
+            self.cancels_pending.clear()
+        async with self.spinner_scope():
+            with trio.CancelScope() as cancel_scope:
+                self.cancels_pending.add(cancel_scope)
+                force_curve = await self.opened_arh5.get_force_curve(point.r, point.c)
+                data = await ctrs(
+                    calculate_force_data, *force_curve, options, async_tools.make_cancel_poller()
+                )
+                del force_curve  # contained in data
+                # XXX: Race condition
+                # cancel can occur after the last call to the above cancel poller
+                # checkpoint make sure to raise Cancelled if it just happened
+                # await trio.sleep(0)
+
+            self.cancels_pending.discard(cancel_scope)
+
+            if cancel_scope.cancelled_caught:
+                self.existing_points.discard(point)
+                return
+
+            async with self.canvas.trio_draw_lock:
+                # Clearing Phase
+                # Clear previous artists and reset plots (faster than .clear()?)
+                if not shift_held:
+                    for artist in self.artists:
+                        artist.remove()
+                    self.artists.clear()
+                    # confusing set stuff because of ASAP addition above
+                    self.existing_points.intersection_update({point})
+                    self.plot_ax.relim()
+                    self.plot_ax.set_prop_cycle(None)
+
+                # Drawing Phase
+                # Based options choose plots and collect artists for deletion
+                new_artists, color = await ctrs(draw_force_curve, data, self.plot_ax, options)
+                self.artists.extend(new_artists)
+                self.artists.extend(
+                    self.img_ax.plot(
+                        point.x,
+                        point.y,
+                        marker="X",
+                        markersize=8,
+                        linestyle="",
+                        markeredgecolor="k",
+                        markerfacecolor=color,
+                    )
+                )
+                if options.fit_mode:
+                    table = await ctrs(
+                        partial(
+                            self.plot_ax.table,
+                            [
+                                [
+                                    "{:.2f}±{:.2f}".format(data.beta[0], data.beta_err[0],),
+                                    "{:.2f}±{:.2f}".format(-data.beta[1], -data.beta_err[1]),
+                                    "{:.2f}".format(data.defl),
+                                    "{:.2f}".format(data.ind),
+                                    "{:.2f}".format(data.defl / data.ind),
+                                ],
+                            ],
+                            loc="top",
+                            colLabels=["$M$ (GPa)", "$F_{adh}$ (nN)", "d (nm)", "δ (nm)", "d/δ"],
+                            colLoc="center",
+                        )
+                    )
+
+                    table.auto_set_font_size(False)
+                    table.set_fontsize(9)
+                    self.artists.append(table)
+                    await ctrs(partial(self.fig.subplots_adjust, top=0.85))
+                self.canvas.draw_idle()
+
+    async def mpl_pick_motion_event_callback(self, event):
+        mouseevent = getattr(event, "mouseevent", event)
+        control_held = event.guiEvent.state & TkState.CONTROL
+        if event.name == "motion_notify_event" and not control_held:
+            return
+        shift_held = mouseevent.guiEvent.state & TkState.SHIFT
+        if mouseevent.inaxes is None:
+            return
+        elif mouseevent.inaxes is self.img_ax:
+            if mouseevent.button != MouseButton.LEFT:
+                return
+            r, c = self.data_coords_to_array_index(mouseevent.xdata, mouseevent.ydata)
+            x, y = self.array_index_to_data_coords(r, c)
+            point = ImagePoint(r, c, x, y)
+            await self.plot_curve_event_response(point, shift_held)
+        elif mouseevent.inaxes is self.colorbar.ax:
+            if mouseevent.button == MouseButton.LEFT:
+                self.colorbar.norm.vmax = max(mouseevent.ydata, self.colorbar.norm.vmin)
+            elif mouseevent.button == MouseButton.RIGHT:
+                self.colorbar.norm.vmin = min(mouseevent.ydata, self.colorbar.norm.vmax)
+            else:
+                return
+            # Adjust colorbar scale
+            # simple enough, so keep inline
+            self.colorbar.solids.set_clim(self.colorbar.norm.vmin, self.colorbar.norm.vmax)
+            self.canvas.draw_idle()
+
+    async def mpl_resize_event_callback(self):
+        for cancel_scope in self.resize_cancels_pending:
+            cancel_scope.cancel()
+        self.resize_cancels_pending.clear()
+        with trio.CancelScope() as cancel_scope:
+            self.resize_cancels_pending.add(cancel_scope)
+            async with self.canvas.trio_draw_lock:
+                await trs(self.fig.tight_layout, cancellable=False)
+        self.resize_cancels_pending.discard(cancel_scope)
+
+    def spinner_start(self):
+        self.tkwindow.configure(cursor="watch")
+        self.options_frame.configure(cursor="watch")
+
+    def spinner_stop(self):
+        self.tkwindow.configure(cursor="arrow")
+        self.options_frame.configure(cursor="arrow")
+
+    async def arh5_task(self):
+
+        async with trio.open_nursery() as nursery:
+            self.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+            self.canvas.mpl_connect(
+                "motion_notify_event",
+                partial(nursery.start_soon, self.mpl_pick_motion_event_callback),
+            )
+            self.canvas.mpl_connect(
+                "pick_event", partial(nursery.start_soon, self.mpl_pick_motion_event_callback)
+            )
+            self.canvas.mpl_connect(
+                "resize_event",
+                impartial(partial(nursery.start_soon, self.mpl_resize_event_callback)),
+            )
+
+            await nursery.start(self.canvas.idle_draw_task)
+            self.image_name_strvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.change_image_callback))
+            )
+            # StringVar.set() won't be effective to plot unless it happens after the
+            # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
+            # due to resize, but let's not rely on that!
+            for name in ("MapHeight", "ZSensorTrace"):
+                if name in self.opened_arh5.image_names:
+                    self.image_name_strvar.set(name)
+                    break
+
+            self.navbar.teach_navbar_to_use_trio(nursery)
+            self.calc_props_button.configure(
+                command=partial(nursery.start_soon, self.arh5_prop_map_callback,)
+            )
+            self.spinner_scope = await nursery.start(
+                async_tools.spinner_task,
+                self.spinner_start,
+                self.spinner_stop,
+            )
+            await trio.sleep_forever()
+
+        # Close phase
+        self.options_frame.destroy()
+        self.tkwindow.withdraw()  # weird navbar hiccup on close
+        self.tkwindow.destroy()
 
 
 def draw_force_curve(data, plot_ax, options):
@@ -555,245 +799,14 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
     )
 
 
-async def arh5_task(opened_arh5, root):
-    k = float(opened_arh5.notes["SpringConstant"])
-    scansize = float(opened_arh5.notes["ScanSize"]) * async_tools.NANOMETER_UNIT_CONVERSION
-
-    window = ARDFWindow(root, opened_arh5.h5file_path.name)
-    window.set_image_names(opened_arh5.image_names)
-
-    fmt = ScalarFormatter()
-    fmt.set_powerlimits((-2, 2))
-    colorbar: Optional[Colorbar] = None
-    axesimage: Optional[AxesImage] = None
-    data_coords_to_array_index: Optional[Callable] = None
-    array_index_to_data_coords: Optional[Callable] = None
-
-    async def change_image_callback():
-        nonlocal colorbar, axesimage
-        nonlocal data_coords_to_array_index
-        nonlocal array_index_to_data_coords
-        image_name = window.image_name_strvar.get()
-        image_array = await opened_arh5.get_image(image_name)
-
-        if colorbar is not None:
-            colorbar.remove()
-        if axesimage is not None:
-            axesimage.remove()
-
-        s = (scansize + scansize / len(image_array)) // 2
-        axesimage = window.img_ax.imshow(
-            image_array,
-            origin="upper" if opened_arh5.scandown else "lower",
-            extent=(-s, s, -s, s,),
-            picker=True,
-        )
-
-        xmin, xmax, ymin, ymax = axesimage.get_extent()
-        rows, cols = axesimage.get_size()
-        if axesimage.origin == "upper":
-            ymin, ymax = ymax, ymin
-        data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
-        array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
-        trans = BboxTransform(boxin=data_extent, boxout=array_extent)
-        invtrans = trans.inverted()
-
-        def data_coords_to_array_index(x, y):
-            return trans.transform_point([y, x]).round().astype(int)  # row, column
-
-        def array_index_to_data_coords(r, c):
-            y, x = invtrans.transform_point([r, c])  # row, column
-            return x, y
-
-        window.img_ax.set_ylabel("Y piezo (nm)")
-        window.img_ax.set_xlabel("X piezo (nm)")
-
-        colorbar = window.fig.colorbar(axesimage, ax=window.img_ax, use_gridspec=True, format=fmt)
-        window.navbar.update()  # let navbar catch new cax in fig
-        # colorbar.ax.set_navigate(True)
-        colorbar.solids.set_picker(True)
-        colorbar.ax.set_ylabel(image_name + " (" + opened_arh5.get_image_units(image_name) + ")")
-
-        window.fig.tight_layout()
-        window.canvas.draw_idle()
-
-    cancels_pending = set()
-    artists = []
-    existing_points = set()
-
-    async def plot_curve_event_response(point: ImagePoint, shift_held):
-        if shift_held and point in existing_points:
-            return
-        existing_points.add(point)  # should be before 1st await
-        window.plot_ax.set_autoscale_on(
-            True
-        )  # XXX: only needed on first plot. Maybe later make optional?
-        options = ForceCurveOptions(
-            fit_mode=window.fit_intvar.get(), disp_kind=window.disp_kind_intvar.get(), k=k
-        )
-
-        # Calculation phase
-        # Do a few long-running jobs, likely to be canceled
-        if not shift_held:
-            for cancel_scope in cancels_pending:
-                cancel_scope.cancel()
-            cancels_pending.clear()
-        async with spinner_scope():
-            with trio.CancelScope() as cancel_scope:
-                cancels_pending.add(cancel_scope)
-                force_curve = await opened_arh5.get_force_curve(point.r, point.c)
-                data = await ctrs(
-                    calculate_force_data, *force_curve, options, async_tools.make_cancel_poller()
-                )
-                del force_curve  # contained in data
-                # XXX: Race condition
-                # cancel can occur after the last call to the above cancel poller
-                # checkpoint make sure to raise Cancelled if it just happened
-                # await trio.sleep(0)
-
-            cancels_pending.discard(cancel_scope)
-
-            if cancel_scope.cancelled_caught:
-                existing_points.discard(point)
-                return
-
-            async with window.canvas.trio_draw_lock:
-                # Clearing Phase
-                # Clear previous artists and reset plots (faster than .clear()?)
-                if not shift_held:
-                    for artist in artists:
-                        artist.remove()
-                    artists.clear()
-                    # confusing set stuff because of ASAP addition above
-                    existing_points.intersection_update({point})
-                    window.plot_ax.relim()
-                    window.plot_ax.set_prop_cycle(None)
-
-                # Drawing Phase
-                # Based options choose plots and collect artists for deletion
-                new_artists, color = await ctrs(draw_force_curve, data, window.plot_ax, options)
-                artists.extend(new_artists)
-                artists.extend(
-                    window.img_ax.plot(
-                        point.x,
-                        point.y,
-                        marker="X",
-                        markersize=8,
-                        linestyle="",
-                        markeredgecolor="k",
-                        markerfacecolor=color,
-                    )
-                )
-                if options.fit_mode:
-                    table = await ctrs(
-                        partial(
-                            window.plot_ax.table,
-                            [
-                                [
-                                    "{:.2f}±{:.2f}".format(data.beta[0], data.beta_err[0],),
-                                    "{:.2f}±{:.2f}".format(-data.beta[1], -data.beta_err[1]),
-                                    "{:.2f}".format(data.defl),
-                                    "{:.2f}".format(data.ind),
-                                    "{:.2f}".format(data.defl / data.ind),
-                                ],
-                            ],
-                            loc="top",
-                            colLabels=["$M$ (GPa)", "$F_{adh}$ (nN)", "d (nm)", "δ (nm)", "d/δ"],
-                            colLoc="center",
-                        )
-                    )
-
-                    table.auto_set_font_size(False)
-                    table.set_fontsize(9)
-                    artists.append(table)
-                    await ctrs(partial(window.fig.subplots_adjust, top=0.85))
-                window.canvas.draw_idle()
-
-    async def mpl_pick_motion_event_callback(event):
-        mouseevent = getattr(event, "mouseevent", event)
-        control_held = event.guiEvent.state & TkState.CONTROL
-        if event.name == "motion_notify_event" and not control_held:
-            return
-        shift_held = mouseevent.guiEvent.state & TkState.SHIFT
-        if mouseevent.inaxes is None:
-            return
-        elif mouseevent.inaxes is window.img_ax:
-            if mouseevent.button != MouseButton.LEFT:
-                return
-            r, c = data_coords_to_array_index(mouseevent.xdata, mouseevent.ydata)
-            x, y = array_index_to_data_coords(r, c)
-            point = ImagePoint(r, c, x, y)
-            await plot_curve_event_response(point, shift_held)
-        elif mouseevent.inaxes is colorbar.ax:
-            if mouseevent.button == MouseButton.LEFT:
-                colorbar.norm.vmax = max(mouseevent.ydata, colorbar.norm.vmin)
-            elif mouseevent.button == MouseButton.RIGHT:
-                colorbar.norm.vmin = min(mouseevent.ydata, colorbar.norm.vmax)
-            else:
-                return
-            # Adjust colorbar scale
-            # simple enough, so keep inline
-            colorbar.solids.set_clim(colorbar.norm.vmin, colorbar.norm.vmax)
-            window.canvas.draw_idle()
-
-    resize_cancels_pending = set()
-
-    async def mpl_resize_event_callback():
-        for cancel_scope in resize_cancels_pending:
-            cancel_scope.cancel()
-        resize_cancels_pending.clear()
-        with trio.CancelScope() as cancel_scope:
-            resize_cancels_pending.add(cancel_scope)
-            async with window.canvas.trio_draw_lock:
-                await trs(window.fig.tight_layout, cancellable=False)
-        resize_cancels_pending.discard(cancel_scope)
-
-    async with trio.open_nursery() as nursery:
-        window.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-        window.canvas.mpl_connect(
-            "motion_notify_event", partial(nursery.start_soon, mpl_pick_motion_event_callback)
-        )
-        window.canvas.mpl_connect(
-            "pick_event", partial(nursery.start_soon, mpl_pick_motion_event_callback)
-        )
-        window.canvas.mpl_connect(
-            "resize_event", impartial(partial(nursery.start_soon, mpl_resize_event_callback))
-        )
-
-        await nursery.start(window.canvas.idle_draw_task)
-        window.image_name_strvar.trace_add(
-            "write", impartial(partial(nursery.start_soon, change_image_callback))
-        )
-        # StringVar.set() won't be effective to plot unless it happens after the
-        # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
-        # due to resize, but let's not rely on that!
-        for name in ("MapHeight", "ZSensorTrace"):
-            if name in opened_arh5.image_names:
-                window.image_name_strvar.set(name)
-                break
-
-        window.navbar.teach_navbar_to_use_trio(nursery)
-        spinner_scope = await nursery.start(
-            spinner_task,
-            partial(window.tkwindow.configure, cursor="watch"),
-            partial(window.tkwindow.configure, cursor="arrow"),
-        )
-        window.teach_buttons_to_use_trio(nursery, opened_arh5, k, spinner_scope)
-        await trio.sleep_forever()
-
-    # Close phase
-    window.options_frame.destroy()
-    window.tkwindow.withdraw()  # weird navbar hiccup on close
-    window.tkwindow.destroy()
-
-
 async def ardf_converter(filename, root):
     """Convert ARDF file to ARH5"""
     with trio.CancelScope() as cscope:
         pbar = PBar(root, cancel_callback=cscope.cancel)
         filename = await async_tools.convert_ardf(filename, "ARDFtoHDF5.exe", True, pbar)
         async with async_tools.AsyncARH5File(filename) as opened_arh5:
-            await arh5_task(opened_arh5, root)
+            window = ARDFWindow(root, opened_arh5)
+            await window.arh5_task()
 
 
 async def open_callback(root):
@@ -818,7 +831,8 @@ async def open_callback(root):
         await ardf_converter(filename, root)
     elif suffix == ".h5":
         async with async_tools.AsyncARH5File(filename) as opened_arh5:
-            await arh5_task(opened_arh5, root)
+            window = ARDFWindow(root, opened_arh5)
+            await window.arh5_task()
     else:
         raise ValueError("Unknown filename suffix: ", suffix)
 
