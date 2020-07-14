@@ -16,7 +16,7 @@ A Docstring
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
+import os
 import subprocess
 from contextlib import asynccontextmanager
 from functools import partial
@@ -29,7 +29,7 @@ from threadpoolctl import threadpool_limits
 LONGEST_IMPERCEPTIBLE_DELAY = 0.016  # seconds
 
 internal_threadpool_limiters = threadpool_limits(1)
-cpu_bound_limiter = trio.CapacityLimiter(8)
+cpu_bound_limiter = trio.CapacityLimiter(4)
 ctrs = partial(trio.to_thread.run_sync, cancellable=True, limiter=cpu_bound_limiter)
 trs = partial(trio.to_thread.run_sync, cancellable=True)
 
@@ -59,6 +59,13 @@ async def convert_ardf(
     if (not force) and (await h5file_path.is_file()):
         return h5file_path
 
+    startupinfo = None
+    creationflags = None
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        creationflags = subprocess.CREATE_NO_WINDOW
+
     if pbar is None:
         import tqdm
 
@@ -87,6 +94,8 @@ async def convert_ardf(
             [str(conv_path), str(ardf_path), str(h5file_path),],
             stderr=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            startupinfo=startupinfo,
+            creationflags=creationflags,
         ) as proc:
             async with trio.open_nursery() as nursery:
                 nursery.start_soon(reading_stdout)

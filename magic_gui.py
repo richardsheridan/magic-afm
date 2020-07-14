@@ -2,12 +2,13 @@
 
 """
 __author__ = "Richard J. Sheridan"
-__app_name__ = __doc__.split('\n', 1)[0]
+__app_name__ = __doc__.split("\n", 1)[0]
 try:
     from _version import __version__
 except ImportError:
     __version__ = "version unknown"
 import datetime
+
 __short_license__ = f"""{__app_name__} {__version__}
 Copyright (C) {datetime.datetime.now().year} {__author__}
 
@@ -453,7 +454,8 @@ class ARDFWindow:
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
         async with self.spinner_scope() as cancel_scope:
-            pbar = PBar(self.tkwindow, grab=False, cancel_callback=cancel_scope.cancel)
+            pbar = PBar(self.tkwindow, grab=False, cancel_callback=cancel_scope.cancel,)
+            pbar.set_description("Loading force curves into memory...")
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
             z, d, s = await self.opened_arh5.get_all_curves()
             img_shape = z.shape[:2]
@@ -1022,7 +1024,7 @@ async def main_task(root):
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
         toolbar_frame = ttk.Frame(root)
-        #Eventually some buttons go here!
+        # Eventually some buttons go here!
         toolbar_frame.grid(row=0, column=0, sticky="ew")
 
         await trio.sleep_forever()  # needed if nursery never starts a long running child
