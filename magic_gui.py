@@ -250,7 +250,7 @@ class PBar:
     def set_maximum(self, maximum):
         self._pbar.configure(maximum=maximum)
 
-    def update(self, value):
+    def update(self, value=1):
         self._pbar.step(value)
 
     @property
@@ -486,6 +486,16 @@ class ARDFWindow:
             pbar.set_description("Fitting force curves...")
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
 
+            progress_image: matplotlib.image.AxesImage = self.img_ax.imshow(
+                np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
+            )
+            progress_array = progress_image.get_array()
+
+            def draw_helper():
+                progress_image.changed()
+                progress_image.pchanged()
+                self.canvas.draw_idle()
+
             def calc_properties(i, cancel_poller):
                 """This task has essentially private access to delta, f, and properties
                 so it's totally cool to do this side-effect-full stuff in threads
@@ -511,15 +521,21 @@ class ARDFWindow:
                         -z_true_surface,
                         deflection / indentation,
                     )
+                    color = (0, 1, 0, 0.5)
                 else:
                     properties[i] = np.nan
+                    color = (1, 0, 0, 0.5)
                 pbar.update(1)
+                r, c = np.unravel_index(i, img_shape)
+                progress_array[r, c, :] = color
+                trio.from_thread.run_sync(draw_helper)
 
             await async_tools.thread_map(
                 calc_properties, range(len(f)), async_tools.make_cancel_poller()
             )
             await trio.sleep(0)  # check for race condition cancel at end of pool
 
+        progress_image.remove()
         pbar.close()
         if cancel_scope.cancelled_caught:
             return
