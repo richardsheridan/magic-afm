@@ -2,7 +2,14 @@
 
 """
 __author__ = "Richard J. Sheridan"
-__short_license__ = f"""Copyright (C) 2020  {__author__}
+__app_name__ = __doc__.split('\n', 1)[0]
+try:
+    from _version import __version__
+except ImportError:
+    __version__ = "version unknown"
+import datetime
+__short_license__ = f"""{__app_name__} {__version__}
+Copyright (C) {datetime.datetime.now().year} {__author__}
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -914,8 +921,7 @@ async def about_task(root):
 
     """
     top = tk.Toplevel(root)
-    app_name = __doc__.split("\n", 1)[0]
-    top.wm_title(f"About {app_name}")
+    top.wm_title(f"About {__app_name__}")
     message = tk.Message(top, text=__short_license__)
     message.pack()
     thread_cpu = tk.StringVar(top)
@@ -1016,8 +1022,7 @@ async def main_task(root):
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
         toolbar_frame = ttk.Frame(root)
-        temp_text = ttk.Label(toolbar_frame, text="Eventually some buttons go here!")
-        temp_text.pack()
+        #Eventually some buttons go here!
         toolbar_frame.grid(row=0, column=0, sticky="ew")
 
         await trio.sleep_forever()  # needed if nursery never starts a long running child
