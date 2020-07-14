@@ -15,8 +15,6 @@ a = Analysis(['magic_gui.py'],
              win_private_assemblies=False,
              cipher=block_cipher,
              noarchive=False)
-import _make_version
-_make_version.make()
 pyz = PYZ(a.pure, a.zipped_data,
              cipher=block_cipher)
 exe = EXE(pyz,

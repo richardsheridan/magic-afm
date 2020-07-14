@@ -6,7 +6,8 @@ __app_name__ = __doc__.split("\n", 1)[0]
 try:
     from _version import __version__
 except ImportError:
-    __version__ = "version unknown"
+    import make_version
+    __version__ = make_version.get()
 import datetime
 
 __short_license__ = f"""{__app_name__} {__version__}

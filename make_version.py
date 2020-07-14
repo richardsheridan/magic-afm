@@ -2,12 +2,17 @@ import subprocess
 import pathlib
 
 
-def make():
+def get():
+    return subprocess.run(
+        ["git", "describe", "--dirty", "--long"], capture_output=True, check=True
+    ).stdout.decode()[:-1]
+
+
+def write():
     version = "__version__ = '"
 
-    completed = subprocess.run(["git", "describe", "--dirty", "--long"], capture_output=True, check=True)
-    version += completed.stdout.decode()[:-1]+"'\n"
-    filename = pathlib.Path(__file__).parent/"_version.py"
+    version += get() + "'\n"
+    filename = pathlib.Path(__file__).parent / "_version.py"
     try:
         with filename.open("r") as f:
             oldversion = f.read()
@@ -20,4 +25,4 @@ def make():
 
 
 if __name__ == "__main__":
-    make()
+    write()
