@@ -3,10 +3,12 @@
 """
 __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
+
 try:
     from _version import __version__
 except ImportError:
     import make_version
+
     __version__ = make_version.get()
 import datetime
 
@@ -51,6 +53,7 @@ from matplotlib.image import AxesImage
 from matplotlib.ticker import ScalarFormatter
 from matplotlib.transforms import Bbox, BboxTransform
 from matplotlib.widgets import SubplotTool
+from tqdm import tqdm_gui
 
 import async_tools
 import magic_calculation
@@ -78,6 +81,7 @@ class TkState(enum.IntFlag):
 @enum.unique
 class DispKind(enum.IntEnum):
     zd = enum.auto()
+    # noinspection NonAsciiCharacters
     δf = enum.auto()
 
 
@@ -229,53 +233,143 @@ class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
         window.destroy()
 
 
-class PBar:
+class tqdm_tk(tqdm_gui):
+    monitor_interval = 0
     def __init__(
-        self, parent=None, title="Loading...", maximum=100, grab=True, cancel_callback=None
+        self, *args, cancel_callback=None, grab=False, tk_parent=None, bar_format=None, **kwargs
     ):
+        kwargs["gui"] = True
         self._cancel_callback = cancel_callback
-        self._top = tk.Toplevel(parent)
-        self._top.protocol("WM_DELETE_WINDOW", lambda: None)
-        self._top.wm_title(title)
-        self._n_var = tk.DoubleVar(self._top, value=0)
-        self._text_var = tk.StringVar(self._top)
-        self._text_var.set(title)
-        self._label = ttk.Label(self._top, textvariable=self._text_var, padding=5, wraplength=600)
-        self._label.pack()
-        self._pbar = ttk.Progressbar(self._top, maximum=maximum, variable=self._n_var, length=450)
-        self._pbar.pack()
+        if tk_parent is None:
+            # this will error if tkinter.NoDefaultRoot() called
+            try:
+                tkparent = tk._default_root
+            except AttributeError:
+                raise ValueError("tk_parent required when using NoDefaultRoot")
+            if tkparent is None:
+                # use new default root window as display
+                self.tk_window = tk.Tk()
+            else:
+                # some other windows already exist
+                self.tk_window = tk.Toplevel()
+        else:
+            self.tk_window = tk.Toplevel(tk_parent)
+        if bar_format is None:
+            kwargs["bar_format"] = (
+                "{n_fmt}/{total_fmt}, {rate_noinv_fmt}\n"
+                "{elapsed} elapsed, {remaining} ETA\n\n"
+                "{percentage:3.0f}%"
+            )
+        super(tqdm_gui, self).__init__(*args, **kwargs)
+
+        if self.disable:
+            return
+
+        self.tk_dispatching = self.tk_dispatching_helper()
+        if not self.tk_dispatching:
+            # leave is problematic if the mainloop is not running
+            self.leave = False
+        self.tk_window.protocol("WM_DELETE_WINDOW", self.cancel)
+        self.tk_window.wm_title("tqdm_tk")
+        self.tk_n_var = tk.DoubleVar(self.tk_window, value=0)
+        self.tk_desc_var = tk.StringVar(self.tk_window)
+        self.tk_desc_var.set(self.desc)
+        self.tk_text_var = tk.StringVar(self.tk_window)
+        pbar_frame = ttk.Frame(self.tk_window, padding=5)
+        pbar_frame.pack()
+        self.tk_desc_label = ttk.Label(
+            pbar_frame,
+            textvariable=self.tk_desc_var,
+            wraplength=600,
+            anchor="center",
+            justify="center",
+        )
+        self.tk_desc_label.pack()
+        self.tk_label = ttk.Label(
+            pbar_frame,
+            textvariable=self.tk_text_var,
+            wraplength=600,
+            anchor="center",
+            justify="center",
+        )
+        self.tk_label.pack()
+        self.tk_pbar = ttk.Progressbar(pbar_frame, variable=self.tk_n_var, length=450)
+        if self.total is not None:
+            self.tk_pbar.configure(maximum=self.total)
+        else:
+            self.tk_pbar.configure(mode="indeterminate")
+        self.tk_pbar.pack()
         if self._cancel_callback is not None:
-            self._butt = ttk.Button(self._top, text="Cancel", command=self.cancel)
-            self._butt.pack()
+            self.tk_button = ttk.Button(pbar_frame, text="Cancel", command=self.cancel)
+            self.tk_button.pack()
         if grab:
-            self._top.grab_set()
+            self.tk_window.grab_set()
 
-    def set_description(self, desc):
-        self._text_var.set(desc)
-
-    def set_title(self, title):
-        self._top.wm_title(title)
-
-    def set_maximum(self, maximum):
-        self._pbar.configure(maximum=maximum)
-
-    def update(self, value=1):
-        self._pbar.step(value)
-
-    @property
-    def n(self):
-        return self._n_var.get()
-
-    @n.setter
-    def n(self, n):
-        self._n_var.set(n)
+    def display(self):
+        self.tk_n_var.set(self.n)
+        self.tk_desc_var.set(self.desc)
+        self.tk_text_var.set(
+            self.format_meter(
+                n=self.n,
+                total=self.total,
+                elapsed=self._time() - self.start_t,
+                ncols=None,
+                prefix=self.desc,
+                ascii=self.ascii,
+                unit=self.unit,
+                unit_scale=self.unit_scale,
+                rate=1 / self.avg_time if self.avg_time else None,
+                bar_format=self.bar_format,
+                postfix=self.postfix,
+                unit_divisor=self.unit_divisor,
+            )
+        )
+        if not self.tk_dispatching:
+            self.tk_window.update()
 
     def cancel(self):
         if self._cancel_callback is not None:
             self._cancel_callback()
+        self.close()
+
+    def reset(self, total=None):
+        if total is not None:
+            self.tk_pbar.configure(maximum=total)
+        super().reset(total)
 
     def close(self):
-        self._top.destroy()
+        if self.disable:
+            return
+
+        self.disable = True
+
+        with self.get_lock():
+            self._instances.remove(self)
+
+        def _close():
+            self.tk_window.after(0, self.tk_window.destroy)
+            if not self.tk_dispatching:
+                self.tk_window.update()
+
+        self.tk_window.protocol("WM_DELETE_WINDOW", _close)
+        if not self.leave:
+            _close()
+
+    def tk_dispatching_helper(self):
+        try:
+            return self.tk_window.dispatching()
+        except AttributeError:
+            pass
+
+        import tkinter, sys
+
+        codes = {tkinter.mainloop.__code__, tkinter.Misc.mainloop.__code__}
+        for frame in sys._current_frames().values():
+            while frame:
+                if frame.f_code in codes:
+                    return True
+                frame = frame.f_back
+        return False
 
 
 class TkHost:
@@ -455,28 +549,50 @@ class ARDFWindow:
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
         async with self.spinner_scope() as cancel_scope:
-            pbar = PBar(self.tkwindow, grab=False, cancel_callback=cancel_scope.cancel,)
-            pbar.set_description("Loading force curves into memory...")
+            pbar = tqdm_tk(
+                total=1,
+                desc="Loading force curves into memory...",
+                mininterval=None,
+                tk_parent=self.tkwindow,
+                grab=False,
+                leave=False,
+                cancel_callback=cancel_scope.cancel,
+            )
+            pbar.tk_window.wm_title("Loading...")
+            pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
             z, d, s = await self.opened_arh5.get_all_curves()
+            pbar.update()
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+            pbar.close()
+
             img_shape = z.shape[:2]
             npts = z.shape[-1]
             z = z.reshape((-1, npts))
             d = d.reshape((-1, npts))
+
             resample_npts = 512
             s = s * resample_npts // npts
-            pbar.set_title("Calculating...")
-            pbar.set_description(f"Resampling force curves to {resample_npts} points...")
-            pbar.n = 0
-            pbar.set_maximum(2)
+            pbar = tqdm_tk(
+                total=2,
+                desc=f"Resampling force curves to {resample_npts} points...",
+                mininterval=None,
+                tk_parent=self.tkwindow,
+                grab=False,
+                leave=False,
+                cancel_callback=cancel_scope.cancel,
+            )
+            pbar.tk_window.wm_title("Calculating...")
+            pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+            z = magic_calculation.resample_dset(z, resample_npts, True)
+            pbar.update()
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+            d = magic_calculation.resample_dset(d, resample_npts, True)
+            pbar.update()
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+            pbar.close()
 
-            def resample_helper(x):
-                x = magic_calculation.resample_dset(x, resample_npts, True)
-                pbar.update(1)
-                return x
-
-            z, d = await async_tools.thread_map(resample_helper, [z, d])
             # Transform data to model units
             f = d * options.k
             delta = z - d
@@ -501,9 +617,19 @@ class ARDFWindow:
                 len(f), dtype=np.dtype([(name, "f4") for name in property_names_units]),
             )
 
-            pbar.n = 0
-            pbar.set_maximum(len(properties))
-            pbar.set_description("Fitting force curves...")
+            pbar = tqdm_tk(
+                total=len(properties),
+                desc="Fitting force curves...",
+                smoothing=1 / 20 / 3,
+                unit="fits",
+                mininterval=None,
+                tk_parent=self.tkwindow,
+                grab=False,
+                leave=False,
+                cancel_callback=cancel_scope.cancel,
+            )
+            pbar.tk_window.wm_title("Calculating...")
+            pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
 
             progress_image: matplotlib.image.AxesImage = self.img_ax.imshow(
@@ -545,7 +671,7 @@ class ARDFWindow:
                 else:
                     properties[i] = np.nan
                     color = (1, 0, 0, 0.5)
-                pbar.update(1)
+                pbar.update()
                 r, c = np.unravel_index(i, img_shape)
                 progress_array[r, c, :] = color
                 trio.from_thread.run_sync(draw_helper)
@@ -671,7 +797,7 @@ class ARDFWindow:
 
                 # Drawing Phase
                 # Based options choose plots and collect artists for deletion
-                new_artists, color = await ctrs(draw_force_curve, data, self.plot_ax, options)
+                new_artists, color = await trs(draw_force_curve, data, self.plot_ax, options)
                 self.artists.extend(new_artists)
                 self.artists.extend(
                     self.img_ax.plot(
@@ -706,7 +832,7 @@ class ARDFWindow:
                     table.auto_set_font_size(False)
                     table.set_fontsize(9)
                     self.artists.append(table)
-                    await ctrs(partial(self.fig.subplots_adjust, top=0.85))
+                    await trs(partial(self.fig.subplots_adjust, top=0.85))
                 self.canvas.draw_idle()
 
     async def mpl_pick_motion_event_callback(self, event):
@@ -880,7 +1006,9 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
 async def ardf_converter(filename, root):
     """Convert ARDF file to ARH5"""
     with trio.CancelScope() as cscope:
-        pbar = PBar(root, cancel_callback=cscope.cancel)
+        pbar = tqdm_tk(
+            tk_parent=root, cancel_callback=cscope.cancel, total=100, unit="%", leave=False
+        )
         filename = await async_tools.convert_ardf(filename, "ARDFtoHDF5.exe", True, pbar)
         async with async_tools.AsyncARH5File(filename) as opened_arh5:
             window = ARDFWindow(root, opened_arh5)

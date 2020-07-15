@@ -71,7 +71,7 @@ async def convert_ardf(
 
         pbar = tqdm.tqdm(total=100, unit="%",)
 
-    pbar.set_description("Converting " + str(ardf_path))
+    pbar.set_description_str("Converting " + str(ardf_path))
 
     async def reading_stdout():
         stdout = bytearray()
