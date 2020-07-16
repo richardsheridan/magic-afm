@@ -235,6 +235,7 @@ class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
 
 class tqdm_tk(tqdm_gui):
     monitor_interval = 0
+
     def __init__(
         self, *args, cancel_callback=None, grab=False, tk_parent=None, bar_format=None, **kwargs
     ):
@@ -421,7 +422,7 @@ def impartial(fn):
 
 
 class ARDFWindow:
-    default_figsize = (9.5, 3.5)
+    default_figsize = (9, 2.75)
 
     def __init__(self, root, opened_arh5, figsize=default_figsize, **kwargs):
         self.opened_arh5 = opened_arh5
@@ -436,6 +437,7 @@ class ARDFWindow:
             1, 2, gridspec_kw=dict(width_ratios=[1, 1.5])
         )
         img_ax.set_anchor("W")
+        img_ax.set_facecolor((0.8, 0, 0))  # scary red for NaN values of images
         # Need to pre-load something into these labels for change_image_callback->tight_layout
         plot_ax.set_xlabel(" ")
         plot_ax.set_ylabel(" ")
@@ -537,7 +539,9 @@ class ARDFWindow:
         self.resize_cancels_pending = set()
 
     def set_image_names(self, image_names):
-        self.image_name_menu.configure(values=list(image_names), width=max(map(len, image_names)))
+        self.image_name_menu.configure(
+            values=list(image_names), width=max(map(len, image_names)) - 1
+        )
 
     async def arh5_prop_map_callback(self):
         # pbar.set_description("Calculating force maps")
@@ -693,7 +697,9 @@ class ARDFWindow:
         for name in property_names_units:
             self.opened_arh5.add_image(name, property_names_units[name], properties[name].squeeze())
             combobox_values.append(name)
-        self.image_name_menu.configure(values=combobox_values)
+        self.image_name_menu.configure(
+            values=combobox_values, width=max(map(len, combobox_values)) - 1
+        )
 
     async def change_image_callback(self):
         image_name = self.image_name_strvar.get()
@@ -708,7 +714,7 @@ class ARDFWindow:
         s = (scansize + scansize / len(image_array)) // 2
         self.axesimage = self.img_ax.imshow(
             image_array,
-            origin="upper" if self.opened_arh5.scandown else "lower",
+            origin="lower" if self.opened_arh5.scandown else "upper",
             extent=(-s, s, -s, s,),
             picker=True,
         )
@@ -729,11 +735,12 @@ class ARDFWindow:
             self.axesimage, ax=self.img_ax, use_gridspec=True, format=self.cb_fmt
         )
         self.navbar.update()  # let navbar catch new cax in fig
-        # colorbar.ax.set_navigate(True)
+        self.colorbar.ax.set_navigate(True)
         self.colorbar.solids.set_picker(True)
         self.colorbar.ax.set_ylabel(
             image_name + " (" + self.opened_arh5.get_image_units(image_name) + ")"
         )
+        self.colorbar.solids.set_clim(*np.nanquantile(image_array, [0.01, 0.99]))
 
         self.fig.tight_layout()
         self.canvas.draw_idle()
