@@ -278,14 +278,9 @@ class tqdm_tk(tqdm_gui):
         self.tk_text_var = tk.StringVar(self.tk_window)
         pbar_frame = ttk.Frame(self.tk_window, padding=5)
         pbar_frame.pack()
-        self.tk_desc_label = ttk.Label(
-            pbar_frame,
-            textvariable=self.tk_desc_var,
-            wraplength=600,
-            anchor="center",
-            justify="center",
-        )
-        self.tk_desc_label.pack()
+        self.tk_desc_frame = ttk.Frame(pbar_frame)
+        self.tk_desc_frame.pack()
+        self.tk_desc_label = None
         self.tk_label = ttk.Label(
             pbar_frame,
             textvariable=self.tk_text_var,
@@ -308,7 +303,21 @@ class tqdm_tk(tqdm_gui):
 
     def display(self):
         self.tk_n_var.set(self.n)
-        self.tk_desc_var.set(self.desc)
+        if self.desc:
+            if self.tk_desc_label is None:
+                self.tk_desc_label = ttk.Label(
+                    self.tk_desc_frame,
+                    textvariable=self.tk_desc_var,
+                    wraplength=600,
+                    anchor="center",
+                    justify="center",
+                )
+                self.tk_desc_label.pack()
+            self.tk_desc_var.set(self.desc)
+        else:
+            if self.tk_desc_label is not None:
+                self.tk_desc_label.destroy()
+                self.tk_desc_label = None
         self.tk_text_var.set(
             self.format_meter(
                 n=self.n,
