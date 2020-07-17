@@ -61,6 +61,22 @@ from async_tools import trs, ctrs, LONGEST_IMPERCEPTIBLE_DELAY
 
 matplotlib.rcParams["savefig.dpi"] = 300
 
+COLORMAPS = [
+    "viridis",
+    "plasma",
+    "inferno",
+    "magma",
+    "cividis",
+    "gray",
+    "hot",
+    "afmhot",
+    "gist_heat",
+    "copper",
+    "PuOr",
+    "PiYG",
+    "BrBG",
+]
+
 
 class TkState(enum.IntFlag):
     """AND/OR these with a tk.Event.state to see which keys were held down"""
@@ -455,18 +471,28 @@ class ARDFWindow:
 
         # Options and buttons
         self.options_frame = ttk.Frame(root)
-        self.calc_props_button = ttk.Button(
-            self.options_frame, text="Calculate Property Maps", state="disabled"
-        )
-        self.calc_props_button.pack()
-        image_name_labelframe = ttk.Labelframe(self.options_frame, text="Current image")
+
+        image_opts_frame = ttk.Frame(self.options_frame)
+        image_name_labelframe = ttk.Labelframe(image_opts_frame, text="Image")
         self.image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
         self.image_name_menu = ttk.Combobox(
             image_name_labelframe, width=12, state="readonly", textvariable=self.image_name_strvar,
         )
+        self.image_name_menu.pack(fill="x")
+        image_name_labelframe.pack(fill="x")
+        colormap_labelframe = ttk.Labelframe(image_opts_frame, text="Colormap")
+        self.colormap_strvar = tk.StringVar(colormap_labelframe, value="viridis")
+        self.colormap_menu = ttk.Combobox(
+            colormap_labelframe,
+            state="readonly",
+            textvariable=self.colormap_strvar,
+            values=COLORMAPS,
+            width=max(map(len, COLORMAPS)) - 1,
+        )
+        self.colormap_menu.pack(fill="x")
+        colormap_labelframe.pack(fill="x")
 
-        self.image_name_menu.pack(side="left")
-        image_name_labelframe.pack(side="left")
+        image_opts_frame.grid(row=0, column=0)
 
         disp_labelframe = ttk.Labelframe(self.options_frame, text="Display type")
         self.disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
@@ -478,7 +504,7 @@ class ARDFWindow:
             disp_labelframe, text="δ/f", value=DispKind.δf.value, variable=self.disp_kind_intvar
         )
         disp_deltaf_button.pack(side="left")
-        disp_labelframe.pack(side="left")
+        disp_labelframe.grid(row=0, column=1)
 
         fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit type")
         self.fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FitMode.SKIP.value)
@@ -488,22 +514,26 @@ class ARDFWindow:
             value=magic_calculation.FitMode.SKIP.value,
             variable=self.fit_intvar,
         )
-        fit_skip_button.pack(side="left")
+        fit_skip_button.grid(row=0, column=0)
         fit_ext_button = ttk.Radiobutton(
             fit_labelframe,
             text="Extend",
             value=magic_calculation.FitMode.EXTEND.value,
             variable=self.fit_intvar,
         )
-        fit_ext_button.pack(side="left")
+        fit_ext_button.grid(row=0, column=1)
         fit_ret_button = ttk.Radiobutton(
             fit_labelframe,
             text="Retract",
             value=magic_calculation.FitMode.RETRACT.value,
             variable=self.fit_intvar,
         )
-        fit_ret_button.pack(side="left")
-        fit_labelframe.pack(side="left")
+        fit_ret_button.grid(row=0, column=2)
+        self.calc_props_button = ttk.Button(
+            fit_labelframe, text="Calculate Property Maps", state="disabled"
+        )
+        self.calc_props_button.grid(row=1, column=0, columnspan=3)
+        fit_labelframe.grid(row=0, column=2)
 
         self.options_frame.grid(row=1, column=0, sticky="nsew")
 
@@ -710,9 +740,25 @@ class ARDFWindow:
             values=combobox_values, width=max(map(len, combobox_values)) - 1
         )
 
+    async def change_cmap_callback(self):
+        colormap_name = self.colormap_strvar.get()
+        # save old clim
+        clim=self.axesimage.get_clim()
+        async with self.canvas.trio_draw_lock:
+            # prevent cbar from getting expanded
+            self.axesimage.set_clim(self.image_min, self.image_max)
+            # actually change cmap
+            self.axesimage.set_cmap(colormap_name)
+            # reset everything
+            self.customize_colorbar(clim)
+            self.canvas.draw_idle()
+
     async def change_image_callback(self):
         image_name = self.image_name_strvar.get()
+        cmap=self.colormap_strvar.get()
         image_array = await self.opened_arh5.get_image(image_name)
+        self.image_min = float(np.nanmin(image_array))
+        self.image_max = float(np.nanmax(image_array))
 
         if self.colorbar is not None:
             self.colorbar.remove()
@@ -721,12 +767,15 @@ class ARDFWindow:
 
         scansize = self.opened_arh5.params["scansize"]
         s = (scansize + scansize / len(image_array)) // 2
-        self.axesimage = self.img_ax.imshow(
-            image_array,
-            origin="lower" if self.opened_arh5.scandown else "upper",
-            extent=(-s, s, -s, s,),
-            picker=True,
-        )
+
+        async with self.canvas.trio_draw_lock:
+            self.axesimage = self.img_ax.imshow(
+                image_array,
+                origin="lower" if self.opened_arh5.scandown else "upper",
+                extent=(-s, s, -s, s,),
+                picker=True,
+                cmap=cmap
+            )
 
         xmin, xmax, ymin, ymax = self.axesimage.get_extent()
         rows, cols = self.axesimage.get_size()
@@ -740,19 +789,32 @@ class ARDFWindow:
         self.img_ax.set_ylabel("Y piezo (nm)")
         self.img_ax.set_xlabel("X piezo (nm)")
 
-        self.colorbar = self.fig.colorbar(
-            self.axesimage, ax=self.img_ax, use_gridspec=True, format=self.cb_fmt
-        )
-        self.navbar.update()  # let navbar catch new cax in fig
+        async with self.canvas.trio_draw_lock:
+            self.colorbar = self.fig.colorbar(
+                self.axesimage, ax=self.img_ax, use_gridspec=True, format=self.cb_fmt
+            )
+            self.navbar.update()  # let navbar catch new cax in fig
+            self.customize_colorbar()
+
+            self.fig.tight_layout()
+            self.canvas.draw_idle()
+
+    def customize_colorbar(self, clim=None):
+        """MPL keeps stomping on our settings so reset EVERYTHING"""
+        self.colorbar.formatter= self.cb_fmt
         self.colorbar.ax.set_navigate(True)
         self.colorbar.solids.set_picker(True)
+        self.label_colorbar()
+        if clim is None:
+            clim=np.nanquantile(self.axesimage.get_array(), [0.01, 0.99])
+        self.colorbar.solids.set_clim(*clim)
+
+    def label_colorbar(self):
+        """Surprisingly needed often"""
+        image_name = self.image_name_strvar.get()
         self.colorbar.ax.set_ylabel(
             image_name + " (" + self.opened_arh5.get_image_units(image_name) + ")"
         )
-        self.colorbar.solids.set_clim(*np.nanquantile(image_array, [0.01, 0.99]))
-
-        self.fig.tight_layout()
-        self.canvas.draw_idle()
 
     def data_coords_to_array_index(self, x, y):
         return self.trans.transform_point([y, x]).round().astype(int)  # row, column
@@ -851,6 +913,17 @@ class ARDFWindow:
                     await trs(partial(self.fig.subplots_adjust, top=0.85))
                 self.canvas.draw_idle()
 
+    def freeze_colorbar_response(self):
+        self.colorbar.draw_all()
+        from matplotlib.contour import ContourSet
+        if isinstance(self.colorbar.mappable, ContourSet):
+            CS = self.colorbar.mappable
+            if not CS.filled:
+                self.colorbar.add_lines(CS)
+        self.colorbar.stale = True
+        self.label_colorbar()
+        self.canvas.draw_idle()
+
     async def mpl_pick_motion_event_callback(self, event):
         mouseevent = getattr(event, "mouseevent", event)
         control_held = event.guiEvent.state & TkState.CONTROL
@@ -871,6 +944,8 @@ class ARDFWindow:
                 self.colorbar.norm.vmax = max(mouseevent.ydata, self.colorbar.norm.vmin)
             elif mouseevent.button == MouseButton.RIGHT:
                 self.colorbar.norm.vmin = min(mouseevent.ydata, self.colorbar.norm.vmax)
+            elif mouseevent.button == MouseButton.MIDDLE:
+                self.freeze_colorbar_response()
             else:
                 return
             # Adjust colorbar scale
@@ -910,6 +985,10 @@ class ARDFWindow:
             self.canvas.mpl_connect(
                 "resize_event",
                 impartial(partial(nursery.start_soon, self.mpl_resize_event_callback)),
+            )
+
+            self.colormap_strvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.change_cmap_callback))
             )
 
             await nursery.start(self.canvas.idle_draw_task)
