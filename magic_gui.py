@@ -257,23 +257,27 @@ class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
         self._parent_nursery.start_soon(self._aexport_calculations)
 
     async def _aexport_calculations(self):
+        ### it's also possible to export image stacks but need a way to indicate that
+        import os
+        import imageio
         # fmt: off
         export_filetypes = (
-            ("ASCII/TXT", "*.txt"),
-            ("TSV", "*.tsv"),
-            ("CSV", "*.csv"),
-            ("NPY", "*.npy"),
+            ("ASCII/TXT/TSV/CSV", "*.asc *.txt *.tsv *.csv"),
+            ("NPY/NPZ", "*.npy *.npz"),
+            ################
+            ("Many image formats (try an extension)", "*.*")
         )
         # must take two positional arguments, fname and array
         exporter_map = {
             ".txt": partial(np.savetxt, fmt='%.8g'),
+            ".asc": partial(np.savetxt, fmt='%.8g'),
             ".tsv": partial(np.savetxt, delimiter="\t", fmt='%.8g'),
             ".csv": partial(np.savetxt, delimiter=",", fmt='%.8g'),
             ".npy": np.save,
+            ".npz": np.savez_compressed,
         }
         # fmt: on
         defaultextension = ""
-        import os
         initialdir = os.path.expanduser(matplotlib.rcParams["savefig.directory"])
         initialfile = os.path.basename(self._prev_filename)
         fname = await trs(
@@ -297,7 +301,7 @@ class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
         root, ext = os.path.splitext(fname)
         for image_name in self.window._host.image_name_menu.cget("values"):
             if image_name.startswith("Calc"):
-                exporter_map[ext](
+                exporter_map.get(ext, imageio.imwrite)(
                     root + "_" + image_name[4:] + ext,
                     await self.window._host.opened_arh5.get_image(image_name),
                 )
