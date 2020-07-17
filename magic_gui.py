@@ -230,6 +230,11 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
 
 
 class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
+    def __init__(self, canvas, window):
+        self.toolitems += (("Export", "Export calculated maps", "filesave", "export_calculations"),)
+        self._prev_filename = ""
+        super().__init__(canvas, window)
+
     def teach_navbar_to_use_trio(self, nursery):
         self._parent_nursery = nursery
 
@@ -247,6 +252,55 @@ class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
             SubplotTool(self.canvas.figure, toolfig)
             window.protocol("WM_DELETE_WINDOW", idle_draw_nursery.cancel_scope.cancel)
         window.destroy()
+
+    def export_calculations(self):
+        self._parent_nursery.start_soon(self._aexport_calculations)
+
+    async def _aexport_calculations(self):
+        # fmt: off
+        export_filetypes = (
+            ("ASCII/TXT", "*.txt"),
+            ("TSV", "*.tsv"),
+            ("CSV", "*.csv"),
+            ("NPY", "*.npy"),
+        )
+        # must take two positional arguments, fname and array
+        exporter_map = {
+            ".txt": partial(np.savetxt, fmt='%.8g'),
+            ".tsv": partial(np.savetxt, delimiter="\t", fmt='%.8g'),
+            ".csv": partial(np.savetxt, delimiter=",", fmt='%.8g'),
+            ".npy": np.save,
+        }
+        # fmt: on
+        defaultextension = ""
+        import os
+        initialdir = os.path.expanduser(matplotlib.rcParams["savefig.directory"])
+        initialfile = os.path.basename(self._prev_filename)
+        fname = await trs(
+            partial(
+                tk.filedialog.asksaveasfilename,
+                master=self.canvas.get_tk_widget().master,
+                title="Export calculated images",
+                filetypes=export_filetypes,
+                defaultextension=defaultextension,
+                initialdir=initialdir,
+                initialfile=initialfile,
+            )
+        )
+
+        if fname in ["", ()]:
+            return
+        # Save dir for next time, unless empty str (i.e., use cwd).
+        if initialdir != "":
+            matplotlib.rcParams["savefig.directory"] = os.path.dirname(str(fname))
+        self._prev_filename = fname
+        root, ext = os.path.splitext(fname)
+        for image_name in self.window._host.image_name_menu.cget("values"):
+            if image_name.startswith("Calc"):
+                exporter_map[ext](
+                    root + "_" + image_name[4:] + ext,
+                    await self.window._host.opened_arh5.get_image(image_name),
+                )
 
 
 class tqdm_tk(tqdm_gui):
@@ -453,6 +507,7 @@ class ARDFWindow:
         self.opened_arh5 = opened_arh5
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
         window.wm_title(self.opened_arh5.h5file_path.name)
+        window._host = self
 
         # Build figure
         self.fig = Figure(figsize, frameon=False)
