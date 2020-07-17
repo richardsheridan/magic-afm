@@ -806,7 +806,7 @@ class ARDFWindow:
         self.colorbar.solids.set_picker(True)
         self.label_colorbar()
         if clim is None:
-            clim = np.nanquantile(self.axesimage.get_array(), [0.01, 0.99])
+            clim = np.nanquantile(self.axesimage.get_array().data, [0.01, 0.99])
         self.colorbar.solids.set_clim(*clim)
 
     def label_colorbar(self):
