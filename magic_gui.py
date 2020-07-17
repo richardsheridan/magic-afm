@@ -743,7 +743,7 @@ class ARDFWindow:
     async def change_cmap_callback(self):
         colormap_name = self.colormap_strvar.get()
         # save old clim
-        clim=self.axesimage.get_clim()
+        clim = self.axesimage.get_clim()
         async with self.canvas.trio_draw_lock:
             # prevent cbar from getting expanded
             self.axesimage.set_clim(self.image_min, self.image_max)
@@ -755,7 +755,7 @@ class ARDFWindow:
 
     async def change_image_callback(self):
         image_name = self.image_name_strvar.get()
-        cmap=self.colormap_strvar.get()
+        cmap = self.colormap_strvar.get()
         image_array = await self.opened_arh5.get_image(image_name)
         self.image_min = float(np.nanmin(image_array))
         self.image_max = float(np.nanmax(image_array))
@@ -774,7 +774,7 @@ class ARDFWindow:
                 origin="lower" if self.opened_arh5.scandown else "upper",
                 extent=(-s, s, -s, s,),
                 picker=True,
-                cmap=cmap
+                cmap=cmap,
             )
 
         xmin, xmax, ymin, ymax = self.axesimage.get_extent()
@@ -801,12 +801,12 @@ class ARDFWindow:
 
     def customize_colorbar(self, clim=None):
         """MPL keeps stomping on our settings so reset EVERYTHING"""
-        self.colorbar.formatter= self.cb_fmt
+        self.colorbar.formatter = self.cb_fmt
         self.colorbar.ax.set_navigate(True)
         self.colorbar.solids.set_picker(True)
         self.label_colorbar()
         if clim is None:
-            clim=np.nanquantile(self.axesimage.get_array(), [0.01, 0.99])
+            clim = np.nanquantile(self.axesimage.get_array(), [0.01, 0.99])
         self.colorbar.solids.set_clim(*clim)
 
     def label_colorbar(self):
@@ -916,6 +916,7 @@ class ARDFWindow:
     def freeze_colorbar_response(self):
         self.colorbar.draw_all()
         from matplotlib.contour import ContourSet
+
         if isinstance(self.colorbar.mappable, ContourSet):
             CS = self.colorbar.mappable
             if not CS.filled:
