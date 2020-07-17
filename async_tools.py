@@ -242,6 +242,8 @@ class AsyncARH5File:
         "Height": "m",
         "IndentationHertz": "m",
         "YoungsHertz": "Pa",
+        "YoungsJKR": "Pa",
+        "YoungsDMT": "Pa",
         "ZSensor": "m",
         "MapAdhesion": "N",
         "MapHeight": "m",
