@@ -4,7 +4,7 @@ import pathlib
 
 def get():
     return subprocess.run(
-        ["git", "describe", "--dirty", "--long"], capture_output=True, check=True
+        ["git", "describe", "--dirty", "--long", "--tags"], capture_output=True, check=True
     ).stdout.decode()[:-1]
 
 
