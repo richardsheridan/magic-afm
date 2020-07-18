@@ -4,6 +4,9 @@
 __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
+import os
+import threading
+
 try:
     from _version import __version__
 except ImportError:
@@ -38,6 +41,8 @@ from functools import partial, wraps
 from tkinter import ttk, filedialog
 from typing import Optional, Callable
 from multiprocessing import Pool, freeze_support
+
+Pool = partial(Pool, os.cpu_count())
 
 import matplotlib
 import numpy as np
@@ -644,43 +649,28 @@ class ARDFWindow:
         )
 
     async def arh5_prop_map_callback(self):
-        # pbar.set_description("Calculating force maps")
         options = ForceCurveOptions(
             fit_mode=self.fit_intvar.get(),
             disp_kind=self.disp_kind_intvar.get(),
             k=self.opened_arh5.params["k"],
         )
+        img_shape = self.opened_arh5.shape
+        ncurves = img_shape[0] * img_shape[1]
+        resample_npts = 512
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
+
+        progress_image: matplotlib.image.AxesImage = self.img_ax.imshow(
+            np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
+        )
         async with self.spinner_scope() as cancel_scope:
-            pbar = tqdm_tk(
-                total=1,
-                desc="Loading force curves into memory...",
-                mininterval=None,
-                tk_parent=self.tkwindow,
-                grab=False,
-                leave=False,
-                cancel_callback=cancel_scope.cancel,
-            )
-            pbar.tk_window.wm_title("Loading...")
-            pbar.update(0)
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-            z, d, s = await self.opened_arh5.get_all_curves()
-            pbar.update()
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-            pbar.close()
-
-            img_shape = z.shape[:2]
-            npts = z.shape[-1]
-            z = z.reshape((-1, npts))
-            d = d.reshape((-1, npts))
-            ncurves = len(z)
-
-            resample_npts = 512
+            _, _, s = await self.opened_arh5.get_force_curve(0, 0)
+            npts = len(_)
             s = s * resample_npts // npts
             pbar = tqdm_tk(
-                total=2 * ncurves,
-                desc=f"Resampling force curves to {resample_npts} points...",
+                total=ncurves,
+                desc="Loading force curves into memory...\n"
+                + f"Resampling to {resample_npts} points...",
                 mininterval=None,
                 unit="curves",
                 tk_parent=self.tkwindow,
@@ -691,18 +681,21 @@ class ARDFWindow:
             pbar.tk_window.wm_title("Calculating...")
             pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-            z = await ctrs(magic_calculation.resample_dset, z, resample_npts, True)
-            pbar.update()
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-            d = await ctrs(magic_calculation.resample_dset, d, resample_npts, True)
-            pbar.update()
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-            pbar.close()
 
-            # Transform data to model units
-            f = d * options.k
-            delta = z - d
-            del z, d
+            delta = np.empty((ncurves, resample_npts), np.float32)
+            f = np.empty((ncurves, resample_npts), np.float32)
+
+            def resample_helper(i):
+                r, c = np.unravel_index(i, img_shape)
+                z, d, _ = self.opened_arh5._worker.get_force_curve(r, c)
+                z = magic_calculation.resample_dset(z, resample_npts, True)
+                d = magic_calculation.resample_dset(d, resample_npts, True)
+                delta[i, :] = z - d
+                f[i, :] = d * options.k
+                pbar.update(1)
+
+            await async_tools.thread_map(resample_helper, range(ncurves))
+            pbar.close()
 
             if options.fit_mode == magic_calculation.FitMode.EXTEND:
                 sl = slice(s)
@@ -737,18 +730,15 @@ class ARDFWindow:
             pbar.tk_window.wm_title("Calculating...")
             pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-
-            progress_image: matplotlib.image.AxesImage = self.img_ax.imshow(
-                np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
-            )
             progress_array = progress_image.get_array()
+            cancel_poller = async_tools.make_cancel_poller()
 
             def draw_helper():
                 progress_image.changed()
                 progress_image.pchanged()
                 self.canvas.draw_idle()
 
-            def calc_properties(delta, f, options, cancel_poller):
+            def calc_properties():
                 """This task has essentially private access to delta, f, and properties
                 so it's totally cool to do this side-effect-full stuff in threads
                 as long as they don't step on each other"""
@@ -761,9 +751,8 @@ class ARDFWindow:
                     pool.__enter__()
                 except ValueError:
                     pool = Pool()
-                cancel_poller()
-                pbar.start_t = pbar.last_print_t = pbar._time()
                 try:
+                    cancel_poller()
                     for i, properties in pool.imap_unordered(
                         partial(
                             magic_calculation.calc_properties_imap, **dataclasses.asdict(options),
@@ -773,29 +762,35 @@ class ARDFWindow:
                     ):
                         cancel_poller()
 
-                        if np.isfinite(properties[0]):
-                            property_map[i] = properties
-                            color = (0, 1, 0, 0.5)
-                        else:
+                        if properties is None:
                             property_map[i] = np.nan
                             color = (1, 0, 0, 0.5)
+                        else:
+                            property_map[i] = properties
+                            color = (0, 1, 0, 0.5)
 
                         pbar.update()
                         r, c = np.unravel_index(i, img_shape)
                         progress_array[r, c, :] = color
                         if time() - t > LONGEST_IMPERCEPTIBLE_DELAY * 40:
+                            # This can be the rate-limiting step so run infrequently
                             trio.from_thread.run_sync(draw_helper)
                             t = time()
                 except BaseException:
                     pool.terminate()
                     raise
 
-            await ctrs(calc_properties, delta, f, options, async_tools.make_cancel_poller())
-            await trio.sleep(0)  # check for race condition cancel at end of pool
+            try:
+                await trs(pool_lock.acquire)
+                await ctrs(calc_properties)
+            finally:
+                pool_lock.release()
+            await trio.sleep(0)  # check for race condition cancel
 
         progress_image.remove()
         self.canvas.draw_idle()
         pbar.close()
+
         if cancel_scope.cancelled_caught:
             return
 
@@ -1360,6 +1355,7 @@ class FirstPool:
 
 
 pool = FirstPool()
+pool_lock = threading.Lock()
 if __name__ == "__main__":
     freeze_support()
     main()

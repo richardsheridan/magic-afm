@@ -519,25 +519,6 @@ def fitfun(delta, f, k, radius, tau, fit_mode, cancel_poller=lambda: None, **kwa
     return beta, np.sqrt(np.diag(cov)), partial_force_curve
 
 
-def calc_properties_imap(delta_f_i, **kwargs):
-    delta, f, i = delta_f_i
-    beta, beta_err, partial_force_curve = fitfun(delta, f, **kwargs)
-    if np.all(np.isfinite(beta)):
-        (deflection, indentation, z_true_surface,) = calc_def_ind_ztru(f, beta, **kwargs)
-        properties = (
-            beta[0],
-            -beta[1],
-            deflection,
-            indentation,
-            -z_true_surface,
-            deflection / indentation,
-        )
-    else:
-        properties = np.nan
-    return i, properties
-
-
-
 def calc_def_ind_ztru(f, beta, radius, k, tau, fit_mode, **kwargs):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters.
     
@@ -566,3 +547,21 @@ def calc_def_ind_ztru(f, beta, radius, k, tau, fit_mode, **kwargs):
     indentation = maxdelta - mindelta
     z_true_surface = delta_shift + zeroindforce / k
     return deflection, indentation, z_true_surface
+
+
+def calc_properties_imap(delta_f_i, **kwargs):
+    delta, f, i = delta_f_i
+    beta, beta_err, partial_force_curve = fitfun(delta, f, **kwargs)
+    if np.all(np.isfinite(beta)):
+        (deflection, indentation, z_true_surface,) = calc_def_ind_ztru(f, beta, **kwargs)
+        properties = (
+            beta[0],
+            -beta[1],
+            deflection,
+            indentation,
+            -z_true_surface,
+            deflection / indentation,
+        )
+    else:
+        properties = None
+    return i, properties

@@ -29,7 +29,7 @@ from threadpoolctl import threadpool_limits
 LONGEST_IMPERCEPTIBLE_DELAY = 0.016  # seconds
 
 internal_threadpool_limiters = threadpool_limits(1)
-cpu_bound_limiter = trio.CapacityLimiter(4)
+cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count())
 ctrs = partial(trio.to_thread.run_sync, cancellable=True, limiter=cpu_bound_limiter)
 trs = partial(trio.to_thread.run_sync, cancellable=True)
 
@@ -287,6 +287,8 @@ class AsyncARH5File:
         self._worker = worker
         self._images = images
         self._h5_image_names = image_names
+        self.shape = await trs(lambda name: images[name].shape, next(iter(image_names)))
+        self.npts = len((await self.get_force_curve(0, 0))[0])
 
         self.params = dict(
             k=float(self.notes["SpringConstant"]),
