@@ -37,6 +37,7 @@ import traceback
 from functools import partial, wraps
 from tkinter import ttk, filedialog
 from typing import Optional, Callable
+from multiprocessing import Pool, freeze_support
 
 import matplotlib
 import numpy as np
@@ -260,6 +261,7 @@ class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
         ### it's also possible to export image stacks but need a way to indicate that
         import os
         import imageio
+
         # fmt: off
         export_filetypes = (
             ("ASCII/TXT/TSV/CSV", "*.asc *.txt *.tsv *.csv"),
@@ -687,10 +689,10 @@ class ARDFWindow:
             pbar.tk_window.wm_title("Calculating...")
             pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-            z = magic_calculation.resample_dset(z, resample_npts, True)
+            z = await ctrs(magic_calculation.resample_dset, z, resample_npts, True)
             pbar.update()
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-            d = magic_calculation.resample_dset(d, resample_npts, True)
+            d = await ctrs(magic_calculation.resample_dset, d, resample_npts, True)
             pbar.update()
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
             pbar.close()
@@ -698,6 +700,7 @@ class ARDFWindow:
             # Transform data to model units
             f = d * options.k
             delta = z - d
+            ncurves = len(f)
             del z, d
 
             if options.fit_mode == magic_calculation.FitMode.EXTEND:
@@ -715,14 +718,14 @@ class ARDFWindow:
                 "CalcTrueHeight": "nm",  # Hi z -> lo h
                 "CalcIndentationRatio": "",
             }
-            properties = np.empty(
-                len(f), dtype=np.dtype([(name, "f4") for name in property_names_units]),
+            property_map = np.empty(
+                ncurves, dtype=np.dtype([(name, "f4") for name in property_names_units]),
             )
 
             pbar = tqdm_tk(
-                total=len(properties),
+                total=ncurves,
                 desc="Fitting force curves...",
-                smoothing=1 / 20 / 3,
+                smoothing=1 / 150 / 1,
                 unit="fits",
                 mininterval=None,
                 tk_parent=self.tkwindow,
@@ -744,56 +747,57 @@ class ARDFWindow:
                 progress_image.pchanged()
                 self.canvas.draw_idle()
 
-            def calc_properties(i, cancel_poller):
+            def calc_properties(delta, f, options, cancel_poller):
                 """This task has essentially private access to delta, f, and properties
                 so it's totally cool to do this side-effect-full stuff in threads
                 as long as they don't step on each other"""
-                cancel_poller()
-                beta, beta_err, calc_fun = magic_calculation.fitfun(
-                    delta[i, sl],
-                    f[i, sl],
-                    **dataclasses.asdict(options),
-                    cancel_poller=cancel_poller,
-                )
-                cancel_poller()
+                global pool
+                from time import time
 
-                if np.all(np.isfinite(beta)):
-                    deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
-                        f[sl], beta, **dataclasses.asdict(options)
-                    )
-                    properties[i] = (
-                        beta[0],
-                        -beta[1],
-                        deflection,
-                        indentation,
-                        -z_true_surface,
-                        deflection / indentation,
-                    )
-                    color = (0, 1, 0, 0.5)
-                else:
-                    properties[i] = np.nan
-                    color = (1, 0, 0, 0.5)
-                pbar.update()
-                r, c = np.unravel_index(i, img_shape)
-                progress_array[r, c, :] = color
-                trio.from_thread.run_sync(draw_helper)
+                t = time()
+                cancel_poller()
+                if pool is None:
+                    pool = Pool()
+                cancel_poller()
+                pbar.start_t = pbar.last_print_t = pbar._time()
+                for i, properties in pool.imap_unordered(
+                    partial(magic_calculation.calc_properties_imap, **dataclasses.asdict(options),),
+                    zip(delta[:, sl], f[:, sl], np.arange(ncurves)),
+                    chunksize=8,
+                ):
+                    cancel_poller()
 
-            await async_tools.thread_map(
-                calc_properties, range(len(f)), async_tools.make_cancel_poller()
-            )
+                    if np.isfinite(properties[0]):
+                        property_map[i] = properties
+                        color = (0, 1, 0, 0.5)
+                    else:
+                        property_map[i] = np.nan
+                        color = (1, 0, 0, 0.5)
+
+                    pbar.update()
+                    r, c = np.unravel_index(i, img_shape)
+                    progress_array[r, c, :] = color
+                    if time() - t > LONGEST_IMPERCEPTIBLE_DELAY * 40:
+                        trio.from_thread.run_sync(draw_helper)
+                        t = time()
+
+            await ctrs(calc_properties, delta, f, options, async_tools.make_cancel_poller())
             await trio.sleep(0)  # check for race condition cancel at end of pool
 
         progress_image.remove()
+        self.canvas.draw_idle()
         pbar.close()
         if cancel_scope.cancelled_caught:
             return
 
         combobox_values = list(self.image_name_menu.cget("values"))
-        properties = properties.reshape((*img_shape, -1,))
+        property_map = property_map.reshape((*img_shape, -1,))
 
         # Actually write out results to external world
         for name in property_names_units:
-            self.opened_arh5.add_image(name, property_names_units[name], properties[name].squeeze())
+            self.opened_arh5.add_image(
+                name, property_names_units[name], property_map[name].squeeze()
+            )
             combobox_values.append(name)
         self.image_name_menu.configure(
             values=combobox_values, width=max(map(len, combobox_values)) - 1
@@ -1339,5 +1343,7 @@ def main():
         traceback.print_exception(type(exc), exc, exc.__traceback__)
 
 
+pool = None
 if __name__ == "__main__":
+    freeze_support()
     main()
