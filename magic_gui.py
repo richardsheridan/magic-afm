@@ -674,13 +674,15 @@ class ARDFWindow:
             npts = z.shape[-1]
             z = z.reshape((-1, npts))
             d = d.reshape((-1, npts))
+            ncurves = len(z)
 
             resample_npts = 512
             s = s * resample_npts // npts
             pbar = tqdm_tk(
-                total=2,
+                total=2 * ncurves,
                 desc=f"Resampling force curves to {resample_npts} points...",
                 mininterval=None,
+                unit="curves",
                 tk_parent=self.tkwindow,
                 grab=False,
                 leave=False,
@@ -700,7 +702,6 @@ class ARDFWindow:
             # Transform data to model units
             f = d * options.k
             delta = z - d
-            ncurves = len(f)
             del z, d
 
             if options.fit_mode == magic_calculation.FitMode.EXTEND:
@@ -756,30 +757,38 @@ class ARDFWindow:
 
                 t = time()
                 cancel_poller()
-                if pool is None:
+                try:
+                    pool.__enter__()
+                except ValueError:
                     pool = Pool()
                 cancel_poller()
                 pbar.start_t = pbar.last_print_t = pbar._time()
-                for i, properties in pool.imap_unordered(
-                    partial(magic_calculation.calc_properties_imap, **dataclasses.asdict(options),),
-                    zip(delta[:, sl], f[:, sl], np.arange(ncurves)),
-                    chunksize=8,
-                ):
-                    cancel_poller()
+                try:
+                    for i, properties in pool.imap_unordered(
+                        partial(
+                            magic_calculation.calc_properties_imap, **dataclasses.asdict(options),
+                        ),
+                        zip(delta[:, sl], f[:, sl], np.arange(ncurves)),
+                        chunksize=8,
+                    ):
+                        cancel_poller()
 
-                    if np.isfinite(properties[0]):
-                        property_map[i] = properties
-                        color = (0, 1, 0, 0.5)
-                    else:
-                        property_map[i] = np.nan
-                        color = (1, 0, 0, 0.5)
+                        if np.isfinite(properties[0]):
+                            property_map[i] = properties
+                            color = (0, 1, 0, 0.5)
+                        else:
+                            property_map[i] = np.nan
+                            color = (1, 0, 0, 0.5)
 
-                    pbar.update()
-                    r, c = np.unravel_index(i, img_shape)
-                    progress_array[r, c, :] = color
-                    if time() - t > LONGEST_IMPERCEPTIBLE_DELAY * 40:
-                        trio.from_thread.run_sync(draw_helper)
-                        t = time()
+                        pbar.update()
+                        r, c = np.unravel_index(i, img_shape)
+                        progress_array[r, c, :] = color
+                        if time() - t > LONGEST_IMPERCEPTIBLE_DELAY * 40:
+                            trio.from_thread.run_sync(draw_helper)
+                            t = time()
+                except BaseException:
+                    pool.terminate()
+                    raise
 
             await ctrs(calc_properties, delta, f, options, async_tools.make_cancel_poller())
             await trio.sleep(0)  # check for race condition cancel at end of pool
@@ -1343,7 +1352,14 @@ def main():
         traceback.print_exception(type(exc), exc, exc.__traceback__)
 
 
-pool = None
+class FirstPool:
+    """Allows check for existing and open Pool instance in one try"""
+
+    def __enter__(self):
+        raise ValueError()
+
+
+pool = FirstPool()
 if __name__ == "__main__":
     freeze_support()
     main()
