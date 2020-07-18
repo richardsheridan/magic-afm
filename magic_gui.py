@@ -780,8 +780,18 @@ class ARDFWindow:
                     pool.terminate()
                     raise
 
+            def lock_helper():
+                pool_lock.acquire()
+                try:
+                    cancel_poller()
+                except BaseException:
+                    # parent task may have cancelled and early-released long ago
+                    # so do it manually in this function
+                    pool_lock.release()
+                    raise
+
             try:
-                await trs(pool_lock.acquire)
+                await trs(lock_helper)
                 await ctrs(calc_properties)
             finally:
                 pool_lock.release()
