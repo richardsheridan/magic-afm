@@ -753,6 +753,7 @@ class ARDFWindow:
                     pool = Pool()
                 try:
                     cancel_poller()
+                    first = True
                     for i, properties in pool.imap_unordered(
                         partial(
                             magic_calculation.calc_properties_imap, **dataclasses.asdict(options),
@@ -769,6 +770,9 @@ class ARDFWindow:
                             property_map[i] = properties
                             color = (0, 1, 0, 0.5)
 
+                        if first:
+                            pbar.unpause()
+                            first = False
                         pbar.update()
                         r, c = np.unravel_index(i, img_shape)
                         progress_array[r, c, :] = color
@@ -1234,9 +1238,9 @@ async def about_task(root):
     thread_default = tk.StringVar(top)
     thread_default_label = ttk.Label(top, textvariable=thread_default)
     thread_default_label.pack()
-    gc_count = tk.StringVar(top)
-    gc_count_label = ttk.Label(top, textvariable=gc_count)
-    gc_count_label.pack()
+    process = tk.StringVar(top)
+    process_label = ttk.Label(top, textvariable=process)
+    process_label.pack()
     opts = dict(mode="indeterminate", maximum=80, length=300)
     timely_trio_pbar = ttk.Progressbar(top, **opts)
     timely_trio_pbar.pack()
@@ -1271,6 +1275,7 @@ async def about_task(root):
                 "Default threads:"
                 + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
             )
+            process.set("Processes: " + " ".join(repr(pool).split()[1:])[:-1])
             await trio.sleep_until(t + interval / 1000)
 
     # run using tcl event loop
@@ -1362,6 +1367,15 @@ class FirstPool:
 
     def __enter__(self):
         raise ValueError()
+
+    def __repr__(self):
+        return "nothing state=None pool_size=None>"
+
+    class _taskqueue:
+        def qsize(self):
+            return 0
+
+    _inqueue = _taskqueue()
 
 
 pool = FirstPool()
