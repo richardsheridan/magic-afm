@@ -1036,7 +1036,13 @@ async def ardf_converter(filename, root):
     """Convert ARDF file to ARH5"""
     with trio.CancelScope() as cscope:
         pbar = tqdm_tk(
-            tk_parent=root, cancel_callback=cscope.cancel, total=100, unit="%", leave=False
+            tk_parent=root,
+            cancel_callback=cscope.cancel,
+            total=100,
+            unit="%",
+            leave=False,
+            smoothing_time=1,
+            miniters=1,
         )
         filename = await async_tools.convert_ardf(filename, "ARDFtoHDF5.exe", True, pbar)
         async with async_tools.AsyncARH5File(filename) as opened_arh5:
