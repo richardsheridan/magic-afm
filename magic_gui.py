@@ -59,7 +59,7 @@ from matplotlib.image import AxesImage
 from matplotlib.ticker import ScalarFormatter
 from matplotlib.transforms import Bbox, BboxTransform
 from matplotlib.widgets import SubplotTool
-from tqdm import tqdm_gui
+from tqdm.gui import tqdm_tk
 
 import async_tools
 import magic_calculation
@@ -314,155 +314,6 @@ class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
                 )
 
 
-class tqdm_tk(tqdm_gui):
-    monitor_interval = 0
-
-    def __init__(
-        self, *args, cancel_callback=None, grab=False, tk_parent=None, bar_format=None, **kwargs
-    ):
-        kwargs["gui"] = True
-        self._cancel_callback = cancel_callback
-        if tk_parent is None:
-            # this will error if tkinter.NoDefaultRoot() called
-            try:
-                tkparent = tk._default_root
-            except AttributeError:
-                raise ValueError("tk_parent required when using NoDefaultRoot")
-            if tkparent is None:
-                # use new default root window as display
-                self.tk_window = tk.Tk()
-            else:
-                # some other windows already exist
-                self.tk_window = tk.Toplevel()
-        else:
-            self.tk_window = tk.Toplevel(tk_parent)
-        if bar_format is None:
-            kwargs["bar_format"] = (
-                "{n_fmt}/{total_fmt}, {rate_noinv_fmt}\n"
-                "{elapsed} elapsed, {remaining} ETA\n\n"
-                "{percentage:3.0f}%"
-            )
-        super(tqdm_gui, self).__init__(*args, **kwargs)
-
-        if self.disable:
-            return
-
-        self.tk_dispatching = self.tk_dispatching_helper()
-        if not self.tk_dispatching:
-            # leave is problematic if the mainloop is not running
-            self.leave = False
-        self.tk_window.protocol("WM_DELETE_WINDOW", self.cancel)
-        self.tk_window.wm_title("tqdm_tk")
-        self.tk_n_var = tk.DoubleVar(self.tk_window, value=0)
-        self.tk_desc_var = tk.StringVar(self.tk_window)
-        self.tk_desc_var.set(self.desc)
-        self.tk_text_var = tk.StringVar(self.tk_window)
-        pbar_frame = ttk.Frame(self.tk_window, padding=5)
-        pbar_frame.pack()
-        self.tk_desc_frame = ttk.Frame(pbar_frame)
-        self.tk_desc_frame.pack()
-        self.tk_desc_label = None
-        self.tk_label = ttk.Label(
-            pbar_frame,
-            textvariable=self.tk_text_var,
-            wraplength=600,
-            anchor="center",
-            justify="center",
-        )
-        self.tk_label.pack()
-        self.tk_pbar = ttk.Progressbar(pbar_frame, variable=self.tk_n_var, length=450)
-        if self.total is not None:
-            self.tk_pbar.configure(maximum=self.total)
-        else:
-            self.tk_pbar.configure(mode="indeterminate")
-        self.tk_pbar.pack()
-        if self._cancel_callback is not None:
-            self.tk_button = ttk.Button(pbar_frame, text="Cancel", command=self.cancel)
-            self.tk_button.pack()
-        if grab:
-            self.tk_window.grab_set()
-
-    def display(self):
-        self.tk_n_var.set(self.n)
-        if self.desc:
-            if self.tk_desc_label is None:
-                self.tk_desc_label = ttk.Label(
-                    self.tk_desc_frame,
-                    textvariable=self.tk_desc_var,
-                    wraplength=600,
-                    anchor="center",
-                    justify="center",
-                )
-                self.tk_desc_label.pack()
-            self.tk_desc_var.set(self.desc)
-        else:
-            if self.tk_desc_label is not None:
-                self.tk_desc_label.destroy()
-                self.tk_desc_label = None
-        self.tk_text_var.set(
-            self.format_meter(
-                n=self.n,
-                total=self.total,
-                elapsed=self._time() - self.start_t,
-                ncols=None,
-                prefix=self.desc,
-                ascii=self.ascii,
-                unit=self.unit,
-                unit_scale=self.unit_scale,
-                rate=1 / self.avg_time if self.avg_time else None,
-                bar_format=self.bar_format,
-                postfix=self.postfix,
-                unit_divisor=self.unit_divisor,
-            )
-        )
-        if not self.tk_dispatching:
-            self.tk_window.update()
-
-    def cancel(self):
-        if self._cancel_callback is not None:
-            self._cancel_callback()
-        self.close()
-
-    def reset(self, total=None):
-        if total is not None:
-            self.tk_pbar.configure(maximum=total)
-        super().reset(total)
-
-    def close(self):
-        if self.disable:
-            return
-
-        self.disable = True
-
-        with self.get_lock():
-            self._instances.remove(self)
-
-        def _close():
-            self.tk_window.after(0, self.tk_window.destroy)
-            if not self.tk_dispatching:
-                self.tk_window.update()
-
-        self.tk_window.protocol("WM_DELETE_WINDOW", _close)
-        if not self.leave:
-            _close()
-
-    def tk_dispatching_helper(self):
-        try:
-            return self.tk_window.dispatching()
-        except AttributeError:
-            pass
-
-        import tkinter, sys
-
-        codes = {tkinter.mainloop.__code__, tkinter.Misc.mainloop.__code__}
-        for frame in sys._current_frames().values():
-            while frame:
-                if frame.f_code in codes:
-                    return True
-                frame = frame.f_back
-        return False
-
-
 class TkHost:
     def __init__(self, root):
         self.root = root
@@ -671,7 +522,8 @@ class ARDFWindow:
                 total=ncurves,
                 desc="Loading force curves into memory...\n"
                 + f"Resampling to {resample_npts} points...",
-                mininterval=None,
+                smoothing_time=1,
+                mininterval=LONGEST_IMPERCEPTIBLE_DELAY,
                 unit="curves",
                 tk_parent=self.tkwindow,
                 grab=False,
@@ -719,9 +571,9 @@ class ARDFWindow:
             pbar = tqdm_tk(
                 total=ncurves,
                 desc="Fitting force curves...",
-                smoothing=1 / 150 / 1,
+                smoothing_time=1,
                 unit="fits",
-                mininterval=None,
+                mininterval=LONGEST_IMPERCEPTIBLE_DELAY,
                 tk_parent=self.tkwindow,
                 grab=False,
                 leave=False,
