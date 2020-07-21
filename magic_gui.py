@@ -56,7 +56,7 @@ from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 from matplotlib.colorbar import Colorbar
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
-from matplotlib.ticker import ScalarFormatter
+from matplotlib.ticker import EngFormatter
 from matplotlib.transforms import Bbox, BboxTransform
 from matplotlib.widgets import SubplotTool
 from tqdm.gui import tqdm_tk
@@ -414,11 +414,19 @@ class ARDFWindow:
         disp_labelframe = ttk.Labelframe(self.options_frame, text="Force curve display")
         self.disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
         disp_zd_button = ttk.Radiobutton(
-            disp_labelframe, text="d vs. z", value=DispKind.zd.value, variable=self.disp_kind_intvar,padding=4,
+            disp_labelframe,
+            text="d vs. z",
+            value=DispKind.zd.value,
+            variable=self.disp_kind_intvar,
+            padding=4,
         )
         disp_zd_button.pack(side="left")
         disp_deltaf_button = ttk.Radiobutton(
-            disp_labelframe, text="f vs. δ", value=DispKind.δf.value, variable=self.disp_kind_intvar,padding=4,
+            disp_labelframe,
+            text="f vs. δ",
+            value=DispKind.δf.value,
+            variable=self.disp_kind_intvar,
+            padding=4,
         )
         disp_deltaf_button.pack(side="left")
         disp_labelframe.grid(row=0, column=0)
@@ -512,8 +520,6 @@ class ARDFWindow:
         self.set_image_names(self.opened_arh5.image_names)
 
         # change_image_callback stuff
-        self.cb_fmt = ScalarFormatter()
-        self.cb_fmt.set_powerlimits((-2, 2))
         self.colorbar: Optional[Colorbar] = None
         self.axesimage: Optional[AxesImage] = None
 
@@ -739,6 +745,7 @@ class ARDFWindow:
                 picker=True,
                 cmap=cmap,
             )
+            self.img_ax.set_title(image_name)
 
         xmin, xmax, ymin, ymax = self.axesimage.get_extent()
         rows, cols = self.axesimage.get_size()
@@ -753,9 +760,7 @@ class ARDFWindow:
         self.img_ax.set_xlabel("X piezo (nm)")
 
         async with self.canvas.trio_draw_lock:
-            self.colorbar = self.fig.colorbar(
-                self.axesimage, ax=self.img_ax, use_gridspec=True, format=self.cb_fmt
-            )
+            self.colorbar = self.fig.colorbar(self.axesimage, ax=self.img_ax, use_gridspec=True,)
             self.navbar.update()  # let navbar catch new cax in fig
             self.customize_colorbar()
 
@@ -764,7 +769,6 @@ class ARDFWindow:
 
     def customize_colorbar(self, clim=None):
         """MPL keeps stomping on our settings so reset EVERYTHING"""
-        self.colorbar.formatter = self.cb_fmt
         self.colorbar.ax.set_navigate(True)
         self.colorbar.solids.set_picker(True)
         self.label_colorbar()
@@ -775,9 +779,10 @@ class ARDFWindow:
     def label_colorbar(self):
         """Surprisingly needed often"""
         image_name = self.image_name_strvar.get()
-        self.colorbar.ax.set_ylabel(
-            image_name + " (" + self.opened_arh5.get_image_units(image_name) + ")"
+        self.colorbar.formatter = EngFormatter(
+            self.opened_arh5.get_image_units(image_name), places=1
         )
+        self.colorbar.update_ticks()
 
     def data_coords_to_array_index(self, x, y):
         return self.trans.transform_point([y, x]).round().astype(int)  # row, column
@@ -854,6 +859,10 @@ class ARDFWindow:
                     )
                 )
                 if options.fit_mode:
+                    exp = np.log10(data.beta[0])
+                    prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get(
+                        (-exp + 2.7) // 3, ""
+                    )
                     table = await ctrs(
                         partial(
                             self.plot_ax.table,
@@ -867,8 +876,15 @@ class ARDFWindow:
                                 ],
                             ],
                             loc="top",
-                            colLabels=["$M$ (GPa)", "$F_{adh}$ (nN)", "d (nm)", "δ (nm)", "d/δ"],
-                            colLoc="center",
+                            colLabels=[
+                                f"$M$ ({prefix}Pa)",
+                                "$F_{adh}$ (nN)",
+                                "d (nm)",
+                                "δ (nm)",
+                                "d/δ",
+                            ],
+                            colWidths=[0.6 / 2, 0.6 / 2, 0.4 / 3, 0.4 / 3, 0.4 / 3],
+                            colLoc="right",
                         )
                     )
 
