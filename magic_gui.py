@@ -5,7 +5,8 @@ __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
 import sys
-if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     from _version import __version__
 else:
     import make_version
@@ -589,7 +590,7 @@ class ForceVolumeWindow:
                 desc="Loading and resampling force curves...",
                 smoothing_time=1,
                 mininterval=LONGEST_IMPERCEPTIBLE_DELAY,
-                unit="curves",
+                unit=" curves",
                 tk_parent=self.tkwindow,
                 grab=False,
                 leave=False,
@@ -611,7 +612,6 @@ class ForceVolumeWindow:
                 pbar.update(1)
 
             await async_tools.thread_map(resample_helper, range(ncurves))
-            pbar.close()
 
             if options.fit_mode == magic_calculation.FitMode.EXTEND:
                 sl = slice(s)
@@ -632,18 +632,10 @@ class ForceVolumeWindow:
                 ncurves, dtype=np.dtype([(name, "f4") for name in property_names_units]),
             )
 
-            pbar = tqdm_tk(
-                total=ncurves,
-                desc="Fitting force curves...",
-                smoothing_time=1,
-                unit="fits",
-                mininterval=LONGEST_IMPERCEPTIBLE_DELAY,
-                tk_parent=self.tkwindow,
-                grab=False,
-                leave=False,
-                cancel_callback=cancel_scope.cancel,
-            )
-            pbar.update(0)
+            pbar.set_description_str("Fitting force curves...")
+            pbar.unit = " fits"
+            pbar.avg_time = None
+            pbar.reset(total=ncurves)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
             progress_array = progress_image.get_array()
             cancel_poller = async_tools.make_cancel_poller()
