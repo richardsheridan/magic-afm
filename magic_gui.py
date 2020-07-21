@@ -731,7 +731,8 @@ class ForceVolumeWindow:
             self.opened_fvol.add_image(
                 name, property_names_units[name], property_map[name].squeeze()
             )
-            combobox_values.append(name)
+            if name not in combobox_values:
+                combobox_values.append(name)
         self.image_name_menu.configure(
             values=combobox_values, width=max(map(len, combobox_values)) - 1
         )
