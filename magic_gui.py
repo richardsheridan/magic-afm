@@ -16,7 +16,7 @@ except ImportError:
 import datetime
 
 __short_license__ = f"""{__app_name__} {__version__}
-Copyright (C) {datetime.datetime.now().year} {__author__}
+Copyright (C) 2020-{datetime.datetime.now().year} {__author__}
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
