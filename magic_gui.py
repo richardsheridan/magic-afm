@@ -112,8 +112,8 @@ class ForceCurveOptions:
     fit_mode: magic_calculation.FitMode
     disp_kind: DispKind
     k: float
-    radius: float = 20
-    tau: float = 0
+    radius: float
+    tau: float
 
 
 @dataclasses.dataclass
@@ -409,7 +409,7 @@ class ARDFWindow:
         self.colormap_menu.pack(fill="x")
         colormap_labelframe.pack(fill="x")
 
-        image_opts_frame.grid(row=0, column=0)
+        image_opts_frame.grid(row=0, column=0, rowspan=2)
 
         disp_labelframe = ttk.Labelframe(self.options_frame, text="Display type")
         self.disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
@@ -423,7 +423,7 @@ class ARDFWindow:
         disp_deltaf_button.pack(side="left")
         disp_labelframe.grid(row=0, column=1)
 
-        fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit type")
+        fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
         self.fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FitMode.SKIP.value)
         fit_skip_button = ttk.Radiobutton(
             fit_labelframe,
@@ -446,11 +446,42 @@ class ARDFWindow:
             variable=self.fit_intvar,
         )
         fit_ret_button.grid(row=0, column=2)
+
+        fit_radius_label = ttk.Label(fit_labelframe, text="Radius (nm)")
+        fit_radius_label.grid(row=1, column=0, columnspan=2, sticky="W")
+        self.fit_radius_sbox = ttk.Spinbox(
+            fit_labelframe,
+            from_=1,
+            to=10000,
+            increment=0.1,
+            format="%0.1f",
+            width=6,
+            validate="all",
+            validatecommand="string is double -strict %S",
+            invalidcommand="%W set %s",
+        )
+        self.fit_radius_sbox.set(20.0)
+        self.fit_radius_sbox.grid(row=1, column=2, sticky="W")
+        fit_tau_label = ttk.Label(fit_labelframe, text="DMT-JKR (0-1)", justify="left")
+        fit_tau_label.grid(row=2, column=0, columnspan=2, sticky="W")
+        self.fit_tau_sbox = ttk.Spinbox(
+            fit_labelframe,
+            from_=0,
+            to=1,
+            increment=0.05,
+            format="%0.2f",
+            width=6,
+            validatecommand="string is double -strict %S",
+            invalidcommand="%W set %s",
+        )
+        self.fit_tau_sbox.set(0.0)
+        self.fit_tau_sbox.grid(row=2, column=2, sticky="E")
+
         self.calc_props_button = ttk.Button(
             fit_labelframe, text="Calculate Property Maps", state="disabled"
         )
-        self.calc_props_button.grid(row=1, column=0, columnspan=3)
-        fit_labelframe.grid(row=0, column=2)
+        self.calc_props_button.grid(row=3, column=0, columnspan=3)
+        fit_labelframe.grid(row=0, column=2, rowspan=2)
 
         self.options_frame.grid(row=1, column=0, sticky="nsew")
 
@@ -504,6 +535,8 @@ class ARDFWindow:
             fit_mode=self.fit_intvar.get(),
             disp_kind=self.disp_kind_intvar.get(),
             k=self.opened_arh5.params["k"],
+            radius=float(self.fit_radius_sbox.get()),
+            tau=float(self.fit_tau_sbox.get()),
         )
         img_shape = self.opened_arh5.shape
         ncurves = img_shape[0] * img_shape[1]
@@ -764,6 +797,8 @@ class ARDFWindow:
             fit_mode=self.fit_intvar.get(),
             disp_kind=self.disp_kind_intvar.get(),
             k=self.opened_arh5.params["k"],
+            radius=float(self.fit_radius_sbox.get()),
+            tau=float(self.fit_tau_sbox.get()),
         )
 
         # Calculation phase
