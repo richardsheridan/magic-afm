@@ -409,19 +409,19 @@ class ARDFWindow:
         self.colormap_menu.pack(fill="x")
         colormap_labelframe.pack(fill="x")
 
-        image_opts_frame.grid(row=0, column=0, rowspan=2)
+        image_opts_frame.grid(row=1, column=0, rowspan=2)
 
-        disp_labelframe = ttk.Labelframe(self.options_frame, text="Display type")
+        disp_labelframe = ttk.Labelframe(self.options_frame, text="Force curve display")
         self.disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
         disp_zd_button = ttk.Radiobutton(
-            disp_labelframe, text="z/d", value=DispKind.zd.value, variable=self.disp_kind_intvar
+            disp_labelframe, text="d vs. z", value=DispKind.zd.value, variable=self.disp_kind_intvar,padding=4,
         )
         disp_zd_button.pack(side="left")
         disp_deltaf_button = ttk.Radiobutton(
-            disp_labelframe, text="δ/f", value=DispKind.δf.value, variable=self.disp_kind_intvar
+            disp_labelframe, text="f vs. δ", value=DispKind.δf.value, variable=self.disp_kind_intvar,padding=4,
         )
         disp_deltaf_button.pack(side="left")
-        disp_labelframe.grid(row=0, column=1)
+        disp_labelframe.grid(row=0, column=0)
 
         fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
         self.fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FitMode.SKIP.value)
@@ -481,7 +481,7 @@ class ARDFWindow:
             fit_labelframe, text="Calculate Property Maps", state="disabled"
         )
         self.calc_props_button.grid(row=3, column=0, columnspan=3)
-        fit_labelframe.grid(row=0, column=2, rowspan=2)
+        fit_labelframe.grid(row=0, column=1, rowspan=3)
 
         self.options_frame.grid(row=1, column=0, sticky="nsew")
 
