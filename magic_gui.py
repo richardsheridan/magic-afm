@@ -4,12 +4,14 @@
 __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
-try:
+import sys
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
     from _version import __version__
-except ImportError:
+else:
     import make_version
 
     __version__ = make_version.get()
+
 import datetime
 
 __short_license__ = f"""{__app_name__} {__version__}
