@@ -555,11 +555,11 @@ def calc_properties_imap(delta_f_i, **kwargs):
     if np.all(np.isfinite(beta)):
         (deflection, indentation, z_true_surface,) = calc_def_ind_ztru(f, beta, **kwargs)
         properties = (
-            beta[0],
-            -beta[1],
-            deflection,
-            indentation,
-            -z_true_surface,
+            beta[0]*1e9,
+            -beta[1]/1e9,
+            deflection/1e9,
+            indentation/1e9,
+            -z_true_surface/1e9,
             deflection / indentation,
         )
     else:

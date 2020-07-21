@@ -595,11 +595,11 @@ class ARDFWindow:
                 raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
             property_names_units = {
-                "CalcIndentationModulus": "GPa",
-                "CalcAdhesionForce": "nN",
-                "CalcDeflection": "nm",
-                "CalcIndentation": "nm",
-                "CalcTrueHeight": "nm",  # Hi z -> lo h
+                "CalcIndentationModulus": "Pa",
+                "CalcAdhesionForce": "N",
+                "CalcDeflection": "m",
+                "CalcIndentation": "m",
+                "CalcTrueHeight": "m",  # Hi z -> lo h
                 "CalcIndentationRatio": "",
             }
             property_map = np.empty(
