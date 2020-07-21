@@ -4,9 +4,6 @@
 __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
-import os
-import threading
-
 try:
     from _version import __version__
 except ImportError:
@@ -41,8 +38,7 @@ from functools import partial, wraps
 from tkinter import ttk, filedialog
 from typing import Optional, Callable
 from multiprocessing import Pool, freeze_support
-
-Pool = partial(Pool, os.cpu_count())
+import threading
 
 import matplotlib
 import numpy as np
@@ -53,6 +49,7 @@ from matplotlib.backend_bases import MouseButton
 from matplotlib.backends._backend_tk import FigureCanvasTk, blit as tk_blit
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+from matplotlib.contour import ContourSet
 from matplotlib.colorbar import Colorbar
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
@@ -142,6 +139,36 @@ class ImagePoint:
     x: float
     y: float
 
+    @staticmethod
+    def construct_transforms(axesimage):
+        xmin, xmax, ymin, ymax = axesimage.get_extent()
+        rows, cols = axesimage.get_size()
+        if axesimage.origin == "upper":
+            ymin, ymax = ymax, ymin
+        data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
+        array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
+        trans = BboxTransform(boxin=data_extent, boxout=array_extent)
+        invtrans = trans.inverted()
+
+        def data_coords_to_array_index(x, y):
+            return trans.transform_point([y, x]).round().astype(int)
+
+        def array_index_to_data_coords(r, c):
+            return invtrans.transform_point([r, c])[::-1]
+
+        return data_coords_to_array_index, array_index_to_data_coords
+
+    @classmethod
+    def from_index(cls, r, c, transforms):
+        return cls(r, c, *transforms[1](r, c))
+
+    @classmethod
+    def from_data(cls, x, y, transforms):
+        r, c = transforms[0](x, y)
+        # center x, y
+        x, y = transforms[1](r, c)
+        return cls(r, c, x, y)
+
 
 class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
@@ -193,7 +220,6 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         self._tkcanvas.focus_set()
 
     def draw_idle(self):
-        assert self._idle_task_running, "start idle_draw_task first"
         self._trio_draw_event.set()
 
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
@@ -310,7 +336,7 @@ class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
             if image_name.startswith("Calc"):
                 exporter_map.get(ext, imageio.imwrite)(
                     root + "_" + image_name[4:] + ext,
-                    await self.window._host.opened_arh5.get_image(image_name),
+                    await self.window._host.opened_fvol.get_image(image_name),
                 )
 
 
@@ -362,13 +388,13 @@ def impartial(fn):
     return impartial_wrapper
 
 
-class ARDFWindow:
+class ForceVolumeWindow:
     default_figsize = (9, 2.75)
 
-    def __init__(self, root, opened_arh5, figsize=default_figsize, **kwargs):
-        self.opened_arh5 = opened_arh5
+    def __init__(self, root, opened_fvol, figsize=default_figsize, **kwargs):
+        self.opened_fvol = opened_fvol
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
-        window.wm_title(self.opened_arh5.h5file_path.name)
+        window.wm_title(self.opened_fvol.h5file_path.name)
         window._host = self
 
         # Build figure
@@ -378,7 +404,7 @@ class ARDFWindow:
         self.img_ax, self.plot_ax = img_ax, plot_ax = self.fig.subplots(
             1, 2, gridspec_kw=dict(width_ratios=[1, 1.5])
         )
-        self.fig.subplots_adjust(top=.85)
+        self.fig.subplots_adjust(top=0.85)
         img_ax.set_anchor("W")
         img_ax.set_facecolor((0.8, 0, 0))  # scary red for NaN values of images
         # Need to pre-load something into these labels for change_image_callback->tight_layout
@@ -518,7 +544,10 @@ class ARDFWindow:
         window.grid_columnconfigure(1, weight=0)
 
         # Finalize pure ARDFWindow stuff
-        self.set_image_names(self.opened_arh5.image_names)
+        self.image_name_menu.configure(
+            values=list(self.opened_fvol.image_names),
+            width=max(map(len, self.opened_fvol.image_names)) - 1,
+        )
 
         # change_image_callback stuff
         self.colorbar: Optional[Colorbar] = None
@@ -532,20 +561,15 @@ class ARDFWindow:
         # mpl_resize_event_callback
         self.resize_cancels_pending = set()
 
-    def set_image_names(self, image_names):
-        self.image_name_menu.configure(
-            values=list(image_names), width=max(map(len, image_names)) - 1
-        )
-
-    async def arh5_prop_map_callback(self):
+    async def calc_prop_map_callback(self):
         options = ForceCurveOptions(
             fit_mode=self.fit_intvar.get(),
             disp_kind=self.disp_kind_intvar.get(),
-            k=self.opened_arh5.params["k"],
+            k=self.opened_fvol.params["k"],
             radius=float(self.fit_radius_sbox.get()),
             tau=float(self.fit_tau_sbox.get()),
         )
-        img_shape = self.opened_arh5.shape
+        img_shape = self.opened_fvol.shape
         ncurves = img_shape[0] * img_shape[1]
         resample_npts = 512
         if not options.fit_mode:
@@ -555,7 +579,7 @@ class ARDFWindow:
             np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
         )
         async with self.spinner_scope() as cancel_scope:
-            _, _, s = await self.opened_arh5.get_force_curve(0, 0)
+            _, _, s = await self.opened_fvol.get_force_curve(0, 0)
             npts = len(_)
             s = s * resample_npts // npts
             pbar = tqdm_tk(
@@ -577,7 +601,7 @@ class ARDFWindow:
 
             def resample_helper(i):
                 r, c = np.unravel_index(i, img_shape)
-                z, d, _ = self.opened_arh5._worker.get_force_curve(r, c)
+                z, d, _ = self.opened_fvol._worker.get_force_curve(r, c)
                 z = magic_calculation.resample_dset(z, resample_npts, True)
                 d = magic_calculation.resample_dset(d, resample_npts, True)
                 delta[i, :] = z - d
@@ -702,7 +726,7 @@ class ARDFWindow:
 
         # Actually write out results to external world
         for name in property_names_units:
-            self.opened_arh5.add_image(
+            self.opened_fvol.add_image(
                 name, property_names_units[name], property_map[name].squeeze()
             )
             combobox_values.append(name)
@@ -720,13 +744,15 @@ class ARDFWindow:
             # actually change cmap
             self.axesimage.set_cmap(colormap_name)
             # reset everything
-            self.customize_colorbar(clim)
+            customize_colorbar(self.colorbar, self.unit, clim)
             self.canvas.draw_idle()
 
     async def change_image_callback(self):
         image_name = self.image_name_strvar.get()
         cmap = self.colormap_strvar.get()
-        image_array = await self.opened_arh5.get_image(image_name)
+        image_array = await self.opened_fvol.get_image(image_name)
+        clim = np.nanquantile(image_array, [0.01, 0.99])
+        self.unit = self.opened_fvol.get_image_units(image_name)
         self.image_min = float(np.nanmin(image_array))
         self.image_max = float(np.nanmax(image_array))
 
@@ -735,62 +761,41 @@ class ARDFWindow:
         if self.axesimage is not None:
             self.axesimage.remove()
 
-        scansize = self.opened_arh5.params["scansize"]
+        scansize = self.opened_fvol.params["scansize"]
         s = (scansize + scansize / len(image_array)) // 2
 
         async with self.canvas.trio_draw_lock:
+            self.img_ax.set_title(image_name)
+            self.img_ax.set_ylabel("Y piezo (nm)")
+            self.img_ax.set_xlabel("X piezo (nm)")
+
             self.axesimage = self.img_ax.imshow(
                 image_array,
-                origin="lower" if self.opened_arh5.scandown else "upper",
+                origin="lower" if self.opened_fvol.scandown else "upper",
                 extent=(-s, s, -s, s,),
                 picker=True,
                 cmap=cmap,
             )
-            self.img_ax.set_title(image_name)
 
-            xmin, xmax, ymin, ymax = self.axesimage.get_extent()
-            rows, cols = self.axesimage.get_size()
-            if self.axesimage.origin == "upper":
-                ymin, ymax = ymax, ymin
-            data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
-            array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
-            self.trans = BboxTransform(boxin=data_extent, boxout=array_extent)
-            self.invtrans = self.trans.inverted()
-
-            self.img_ax.set_ylabel("Y piezo (nm)")
-            self.img_ax.set_xlabel("X piezo (nm)")
+            self.transforms = ImagePoint.construct_transforms(self.axesimage)
 
             self.colorbar = self.fig.colorbar(self.axesimage, ax=self.img_ax, use_gridspec=True,)
             self.navbar.update()  # let navbar catch new cax in fig
-            self.customize_colorbar()
+            customize_colorbar(self.colorbar, self.unit, clim)
             self.fig.tight_layout()
             self.canvas.draw_idle()
 
-    def customize_colorbar(self, clim=None):
-        """MPL keeps stomping on our settings so reset EVERYTHING"""
-        self.colorbar.ax.set_navigate(True)
-        self.colorbar.solids.set_picker(True)
-        self.label_colorbar()
-        if clim is None:
-            clim = np.nanquantile(self.axesimage.get_array().data, [0.01, 0.99])
-        self.colorbar.solids.set_clim(*clim)
+    def freeze_colorbar_response(self):
+        self.colorbar.draw_all()
 
-    def label_colorbar(self):
-        """Surprisingly needed often"""
-        image_name = self.image_name_strvar.get()
-        self.colorbar.formatter = EngFormatter(
-            self.opened_arh5.get_image_units(image_name), places=1
-        )
-        self.colorbar.update_ticks()
+        if isinstance(self.colorbar.mappable, ContourSet):
+            CS = self.colorbar.mappable
+            if not CS.filled:
+                self.colorbar.add_lines(CS)
+        self.colorbar.stale = True
+        self.canvas.draw_idle()
 
-    def data_coords_to_array_index(self, x, y):
-        return self.trans.transform_point([y, x]).round().astype(int)  # row, column
-
-    def array_index_to_data_coords(self, r, c):
-        y, x = self.invtrans.transform_point([r, c])  # row, column
-        return x, y
-
-    async def plot_curve_event_response(self, point: ImagePoint, shift_held):
+    async def plot_curve_response(self, point: ImagePoint, shift_held):
         if shift_held and point in self.existing_points:
             return
         self.existing_points.add(point)  # should be before 1st await
@@ -800,7 +805,7 @@ class ARDFWindow:
         options = ForceCurveOptions(
             fit_mode=self.fit_intvar.get(),
             disp_kind=self.disp_kind_intvar.get(),
-            k=self.opened_arh5.params["k"],
+            k=self.opened_fvol.params["k"],
             radius=float(self.fit_radius_sbox.get()),
             tau=float(self.fit_tau_sbox.get()),
         )
@@ -814,7 +819,7 @@ class ARDFWindow:
         async with self.spinner_scope():
             with trio.CancelScope() as cancel_scope:
                 self.cancels_pending.add(cancel_scope)
-                force_curve = await self.opened_arh5.get_force_curve(point.r, point.c)
+                force_curve = await self.opened_fvol.get_force_curve(point.r, point.c)
                 data = await ctrs(
                     calculate_force_data, *force_curve, options, async_tools.make_cancel_poller()
                 )
@@ -858,43 +863,9 @@ class ARDFWindow:
                     )
                 )
                 if options.fit_mode:
-                    table = await trs(self.data_table_helper, data)
+                    table = await trs(draw_data_table, data, self.plot_ax,)
                     self.artists.append(table)
                 self.canvas.draw_idle()
-
-    def data_table_helper(self, data):
-        exp = np.log10(data.beta[0])
-        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get((-exp + 2.7) // 3, "")
-        table = self.plot_ax.table(
-            [
-                [
-                    "{:.2f}±{:.2f}".format(data.beta[0], data.beta_err[0],),
-                    "{:.2f}±{:.2f}".format(-data.beta[1], -data.beta_err[1]),
-                    "{:.2f}".format(data.defl),
-                    "{:.2f}".format(data.ind),
-                    "{:.2f}".format(data.defl / data.ind),
-                ],
-            ],
-            loc="top",
-            colLabels=[f"$M$ ({prefix}Pa)", "$F_{adh}$ (nN)", "d (nm)", "δ (nm)", "d/δ",],
-            colWidths=[0.6 / 2, 0.6 / 2, 0.4 / 3, 0.4 / 3, 0.4 / 3],
-            colLoc="right",
-        )
-        table.auto_set_font_size(False)
-        table.set_fontsize(9)
-        return table
-
-    def freeze_colorbar_response(self):
-        self.colorbar.draw_all()
-        from matplotlib.contour import ContourSet
-
-        if isinstance(self.colorbar.mappable, ContourSet):
-            CS = self.colorbar.mappable
-            if not CS.filled:
-                self.colorbar.add_lines(CS)
-        self.colorbar.stale = True
-        self.label_colorbar()
-        self.canvas.draw_idle()
 
     async def mpl_pick_motion_event_callback(self, event):
         mouseevent = getattr(event, "mouseevent", event)
@@ -907,17 +878,16 @@ class ARDFWindow:
         elif mouseevent.inaxes is self.img_ax:
             if mouseevent.button != MouseButton.LEFT:
                 return
-            r, c = self.data_coords_to_array_index(mouseevent.xdata, mouseevent.ydata)
-            x, y = self.array_index_to_data_coords(r, c)
-            point = ImagePoint(r, c, x, y)
-            await self.plot_curve_event_response(point, shift_held)
+            point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, self.transforms)
+            await self.plot_curve_response(point, shift_held)
         elif mouseevent.inaxes is self.colorbar.ax:
-            if mouseevent.button == MouseButton.LEFT:
+            if mouseevent.button == MouseButton.MIDDLE:
+                self.freeze_colorbar_response()
+                return
+            elif mouseevent.button == MouseButton.LEFT:
                 self.colorbar.norm.vmax = max(mouseevent.ydata, self.colorbar.norm.vmin)
             elif mouseevent.button == MouseButton.RIGHT:
                 self.colorbar.norm.vmin = min(mouseevent.ydata, self.colorbar.norm.vmax)
-            elif mouseevent.button == MouseButton.MIDDLE:
-                self.freeze_colorbar_response()
             else:
                 return
             # Adjust colorbar scale
@@ -935,16 +905,8 @@ class ARDFWindow:
                 await trs(self.fig.tight_layout, cancellable=False)
         self.resize_cancels_pending.discard(cancel_scope)
 
-    def spinner_start(self):
-        self.tkwindow.configure(cursor="watch")
-        self.options_frame.configure(cursor="watch")
-
-    def spinner_stop(self):
-        self.tkwindow.configure(cursor="arrow")
-        self.options_frame.configure(cursor="arrow")
-
-    async def arh5_task(self):
-
+    async def window_task(self):
+        nursery: trio.Nursery
         async with trio.open_nursery() as nursery:
             self.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
             self.canvas.mpl_connect(
@@ -971,16 +933,25 @@ class ARDFWindow:
             # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
             # due to resize, but let's not rely on that!
             for name in ("MapHeight", "ZSensorTrace"):
-                if name in self.opened_arh5.image_names:
+                if name in self.opened_fvol.image_names:
                     self.image_name_strvar.set(name)
                     break
 
             self.navbar.teach_navbar_to_use_trio(nursery)
             self.calc_props_button.configure(
-                command=partial(nursery.start_soon, self.arh5_prop_map_callback,)
+                command=partial(nursery.start_soon, self.calc_prop_map_callback,)
             )
+
+            def spinner_start():
+                self.tkwindow.configure(cursor="watch")
+                self.options_frame.configure(cursor="watch")
+
+            def spinner_stop():
+                self.tkwindow.configure(cursor="arrow")
+                self.options_frame.configure(cursor="arrow")
+
             self.spinner_scope = await nursery.start(
-                async_tools.spinner_task, self.spinner_start, self.spinner_stop,
+                async_tools.spinner_task, spinner_start, spinner_stop,
             )
             await trio.sleep_forever()
 
@@ -988,6 +959,38 @@ class ARDFWindow:
         self.options_frame.destroy()
         self.tkwindow.withdraw()  # weird navbar hiccup on close
         self.tkwindow.destroy()
+
+
+def customize_colorbar(colorbar, unit, clim):
+    """MPL keeps stomping on our settings so reset EVERYTHING"""
+    colorbar.ax.set_navigate(True)
+    colorbar.solids.set_picker(True)
+    colorbar.formatter = EngFormatter(unit, places=1)
+    colorbar.update_ticks()
+    colorbar.solids.set_clim(*clim)
+
+
+def draw_data_table(data, ax):
+    exp = np.log10(data.beta[0])
+    prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get((-exp + 2.7) // 3, "")
+    table = ax.table(
+        [
+            [
+                "{:.2f}±{:.2f}".format(data.beta[0], data.beta_err[0],),
+                "{:.2f}±{:.2f}".format(-data.beta[1], -data.beta_err[1]),
+                "{:.2f}".format(data.defl),
+                "{:.2f}".format(data.ind),
+                "{:.2f}".format(data.defl / data.ind),
+            ],
+        ],
+        loc="top",
+        colLabels=[f"$M$ ({prefix}Pa)", "$F_{adh}$ (nN)", "d (nm)", "δ (nm)", "d/δ",],
+        colWidths=[0.6 / 2, 0.6 / 2, 0.4 / 3, 0.4 / 3, 0.4 / 3],
+        colLoc="right",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    return table
 
 
 def draw_force_curve(data, plot_ax, options):
@@ -1084,8 +1087,8 @@ async def ardf_converter(filename, root):
         )
         filename = await async_tools.convert_ardf(filename, "ARDFtoHDF5.exe", True, pbar)
         async with async_tools.AsyncARH5File(filename) as opened_arh5:
-            window = ARDFWindow(root, opened_arh5)
-            await window.arh5_task()
+            window = await trs(ForceVolumeWindow, root, opened_arh5)
+            await window.window_task()
 
 
 async def open_callback(root):
@@ -1110,8 +1113,8 @@ async def open_callback(root):
         await ardf_converter(filename, root)
     elif suffix == ".h5":
         async with async_tools.AsyncARH5File(filename) as opened_arh5:
-            window = ARDFWindow(root, opened_arh5)
-            await window.arh5_task()
+            window = await trs(ForceVolumeWindow, root, opened_arh5)
+            await window.window_task()
     else:
         raise ValueError("Unknown filename suffix: ", suffix)
 
