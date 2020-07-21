@@ -520,8 +520,7 @@ class ARDFWindow:
             s = s * resample_npts // npts
             pbar = tqdm_tk(
                 total=ncurves,
-                desc="Loading force curves into memory...\n"
-                + f"Resampling to {resample_npts} points...",
+                desc="Loading and resampling force curves...",
                 smoothing_time=1,
                 mininterval=LONGEST_IMPERCEPTIBLE_DELAY,
                 unit="curves",
@@ -530,7 +529,6 @@ class ARDFWindow:
                 leave=False,
                 cancel_callback=cancel_scope.cancel,
             )
-            pbar.tk_window.wm_title("Calculating...")
             pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
 
@@ -579,7 +577,6 @@ class ARDFWindow:
                 leave=False,
                 cancel_callback=cancel_scope.cancel,
             )
-            pbar.tk_window.wm_title("Calculating...")
             pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
             progress_array = progress_image.get_array()
