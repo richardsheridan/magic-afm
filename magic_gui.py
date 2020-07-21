@@ -378,6 +378,7 @@ class ARDFWindow:
         self.img_ax, self.plot_ax = img_ax, plot_ax = self.fig.subplots(
             1, 2, gridspec_kw=dict(width_ratios=[1, 1.5])
         )
+        self.fig.subplots_adjust(top=.85)
         img_ax.set_anchor("W")
         img_ax.set_facecolor((0.8, 0, 0))  # scary red for NaN values of images
         # Need to pre-load something into these labels for change_image_callback->tight_layout
@@ -859,40 +860,31 @@ class ARDFWindow:
                     )
                 )
                 if options.fit_mode:
-                    exp = np.log10(data.beta[0])
-                    prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get(
-                        (-exp + 2.7) // 3, ""
-                    )
-                    table = await ctrs(
-                        partial(
-                            self.plot_ax.table,
-                            [
-                                [
-                                    "{:.2f}±{:.2f}".format(data.beta[0], data.beta_err[0],),
-                                    "{:.2f}±{:.2f}".format(-data.beta[1], -data.beta_err[1]),
-                                    "{:.2f}".format(data.defl),
-                                    "{:.2f}".format(data.ind),
-                                    "{:.2f}".format(data.defl / data.ind),
-                                ],
-                            ],
-                            loc="top",
-                            colLabels=[
-                                f"$M$ ({prefix}Pa)",
-                                "$F_{adh}$ (nN)",
-                                "d (nm)",
-                                "δ (nm)",
-                                "d/δ",
-                            ],
-                            colWidths=[0.6 / 2, 0.6 / 2, 0.4 / 3, 0.4 / 3, 0.4 / 3],
-                            colLoc="right",
-                        )
-                    )
-
-                    table.auto_set_font_size(False)
-                    table.set_fontsize(9)
+                    table = await trs(self.data_table_helper, data)
                     self.artists.append(table)
-                    await trs(partial(self.fig.subplots_adjust, top=0.85))
                 self.canvas.draw_idle()
+
+    def data_table_helper(self, data):
+        exp = np.log10(data.beta[0])
+        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get((-exp + 2.7) // 3, "")
+        table = self.plot_ax.table(
+            [
+                [
+                    "{:.2f}±{:.2f}".format(data.beta[0], data.beta_err[0],),
+                    "{:.2f}±{:.2f}".format(-data.beta[1], -data.beta_err[1]),
+                    "{:.2f}".format(data.defl),
+                    "{:.2f}".format(data.ind),
+                    "{:.2f}".format(data.defl / data.ind),
+                ],
+            ],
+            loc="top",
+            colLabels=[f"$M$ ({prefix}Pa)", "$F_{adh}$ (nN)", "d (nm)", "δ (nm)", "d/δ",],
+            colWidths=[0.6 / 2, 0.6 / 2, 0.4 / 3, 0.4 / 3, 0.4 / 3],
+            colLoc="right",
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        return table
 
     def freeze_colorbar_response(self):
         self.colorbar.draw_all()
