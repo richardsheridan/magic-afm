@@ -748,23 +748,21 @@ class ARDFWindow:
             )
             self.img_ax.set_title(image_name)
 
-        xmin, xmax, ymin, ymax = self.axesimage.get_extent()
-        rows, cols = self.axesimage.get_size()
-        if self.axesimage.origin == "upper":
-            ymin, ymax = ymax, ymin
-        data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
-        array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
-        self.trans = BboxTransform(boxin=data_extent, boxout=array_extent)
-        self.invtrans = self.trans.inverted()
+            xmin, xmax, ymin, ymax = self.axesimage.get_extent()
+            rows, cols = self.axesimage.get_size()
+            if self.axesimage.origin == "upper":
+                ymin, ymax = ymax, ymin
+            data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
+            array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
+            self.trans = BboxTransform(boxin=data_extent, boxout=array_extent)
+            self.invtrans = self.trans.inverted()
 
-        self.img_ax.set_ylabel("Y piezo (nm)")
-        self.img_ax.set_xlabel("X piezo (nm)")
+            self.img_ax.set_ylabel("Y piezo (nm)")
+            self.img_ax.set_xlabel("X piezo (nm)")
 
-        async with self.canvas.trio_draw_lock:
             self.colorbar = self.fig.colorbar(self.axesimage, ax=self.img_ax, use_gridspec=True,)
             self.navbar.update()  # let navbar catch new cax in fig
             self.customize_colorbar()
-
             self.fig.tight_layout()
             self.canvas.draw_idle()
 
