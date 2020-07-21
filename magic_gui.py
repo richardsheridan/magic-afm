@@ -592,9 +592,9 @@ class ARDFWindow:
                 so it's totally cool to do this side-effect-full stuff in threads
                 as long as they don't step on each other"""
                 global pool
-                from time import time
+                from time import perf_counter
 
-                t = time()
+                t = perf_counter()
                 cancel_poller()
                 try:
                     pool.__enter__()
@@ -625,10 +625,10 @@ class ARDFWindow:
                         pbar.update()
                         r, c = np.unravel_index(i, img_shape)
                         progress_array[r, c, :] = color
-                        if time() - t > LONGEST_IMPERCEPTIBLE_DELAY * 40:
+                        if perf_counter() - t >= 0.5:
                             # This can be the rate-limiting step so run infrequently
                             trio.from_thread.run_sync(draw_helper)
-                            t = time()
+                            t = perf_counter()
                 except BaseException:
                     pool.terminate()
                     raise
