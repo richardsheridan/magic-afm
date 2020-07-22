@@ -238,7 +238,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
                 await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
                 async with self.trio_draw_lock:
                     self._trio_draw_event = trio.Event()
-                    await trs(super().draw, cancellable=False)
+                    await trs(super().draw)
                     tk_blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
         finally:
             self._idle_task_running = False
@@ -272,6 +272,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
                     master=self._tkcanvas, width=int(width), height=int(height)
                 )
                 self._tkcanvas.create_image(int(width / 2), int(height / 2), image=self._tkphoto)
+                # if cancelled, next resize may have tight_layout thread race
                 await trs(self.figure.tight_layout, cancellable=False)
                 self.resize_event()  # draw_idle called in here
         self._resize_cancels_pending.discard(cancel_scope)
@@ -796,7 +797,7 @@ class ForceVolumeWindow:
             self.colorbar = self.fig.colorbar(self.axesimage, ax=self.img_ax, use_gridspec=True,)
             self.navbar.update()  # let navbar catch new cax in fig
             customize_colorbar(self.colorbar, self.unit, clim)
-            await trs(self.fig.tight_layout, cancellable=False)
+            await trs(self.fig.tight_layout)
             self.canvas.draw_idle()
 
     async def colorbar_freeze_response(self):
@@ -830,9 +831,6 @@ class ForceVolumeWindow:
             radius=float(self.fit_radius_sbox.get()),
             tau=float(self.fit_tau_sbox.get()),
         )
-
-        # Calculation phase
-        # Do a few long-running jobs, likely to be canceled
         if not shift_held:
             for cancel_scope in self.cancels_pending:
                 cancel_scope.cancel()
@@ -840,6 +838,9 @@ class ForceVolumeWindow:
         async with self.spinner_scope():
             with trio.CancelScope() as cancel_scope:
                 self.cancels_pending.add(cancel_scope)
+
+                # Calculation phase
+                # Do a few long-running jobs, likely to be canceled
                 force_curve = await self.opened_fvol.get_force_curve(point.r, point.c)
                 data = await ctrs(
                     calculate_force_data, *force_curve, options, async_tools.make_cancel_poller()
