@@ -640,10 +640,11 @@ class ForceVolumeWindow:
             progress_array = progress_image.get_array()
             cancel_poller = async_tools.make_cancel_poller()
 
-            def draw_helper():
-                progress_image.changed()
-                progress_image.pchanged()
-                self.canvas.draw_idle()
+            async def draw_helper():
+                async with self.canvas.trio_draw_lock:
+                    progress_image.changed()
+                    progress_image.pchanged()
+                    self.canvas.draw_idle()
 
             def calc_properties():
                 """This task has essentially private access to delta, f, and properties
@@ -685,7 +686,7 @@ class ForceVolumeWindow:
                         progress_array[r, c, :] = color
                         if perf_counter() - t >= 0.5:
                             # This can be the rate-limiting step so run infrequently
-                            trio.from_thread.run_sync(draw_helper)
+                            trio.from_thread.run(draw_helper)
                             t = perf_counter()
                 except BaseException:
                     pool.terminate()
@@ -708,8 +709,9 @@ class ForceVolumeWindow:
                 pool_lock.release()
             await trio.sleep(0)  # check for race condition cancel
 
-        progress_image.remove()
-        self.canvas.draw_idle()
+        async with self.canvas.trio_draw_lock:
+            progress_image.remove()
+            self.canvas.draw_idle()
         pbar.close()
 
         if cancel_scope.cancelled_caught:
@@ -780,15 +782,22 @@ class ForceVolumeWindow:
             self.fig.tight_layout()
             self.canvas.draw_idle()
 
-    def freeze_colorbar_response(self):
-        self.colorbar.draw_all()
+    async def colorbar_freeze_response(self):
+        async with self.canvas.trio_draw_lock:
+            self.colorbar.draw_all()
+            if isinstance(self.colorbar.mappable, ContourSet):
+                CS = self.colorbar.mappable
+                if not CS.filled:
+                    self.colorbar.add_lines(CS)
+            self.colorbar.stale = True
+            self.canvas.draw_idle()
 
-        if isinstance(self.colorbar.mappable, ContourSet):
-            CS = self.colorbar.mappable
-            if not CS.filled:
-                self.colorbar.add_lines(CS)
-        self.colorbar.stale = True
-        self.canvas.draw_idle()
+    async def colorbar_limits_response(self, vmin, vmax):
+        async with self.canvas.trio_draw_lock:
+            self.colorbar.norm.vmin = vmin
+            self.colorbar.norm.vmax = vmax
+            self.colorbar.solids.set_clim(vmin, vmax)
+            self.canvas.draw_idle()
 
     async def plot_curve_response(self, point: ImagePoint, shift_held):
         if shift_held and point in self.existing_points:
@@ -877,18 +886,15 @@ class ForceVolumeWindow:
             await self.plot_curve_response(point, shift_held)
         elif mouseevent.inaxes is self.colorbar.ax:
             if mouseevent.button == MouseButton.MIDDLE:
-                self.freeze_colorbar_response()
-                return
+                await self.colorbar_freeze_response()
             elif mouseevent.button == MouseButton.LEFT:
-                self.colorbar.norm.vmax = max(mouseevent.ydata, self.colorbar.norm.vmin)
+                vmin = self.colorbar.norm.vmin
+                vmax = max(mouseevent.ydata, vmin)
+                await self.colorbar_limits_response(vmin, vmax)
             elif mouseevent.button == MouseButton.RIGHT:
-                self.colorbar.norm.vmin = min(mouseevent.ydata, self.colorbar.norm.vmax)
-            else:
-                return
-            # Adjust colorbar scale
-            # simple enough, so keep inline
-            self.colorbar.solids.set_clim(self.colorbar.norm.vmin, self.colorbar.norm.vmax)
-            self.canvas.draw_idle()
+                vmax = self.colorbar.norm.vmax
+                vmin = min(mouseevent.ydata, vmax)
+                await self.colorbar_limits_response(vmin, vmax)
 
     async def mpl_resize_event_callback(self):
         for cancel_scope in self.resize_cancels_pending:
