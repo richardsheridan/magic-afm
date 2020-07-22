@@ -26,7 +26,7 @@ import numpy as np
 import trio
 from threadpoolctl import threadpool_limits
 
-LONGEST_IMPERCEPTIBLE_DELAY = 0.016  # seconds
+LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 
 internal_threadpool_limiters = threadpool_limits(1)
 cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count())

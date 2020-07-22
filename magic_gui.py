@@ -177,7 +177,8 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
         self._resize_cancels_pending = set()
         self._trio_draw_event = trio.Event()
-        self.trio_draw_lock = trio.Lock()
+        # draw_lock must be used around all MPL *drawing* code or suffer jank
+        self.draw_lock = trio.Lock()
         self._idle_task_running = False
         super(FigureCanvasTk, self).__init__(figure)
         t1, t2, w, h = self.figure.bbox.bounds
@@ -234,12 +235,26 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         task_status.started()
         try:
             while True:
+                # Sleep until someone calls draw_idle()
                 await self._trio_draw_event.wait()
+                # Batch rapid draw_idle requests
+                # This batching calibrates LONGEST_IMPERCEPTIBLE_DELAY
                 await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-                async with self.trio_draw_lock:
+                async with self.draw_lock:
+                    # allow tasks to trigger next draw
                     self._trio_draw_event = trio.Event()
+                    # One of the slowest processes. Stick it in a thread, but
+                    # also prevent artists from changing the state while the
+                    # thread is going using draw_lock
                     await trs(super().draw)
                     tk_blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
+                    # Funny story, we want tight layout behavior on resize and
+                    # a few other special cases, but also we want super().draw()
+                    # and by extension draw_idle_task to be responsible for calling
+                    # figure.tight_layout().
+                    # So everywhere desired, use set_tight_layout(True) before
+                    # calling idle_draw() and it will be reset here.
+                    self.figure.set_tight_layout(False)
         finally:
             self._idle_task_running = False
 
@@ -264,16 +279,23 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         hinch = height / dpival
         with trio.CancelScope() as cancel_scope:
             self._resize_cancels_pending.add(cancel_scope)
-            async with self.trio_draw_lock:  # only place to be cancelled
+            async with self.draw_lock:
                 self.figure.set_size_inches(winch, hinch, forward=False)
-
                 self._tkcanvas.delete(self._tkphoto)
-                self._tkphoto = tk.PhotoImage(
-                    master=self._tkcanvas, width=int(width), height=int(height)
+                self._tkphoto = await trs(
+                    partial(
+                        tk.PhotoImage, master=self._tkcanvas, width=int(width), height=int(height)
+                    )
                 )
-                self._tkcanvas.create_image(int(width / 2), int(height / 2), image=self._tkphoto)
-                # if cancelled, next resize may have tight_layout thread race
-                await trs(self.figure.tight_layout, cancellable=False)
+                await trs(
+                    partial(
+                        self._tkcanvas.create_image,
+                        int(width / 2),
+                        int(height / 2),
+                        image=self._tkphoto,
+                    )
+                )
+                self.figure.set_tight_layout(True)
                 self.resize_event()  # draw_idle called in here
         self._resize_cancels_pending.discard(cancel_scope)
 
@@ -428,7 +450,7 @@ class ForceVolumeWindow:
         self.fig.subplots_adjust(top=0.85)
         img_ax.set_anchor("W")
         img_ax.set_facecolor((0.8, 0, 0))  # scary red for NaN values of images
-        # Need to pre-load something into these labels for change_image_callback->tight_layout
+        # Need to pre-load something into these labels for change_image_callback
         plot_ax.set_xlabel(" ")
         plot_ax.set_ylabel(" ")
         plot_ax.set_ylim([-1000, 1000])
@@ -486,6 +508,7 @@ class ForceVolumeWindow:
             text="Skip",
             value=magic_calculation.FitMode.SKIP.value,
             variable=self.fit_intvar,
+            command=lambda: self.fig.set_tight_layout(True),
         )
         fit_skip_button.grid(row=0, column=0)
         fit_ext_button = ttk.Radiobutton(
@@ -493,6 +516,7 @@ class ForceVolumeWindow:
             text="Extend",
             value=magic_calculation.FitMode.EXTEND.value,
             variable=self.fit_intvar,
+            command=lambda: self.fig.set_tight_layout(True),
         )
         fit_ext_button.grid(row=0, column=1)
         fit_ret_button = ttk.Radiobutton(
@@ -500,6 +524,7 @@ class ForceVolumeWindow:
             text="Retract",
             value=magic_calculation.FitMode.RETRACT.value,
             variable=self.fit_intvar,
+            command=lambda: self.fig.set_tight_layout(True),
         )
         fit_ret_button.grid(row=0, column=2)
 
@@ -659,7 +684,7 @@ class ForceVolumeWindow:
             cancel_poller = async_tools.make_cancel_poller()
 
             async def draw_helper():
-                async with self.canvas.trio_draw_lock:
+                async with self.canvas.draw_lock:
                     progress_image.changed()
                     progress_image.pchanged()
                     self.canvas.draw_idle()
@@ -727,7 +752,7 @@ class ForceVolumeWindow:
                 pool_lock.release()
             await trio.sleep(0)  # check for race condition cancel
 
-        async with self.canvas.trio_draw_lock:
+        async with self.canvas.draw_lock:
             progress_image.remove()
             self.canvas.draw_idle()
         pbar.close()
@@ -753,7 +778,7 @@ class ForceVolumeWindow:
         colormap_name = self.colormap_strvar.get()
         # save old clim
         clim = self.axesimage.get_clim()
-        async with self.canvas.trio_draw_lock:
+        async with self.canvas.draw_lock:
             # prevent cbar from getting expanded
             self.axesimage.set_clim(self.image_min, self.image_max)
             # actually change cmap
@@ -779,7 +804,7 @@ class ForceVolumeWindow:
         scansize = self.opened_fvol.params["scansize"]
         s = (scansize + scansize / len(image_array)) // 2
 
-        async with self.canvas.trio_draw_lock:
+        async with self.canvas.draw_lock:
             self.img_ax.set_title(image_name)
             self.img_ax.set_ylabel("Y piezo (nm)")
             self.img_ax.set_xlabel("X piezo (nm)")
@@ -797,11 +822,11 @@ class ForceVolumeWindow:
             self.colorbar = self.fig.colorbar(self.axesimage, ax=self.img_ax, use_gridspec=True,)
             self.navbar.update()  # let navbar catch new cax in fig
             customize_colorbar(self.colorbar, self.unit, clim)
-            await trs(self.fig.tight_layout)
+            self.fig.set_tight_layout(True)
             self.canvas.draw_idle()
 
     async def colorbar_freeze_response(self):
-        async with self.canvas.trio_draw_lock:
+        async with self.canvas.draw_lock:
             self.colorbar.draw_all()
             if isinstance(self.colorbar.mappable, ContourSet):
                 CS = self.colorbar.mappable
@@ -811,7 +836,7 @@ class ForceVolumeWindow:
             self.canvas.draw_idle()
 
     async def colorbar_limits_response(self, vmin, vmax):
-        async with self.canvas.trio_draw_lock:
+        async with self.canvas.draw_lock:
             self.colorbar.norm.vmin = vmin
             self.colorbar.norm.vmax = vmax
             self.colorbar.solids.set_clim(vmin, vmax)
@@ -857,7 +882,7 @@ class ForceVolumeWindow:
                 self.existing_points.discard(point)
                 return
 
-            async with self.canvas.trio_draw_lock:
+            async with self.canvas.draw_lock:
                 # Clearing Phase
                 # Clear previous artists and reset plots (faster than .clear()?)
                 if not shift_held:
