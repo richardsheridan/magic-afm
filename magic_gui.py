@@ -175,6 +175,7 @@ class ImagePoint:
 
 class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
+        self._resize_cancels_pending = set()
         self._trio_draw_event = trio.Event()
         self.trio_draw_lock = trio.Lock()
         self._idle_task_running = False
@@ -187,7 +188,9 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         self._tkphoto = tk.PhotoImage(master=self._tkcanvas, width=w, height=h)
         self._tkcanvas.create_image(w // 2, h // 2, image=self._tkphoto)
         self._resize_callback = resize_callback
-        self._tkcanvas.bind("<Configure>", self.resize)
+        # Late bound in teach_canvas_to_use_trio
+        # Swallows initial resize, OK because of change_image_callback
+        # self._tkcanvas.bind("<Configure>", self.resize)
         self._tkcanvas.bind("<Key>", self.key_press)
         self._tkcanvas.bind("<Motion>", self.motion_notify_event)
         self._tkcanvas.bind("<Enter>", self.enter_notify_event)
@@ -247,24 +250,37 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def blit(self, bbox=None):
         tk_blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3), bbox=bbox)
 
-    def resize(self, event):
-        width, height = event.width, event.height
+    async def resize(self, event):
+        for cancel_scope in self._resize_cancels_pending:
+            cancel_scope.cancel()
+        self._resize_cancels_pending.clear()
         if self._resize_callback is not None:
             self._resize_callback(event)
 
         # compute desired figure size in inches
         dpival = self.figure.dpi
+        width, height = event.width, event.height
         winch = width / dpival
         hinch = height / dpival
-        self.figure.set_size_inches(winch, hinch, forward=False)
+        with trio.CancelScope() as cancel_scope:
+            self._resize_cancels_pending.add(cancel_scope)
+            async with self.trio_draw_lock:  # only place to be cancelled
+                self.figure.set_size_inches(winch, hinch, forward=False)
 
-        self._tkcanvas.delete(self._tkphoto)
-        self._tkphoto = tk.PhotoImage(master=self._tkcanvas, width=int(width), height=int(height))
-        self._tkcanvas.create_image(int(width / 2), int(height / 2), image=self._tkphoto)
-        self.resize_event()
+                self._tkcanvas.delete(self._tkphoto)
+                self._tkphoto = tk.PhotoImage(
+                    master=self._tkcanvas, width=int(width), height=int(height)
+                )
+                self._tkcanvas.create_image(int(width / 2), int(height / 2), image=self._tkphoto)
+                await trs(self.figure.tight_layout, cancellable=False)
+                self.resize_event()  # draw_idle called in here
+        self._resize_cancels_pending.discard(cancel_scope)
+
+    def teach_canvas_to_use_trio(self, nursery):
+        self._tkcanvas.bind("<Configure>", partial(nursery.start_soon, self.resize))
 
 
-class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
+class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
     def __init__(self, canvas, window):
         self.toolitems += (("Export", "Export calculated maps", "filesave", "export_calculations"),)
         self._prev_filename = ""
@@ -282,10 +298,11 @@ class ImprovedNavigationToolbar2Tk(NavigationToolbar2Tk):
         toolfig.subplots_adjust(top=0.9)
         canvas = type(self.canvas)(toolfig, master=window)
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-        async with trio.open_nursery() as idle_draw_nursery:
-            await idle_draw_nursery.start(canvas.idle_draw_task)
+        async with trio.open_nursery() as nursery:
+            await nursery.start(canvas.idle_draw_task)
+            canvas.teach_canvas_to_use_trio(nursery)
             SubplotTool(self.canvas.figure, toolfig)
-            window.protocol("WM_DELETE_WINDOW", idle_draw_nursery.cancel_scope.cancel)
+            window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
         window.destroy()
 
     def export_calculations(self):
@@ -403,7 +420,7 @@ class ForceVolumeWindow:
         # Build figure
         self.fig = Figure(figsize, frameon=False)
         self.canvas = AsyncFigureCanvasTkAgg(self.fig, window)
-        self.navbar = ImprovedNavigationToolbar2Tk(self.canvas, window)
+        self.navbar = AsyncNavigationToolbar2Tk(self.canvas, window)
         self.img_ax, self.plot_ax = img_ax, plot_ax = self.fig.subplots(
             1, 2, gridspec_kw=dict(width_ratios=[1, 1.5])
         )
@@ -779,7 +796,7 @@ class ForceVolumeWindow:
             self.colorbar = self.fig.colorbar(self.axesimage, ax=self.img_ax, use_gridspec=True,)
             self.navbar.update()  # let navbar catch new cax in fig
             customize_colorbar(self.colorbar, self.unit, clim)
-            self.fig.tight_layout()
+            await trs(self.fig.tight_layout, cancellable=False)
             self.canvas.draw_idle()
 
     async def colorbar_freeze_response(self):
@@ -896,16 +913,6 @@ class ForceVolumeWindow:
                 vmin = min(mouseevent.ydata, vmax)
                 await self.colorbar_limits_response(vmin, vmax)
 
-    async def mpl_resize_event_callback(self):
-        for cancel_scope in self.resize_cancels_pending:
-            cancel_scope.cancel()
-        self.resize_cancels_pending.clear()
-        with trio.CancelScope() as cancel_scope:
-            self.resize_cancels_pending.add(cancel_scope)
-            async with self.canvas.trio_draw_lock:
-                await trs(self.fig.tight_layout, cancellable=False)
-        self.resize_cancels_pending.discard(cancel_scope)
-
     async def window_task(self):
         nursery: trio.Nursery
         async with trio.open_nursery() as nursery:
@@ -917,28 +924,13 @@ class ForceVolumeWindow:
             self.canvas.mpl_connect(
                 "pick_event", partial(nursery.start_soon, self.mpl_pick_motion_event_callback)
             )
-            self.canvas.mpl_connect(
-                "resize_event",
-                impartial(partial(nursery.start_soon, self.mpl_resize_event_callback)),
-            )
 
             self.colormap_strvar.trace_add(
                 "write", impartial(partial(nursery.start_soon, self.change_cmap_callback))
             )
 
-            await nursery.start(self.canvas.idle_draw_task)
-            self.image_name_strvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.change_image_callback))
-            )
-            # StringVar.set() won't be effective to plot unless it happens after the
-            # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
-            # due to resize, but let's not rely on that!
-            for name in ("MapHeight", "ZSensorTrace"):
-                if name in self.opened_fvol.image_names:
-                    self.image_name_strvar.set(name)
-                    break
-
             self.navbar.teach_navbar_to_use_trio(nursery)
+            self.canvas.teach_canvas_to_use_trio(nursery)
             self.calc_props_button.configure(
                 command=partial(nursery.start_soon, self.calc_prop_map_callback,)
             )
@@ -954,6 +946,19 @@ class ForceVolumeWindow:
             self.spinner_scope = await nursery.start(
                 async_tools.spinner_task, spinner_start, spinner_stop,
             )
+
+            await nursery.start(self.canvas.idle_draw_task)
+            self.image_name_strvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.change_image_callback))
+            )
+            # This causes the initial plotting of figures after next checkpoint
+            # StringVar.set() won't be effective to plot unless it happens after the
+            # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
+            # due to resize, but let's not rely on that!
+            for name in ("MapHeight", "ZSensorTrace"):
+                if name in self.opened_fvol.image_names:
+                    self.image_name_strvar.set(name)
+                    break
             await trio.sleep_forever()
 
         # Close phase
