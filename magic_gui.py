@@ -586,8 +586,8 @@ class ForceVolumeWindow:
         window.grid_rowconfigure(1, weight=1)
         window.grid_columnconfigure(0, weight=1)
 
-        size_grip.grid(row=2, column=1, sticky="es")
-        window.grid_columnconfigure(1, weight=0)
+        size_grip.grid(row=1, sticky="es")
+        size_grip.lift()
 
         # Finalize pure ARDFWindow stuff
         self.image_name_menu.configure(
