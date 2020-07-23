@@ -684,21 +684,13 @@ class ForceVolumeWindow:
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
             progress_array = progress_image.get_array()
             cancel_poller = async_tools.make_cancel_poller()
+            draw_event = threading.Event()
 
-            async def draw_helper():
-                async with self.canvas.draw_lock:
-                    progress_image.changed()
-                    progress_image.pchanged()
-                    self.canvas.draw_idle()
-
-            def calc_properties():
+            def calc_properties_in_process_pool():
                 """This task has essentially private access to delta, f, and properties
-                so it's totally cool to do this side-effect-full stuff in threads
-                as long as they don't step on each other"""
+                so it's totally cool to do this side-effect-full stuff in a thread"""
                 global pool
-                from time import perf_counter
 
-                t = perf_counter()
                 cancel_poller()
                 try:
                     pool.__enter__()
@@ -726,15 +718,33 @@ class ForceVolumeWindow:
                         pbar.update()
                         r, c = np.unravel_index(i, img_shape)
                         progress_array[r, c, :] = color
-                        if perf_counter() - t >= 0.5:
-                            # This can be the rate-limiting step so run infrequently
-                            trio.from_thread.run(draw_helper)
-                            t = perf_counter()
+                        draw_event.set()
                 except BaseException:
                     pool.terminate()
                     raise
+                finally:
+                    # stop progress_array_draw_task
+                    trio.from_thread.run_sync(nursery.cancel_scope.cancel)
 
-            def lock_helper():
+            async def progress_array_draw_task():
+                nonlocal draw_event
+                # Must be canceled when calc_properties_in_process_pool finishes
+                while True:
+                    # wait for calc thread to finish an item
+                    await trs(draw_event.wait)
+                    # arrange for draw to occur
+                    async with self.canvas.draw_lock:
+                        progress_image.changed()
+                        progress_image.pchanged()
+                        self.canvas.draw_idle()
+                    # "Clearing is bad" -- njsmith
+                    draw_event = threading.Event()
+                    # wait for idle_draw_task to start drawing
+                    while not self.canvas.draw_lock.locked():
+                        # should only spin once or twice here
+                        await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+
+            def pool_lock_helper():
                 pool_lock.acquire()
                 try:
                     cancel_poller()
@@ -745,8 +755,10 @@ class ForceVolumeWindow:
                     raise
 
             try:
-                await trs(lock_helper)
-                await ctrs(calc_properties)
+                await trs(pool_lock_helper)
+                async with trio.open_nursery() as nursery:
+                    nursery.start_soon(ctrs, calc_properties_in_process_pool)
+                    nursery.start_soon(progress_array_draw_task)
             finally:
                 pool_lock.release()
             await trio.sleep(0)  # check for race condition cancel
