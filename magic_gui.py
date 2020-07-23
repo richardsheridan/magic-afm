@@ -631,7 +631,7 @@ class ForceVolumeWindow:
             pbar = tqdm_tk(
                 total=ncurves,
                 desc="Loading and resampling force curves...",
-                smoothing_time=1,
+                smoothing_time=.25,
                 mininterval=LONGEST_IMPERCEPTIBLE_DELAY,
                 unit=" curves",
                 tk_parent=self.tkwindow,
@@ -639,6 +639,7 @@ class ForceVolumeWindow:
                 leave=False,
                 cancel_callback=cancel_scope.cancel,
             )
+            pbar_lock = threading.Lock()  # for thread_map
             pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
 
@@ -652,7 +653,8 @@ class ForceVolumeWindow:
                 d = magic_calculation.resample_dset(d, resample_npts, True)
                 delta[i, :] = z - d
                 f[i, :] = d * options.k
-                pbar.update(1)
+                with pbar_lock:
+                    pbar.update()
 
             await async_tools.thread_map(resample_helper, range(ncurves))
 
@@ -704,7 +706,7 @@ class ForceVolumeWindow:
                     pool = Pool()
                 try:
                     cancel_poller()
-                    first = True
+                    pbar.unpause()
                     for i, properties in pool.imap_unordered(
                         partial(
                             magic_calculation.calc_properties_imap, **dataclasses.asdict(options),
@@ -721,9 +723,6 @@ class ForceVolumeWindow:
                             property_map[i] = properties
                             color = (0, 1, 0, 0.5)
 
-                        if first:
-                            pbar.unpause()
-                            first = False
                         pbar.update()
                         r, c = np.unravel_index(i, img_shape)
                         progress_array[r, c, :] = color
