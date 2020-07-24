@@ -37,6 +37,7 @@ import dataclasses
 import enum
 import tkinter as tk
 import traceback
+from contextlib import nullcontext
 from functools import partial, wraps
 from tkinter import ttk, filedialog
 from typing import Optional, Callable
@@ -246,8 +247,9 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
                     # One of the slowest processes. Stick it in a thread, but
                     # also prevent artists from changing the state while the
                     # thread is going using draw_lock
-                    await trs(super().draw)
-                    tk_blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
+                    with self.spinner_scope():
+                        await trs(super().draw)  # NOT self.draw() !! blit() can't be in thread
+                    self.blit()
                     # Funny story, we want tight layout behavior on resize and
                     # a few other special cases, but also we want super().draw()
                     # and by extension draw_idle_task to be responsible for calling
@@ -299,8 +301,9 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
                 self.resize_event()  # draw_idle called in here
         self._resize_cancels_pending.discard(cancel_scope)
 
-    def teach_canvas_to_use_trio(self, nursery):
+    def teach_canvas_to_use_trio(self, nursery, spinner_scope):
         self._tkcanvas.bind("<Configure>", partial(nursery.start_soon, self.resize))
+        self.spinner_scope = spinner_scope
 
 
 class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
@@ -311,6 +314,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
 
     def teach_navbar_to_use_trio(self, nursery):
         self._parent_nursery = nursery
+        self._wait_cursor_for_draw_cm = nullcontext
 
     def configure_subplots(self):
         self._parent_nursery.start_soon(self._aconfigure_subplots)
@@ -971,32 +975,6 @@ class ForceVolumeWindow:
     async def window_task(self):
         nursery: trio.Nursery
         async with trio.open_nursery() as nursery:
-            self.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-            self.canvas.mpl_connect(
-                "motion_notify_event",
-                partial(nursery.start_soon, self.mpl_pick_motion_event_callback),
-            )
-            self.canvas.mpl_connect(
-                "pick_event", partial(nursery.start_soon, self.mpl_pick_motion_event_callback)
-            )
-
-            self.colormap_strvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.change_cmap_callback))
-            )
-
-            self.fit_intvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.change_fit_callback))
-            )
-            self.disp_kind_intvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.change_disp_kind_callback))
-            )
-
-            self.navbar.teach_navbar_to_use_trio(nursery)
-            self.canvas.teach_canvas_to_use_trio(nursery)
-            self.calc_props_button.configure(
-                command=partial(nursery.start_soon, self.calc_prop_map_callback,)
-            )
-
             def spinner_start():
                 self.tkwindow.configure(cursor="watch")
                 self.options_frame.configure(cursor="watch")
@@ -1009,10 +987,38 @@ class ForceVolumeWindow:
                 async_tools.spinner_task, spinner_start, spinner_stop,
             )
 
-            await nursery.start(self.canvas.idle_draw_task)
+            # Teach MPL to use trio
+            self.canvas.mpl_connect(
+                "motion_notify_event",
+                partial(nursery.start_soon, self.mpl_pick_motion_event_callback),
+            )
+            self.canvas.mpl_connect(
+                "pick_event", partial(nursery.start_soon, self.mpl_pick_motion_event_callback)
+            )
+            self.navbar.teach_navbar_to_use_trio(nursery)
+            self.canvas.teach_canvas_to_use_trio(nursery, self.spinner_scope)
+
+            # Teach tkinter to use trio
+            self.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+            self.colormap_strvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.change_cmap_callback))
+            )
+
+            self.fit_intvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.change_fit_callback))
+            )
+            self.disp_kind_intvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.change_disp_kind_callback))
+            )
+            self.calc_props_button.configure(
+                command=partial(nursery.start_soon, self.calc_prop_map_callback,)
+            )
             self.image_name_strvar.trace_add(
                 "write", impartial(partial(nursery.start_soon, self.change_image_callback))
             )
+
+            # Finalize initial window state
+            await nursery.start(self.canvas.idle_draw_task)
             # This causes the initial plotting of figures after next checkpoint
             # StringVar.set() won't be effective to plot unless it happens after the
             # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
