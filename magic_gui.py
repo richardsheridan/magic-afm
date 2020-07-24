@@ -509,7 +509,6 @@ class ForceVolumeWindow:
             text="Skip",
             value=magic_calculation.FitMode.SKIP.value,
             variable=self.fit_intvar,
-            command=lambda: self.fig.set_tight_layout(True),
         )
         fit_skip_button.grid(row=0, column=0)
         fit_ext_button = ttk.Radiobutton(
@@ -517,7 +516,6 @@ class ForceVolumeWindow:
             text="Extend",
             value=magic_calculation.FitMode.EXTEND.value,
             variable=self.fit_intvar,
-            command=lambda: self.fig.set_tight_layout(True),
         )
         fit_ext_button.grid(row=0, column=1)
         fit_ret_button = ttk.Radiobutton(
@@ -525,7 +523,6 @@ class ForceVolumeWindow:
             text="Retract",
             value=magic_calculation.FitMode.RETRACT.value,
             variable=self.fit_intvar,
-            command=lambda: self.fig.set_tight_layout(True),
         )
         fit_ret_button.grid(row=0, column=2)
 
@@ -569,13 +566,6 @@ class ForceVolumeWindow:
 
         # yes, cheating on trio here
         window.bind("<FocusIn>", impartial(self.options_frame.lift))
-
-        def button_helper(*a, **kw):
-            self.calc_props_button.configure(
-                state="normal" if self.fit_intvar.get() else "disabled"
-            )
-
-        self.fit_intvar.trace_add("write", button_helper)
 
         # Window widgets
         size_grip = ttk.Sizegrip(window)
@@ -839,6 +829,29 @@ class ForceVolumeWindow:
             self.fig.set_tight_layout(True)
             self.canvas.draw_idle()
 
+    async def change_fit_callback(self):
+        self.calc_props_button.configure(state="normal" if self.fit_intvar.get() else "disabled")
+        await self.redraw_existing_points()
+        self.fig.set_tight_layout(True)
+
+    async def change_disp_kind_callback(self):
+        await self.redraw_existing_points()
+        self.fig.set_tight_layout(True)
+
+    async def redraw_existing_points(self):
+        points = self.existing_points.copy()
+        self.existing_points.clear()
+        async with self.canvas.draw_lock:
+            for artist in self.artists:
+                artist.remove()
+            self.plot_ax.relim()
+            self.plot_ax.set_prop_cycle(None)
+        self.artists.clear()
+        await trio.sleep(0)
+        for point in points:
+            await self.plot_curve_response(point, True)
+        self.canvas.draw_idle()
+
     async def colorbar_freeze_response(self):
         async with self.canvas.draw_lock:
             self.colorbar.draw_all()
@@ -903,8 +916,9 @@ class ForceVolumeWindow:
                     for artist in self.artists:
                         artist.remove()
                     self.artists.clear()
-                    # confusing set stuff because of ASAP addition above
-                    self.existing_points.intersection_update({point})
+                    self.existing_points.clear()
+
+                    self.existing_points.add(point)
                     self.plot_ax.relim()
                     self.plot_ax.set_prop_cycle(None)
 
@@ -926,7 +940,6 @@ class ForceVolumeWindow:
                 if options.fit_mode:
                     table = await trs(draw_data_table, data, self.plot_ax,)
                     self.artists.append(table)
-                self.canvas.draw_idle()
 
     async def mpl_pick_motion_event_callback(self, event):
         mouseevent = getattr(event, "mouseevent", event)
@@ -941,6 +954,7 @@ class ForceVolumeWindow:
                 return
             point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, self.transforms)
             await self.plot_curve_response(point, shift_held)
+            self.canvas.draw_idle()
         elif mouseevent.inaxes is self.colorbar.ax:
             if mouseevent.button == MouseButton.MIDDLE:
                 await self.colorbar_freeze_response()
@@ -967,6 +981,13 @@ class ForceVolumeWindow:
 
             self.colormap_strvar.trace_add(
                 "write", impartial(partial(nursery.start_soon, self.change_cmap_callback))
+            )
+
+            self.fit_intvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.change_fit_callback))
+            )
+            self.disp_kind_intvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.change_disp_kind_callback))
             )
 
             self.navbar.teach_navbar_to_use_trio(nursery)
