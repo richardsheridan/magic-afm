@@ -396,7 +396,7 @@ async def spinner_task(set_spinner, set_normal, task_status):
     async def delayed_start():
         # absolute deadline to start spinner means requests chain properly
         await trio.sleep_until(deadline)
-        # actually set spinner only if we're sure all the scopes are still open
+        # actually set_spinner only if we're sure a scope is still open
         if not need_new_deadline:
             set_spinner()
 

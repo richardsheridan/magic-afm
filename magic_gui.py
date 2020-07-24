@@ -248,7 +248,8 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
                     # also prevent artists from changing the state while the
                     # thread is going using draw_lock
                     with self.spinner_scope():
-                        await trs(super().draw)  # NOT self.draw() !! blit() can't be in thread
+                        # NOT self.draw() !! blit() can't be in thread
+                        await trs(super().draw)
                     self.blit()
                     # Funny story, we want tight layout behavior on resize and
                     # a few other special cases, but also we want super().draw()
@@ -1346,12 +1347,6 @@ class FirstPool:
 
     def __repr__(self):
         return "nothing state=None pool_size=None>"
-
-    class _taskqueue:
-        def qsize(self):
-            return 0
-
-    _inqueue = _taskqueue()
 
 
 pool = FirstPool()
