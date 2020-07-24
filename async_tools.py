@@ -374,19 +374,28 @@ async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bo
 
 async def spinner_task(set_spinner, set_normal, task_status):
     spinner_starter_sendchan, spinner_starter_recvchan = trio.open_memory_channel(0)
-    spinner_stopper_sendchan, spinner_stopper_recvchan = trio.open_memory_channel(0)
+    outstanding_scopes = 0
+    with trio.move_on_after(0) as special_stop_cancel_scope:
+        # bogus initial special_stop_cancel_scope in case someone
+        # asks for a spinner without ever checkpointing
+        await trio.sleep_forever()
+        # caught so initial check for cancelled_caught in loop below is true.
+        # already have to have this for the above reason so might as well make
+        # the loop more DRY
 
     @asynccontextmanager
     async def spinner_scope():
-        with trio.CancelScope(shield=True):
-            with trio.fail_after(15):  # assert this should never really block
-                await spinner_starter_sendchan.send(None)
-                stopper = await spinner_stopper_recvchan.receive()
+        nonlocal outstanding_scopes
+        await spinner_starter_sendchan.send(None)
+        outstanding_scopes += 1
         with trio.CancelScope() as cancel_scope:
             try:
                 yield cancel_scope
             finally:
-                stopper()
+                assert outstanding_scopes > 0
+                outstanding_scopes -= 1
+                if not outstanding_scopes:
+                    special_stop_cancel_scope.cancel()
 
     task_status.started(spinner_scope)
 
@@ -397,30 +406,25 @@ async def spinner_task(set_spinner, set_normal, task_status):
             await trio.sleep_until(deadline)
             set_spinner()
 
-    def get_deadline():
+    def new_deadline():
         return trio.current_time() + LONGEST_IMPERCEPTIBLE_DELAY * 5
 
     nursery: trio.Nursery
     async with trio.open_nursery() as nursery:
-        # wait for first ever spinner scope entry
-        await spinner_starter_recvchan.receive()
-        # absolute deadline to start spinner means requests chain properly
-        deadline = get_deadline()
         while True:
+            if special_stop_cancel_scope.cancelled_caught:
+                # The final outstanding spinner_scope exited (or first ever loop)
+                set_normal()
+                # wait for a new first spinner_scope entry
+                await spinner_starter_recvchan.receive()
+                # new first scope, new deadline
+                deadline = new_deadline()
+
             # get that spinner going
             cancel_delayed_spinner = await nursery.start(delayed_spinner, deadline)
-            with trio.CancelScope() as cancel_scope:
-                await spinner_stopper_sendchan.send(cancel_scope.cancel)
-                # wait for possibly a new scope to enter
+            with trio.CancelScope() as special_stop_cancel_scope:
+                # wait for possibly a new spinner_scope to enter
                 await spinner_starter_recvchan.receive()
                 # deadline = deadline
 
             cancel_delayed_spinner()
-
-            if cancel_scope.cancelled_caught:
-                # The final outstanding scope exited
-                set_normal()
-                # wait for a new first scope entry
-                await spinner_starter_recvchan.receive()
-                # new first scope, new deadline
-                deadline = get_deadline()

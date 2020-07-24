@@ -839,18 +839,19 @@ class ForceVolumeWindow:
         self.fig.set_tight_layout(True)
 
     async def redraw_existing_points(self):
-        points = self.existing_points.copy()
-        self.existing_points.clear()
-        async with self.canvas.draw_lock:
-            for artist in self.artists:
-                artist.remove()
-            self.plot_ax.relim()
-            self.plot_ax.set_prop_cycle(None)
-        self.artists.clear()
-        await trio.sleep(0)
-        for point in points:
-            await self.plot_curve_response(point, True)
-        self.canvas.draw_idle()
+        async with self.spinner_scope():
+            points = self.existing_points.copy()
+            self.existing_points.clear()
+            async with self.canvas.draw_lock:
+                for artist in self.artists:
+                    artist.remove()
+                self.plot_ax.relim()
+                self.plot_ax.set_prop_cycle(None)
+            self.artists.clear()
+            await trio.sleep(0)
+            for point in points:
+                await self.plot_curve_response(point, True)
+            self.canvas.draw_idle()
 
     async def colorbar_freeze_response(self):
         async with self.canvas.draw_lock:
