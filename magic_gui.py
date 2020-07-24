@@ -612,7 +612,7 @@ class ForceVolumeWindow:
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
 
-        async with self.spinner_scope() as cancel_scope:
+        with self.spinner_scope() as cancel_scope:
             _, _, s = await self.opened_fvol.get_force_curve(0, 0)
             npts = len(_)
             s = s * resample_npts // npts
@@ -839,7 +839,7 @@ class ForceVolumeWindow:
         self.fig.set_tight_layout(True)
 
     async def redraw_existing_points(self):
-        async with self.spinner_scope():
+        with self.spinner_scope():
             points = self.existing_points.copy()
             self.existing_points.clear()
             async with self.canvas.draw_lock:
@@ -888,7 +888,7 @@ class ForceVolumeWindow:
             for cancel_scope in self.cancels_pending:
                 cancel_scope.cancel()
             self.cancels_pending.clear()
-        async with self.spinner_scope():
+        with self.spinner_scope():
             with trio.CancelScope() as cancel_scope:
                 self.cancels_pending.add(cancel_scope)
 

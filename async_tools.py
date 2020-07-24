@@ -18,7 +18,7 @@ A Docstring
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 import subprocess
-from contextlib import asynccontextmanager
+from contextlib import contextmanager
 from functools import partial
 
 import h5py
@@ -374,18 +374,14 @@ async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bo
 
 async def spinner_task(set_spinner, set_normal, task_status):
     outstanding_scopes = 0
-    with trio.move_on_after(0) as special_stop_cancel_scope:
-        # bogus initial special_stop_cancel_scope in case someone
-        # asks for a spinner without ever checkpointing
-        await trio.sleep_forever()
-        # caught so initial check for cancelled_caught in loop below is true.
-        # already have to have this for the above reason so might as well make
-        # the loop more DRY
+    # will only be true before first ever scope entry or between
+    # last scope exit and new first scope entry
+    need_new_deadline = True
 
-    @asynccontextmanager
-    async def spinner_scope():
-        nonlocal outstanding_scopes
-        spinner_start.set()  # define spinner_start before 1st checkpoint
+    @contextmanager
+    def spinner_scope():
+        nonlocal outstanding_scopes, need_new_deadline
+        spinner_start.set()
         outstanding_scopes += 1
         with trio.CancelScope() as cancel_scope:
             try:
@@ -394,35 +390,30 @@ async def spinner_task(set_spinner, set_normal, task_status):
                 assert outstanding_scopes > 0
                 outstanding_scopes -= 1
                 if not outstanding_scopes:
-                    special_stop_cancel_scope.cancel()
+                    set_normal()
+                    need_new_deadline = True
 
-    task_status.started(spinner_scope)
-
-    async def delayed_spinner(task_status):
+    async def delayed_start():
         # absolute deadline to start spinner means requests chain properly
-        with trio.CancelScope() as cancel_scope:
-            task_status.started(cancel_scope.cancel)
-            await trio.sleep_until(deadline)
+        await trio.sleep_until(deadline)
+        # actually set spinner only if we're sure all the scopes are still open
+        if not need_new_deadline:
             set_spinner()
 
     nursery: trio.Nursery
     async with trio.open_nursery() as nursery:
+        # Ideally this would be called after assigning spinner_scope
+        # but it should not be inside the loop and nobody will open
+        # a spinner scope until the checkpoint
+        task_status.started(spinner_scope)
         while True:
-            if special_stop_cancel_scope.cancelled_caught:
-                # The final outstanding spinner_scope exited (or first ever loop)
-                set_normal()
-                # wait for a new first spinner_scope entry
-                spinner_start = trio.Event()
-                await spinner_start.wait()
+            # wait for a new spinner_scope entry
+            spinner_start = trio.Event()
+            await spinner_start.wait()
+            if need_new_deadline:
                 # new first scope, new deadline
                 deadline = trio.current_time() + LONGEST_IMPERCEPTIBLE_DELAY * 5
+                need_new_deadline = False
 
             # get that spinner going
-            cancel_delayed_spinner = await nursery.start(delayed_spinner)
-            with trio.CancelScope() as special_stop_cancel_scope:
-                # wait for possibly a new spinner_scope to enter
-                spinner_start = trio.Event()
-                await spinner_start.wait()
-                # deadline = deadline
-
-            cancel_delayed_spinner()
+            nursery.start_soon(delayed_start)
