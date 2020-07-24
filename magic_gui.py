@@ -622,17 +622,23 @@ class ForceVolumeWindow:
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
 
-        progress_image: matplotlib.image.AxesImage = self.img_ax.imshow(
-            np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
-        )
         async with self.spinner_scope() as cancel_scope:
             _, _, s = await self.opened_fvol.get_force_curve(0, 0)
             npts = len(_)
             s = s * resample_npts // npts
+            if options.fit_mode == magic_calculation.FitMode.EXTEND:
+                sl = slice(s)
+                segment_npts = s
+            elif options.fit_mode == magic_calculation.FitMode.RETRACT:
+                sl = slice(s, None)
+                segment_npts = resample_npts - s
+            else:
+                raise ValueError("Unknown fit_mode: ", options.fit_mode)
+
             pbar = tqdm_tk(
                 total=ncurves,
                 desc="Loading and resampling force curves...",
-                smoothing_time=.25,
+                smoothing_time=0.25,
                 mininterval=LONGEST_IMPERCEPTIBLE_DELAY,
                 unit=" curves",
                 tk_parent=self.tkwindow,
@@ -644,14 +650,14 @@ class ForceVolumeWindow:
             pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
 
-            delta = np.empty((ncurves, resample_npts), np.float32)
-            f = np.empty((ncurves, resample_npts), np.float32)
+            delta = np.empty((ncurves, segment_npts), np.float32)
+            f = np.empty((ncurves, segment_npts), np.float32)
 
             def resample_helper(i):
                 r, c = np.unravel_index(i, img_shape)
                 z, d, _ = self.opened_fvol._worker.get_force_curve(r, c)
-                z = magic_calculation.resample_dset(z, resample_npts, True)
-                d = magic_calculation.resample_dset(d, resample_npts, True)
+                z = magic_calculation.resample_dset(z, resample_npts, True)[sl]
+                d = magic_calculation.resample_dset(d, resample_npts, True)[sl]
                 delta[i, :] = z - d
                 f[i, :] = d * options.k
                 with pbar_lock:
@@ -659,12 +665,11 @@ class ForceVolumeWindow:
 
             await async_tools.thread_map(resample_helper, range(ncurves))
 
-            if options.fit_mode == magic_calculation.FitMode.EXTEND:
-                sl = slice(s)
-            elif options.fit_mode == magic_calculation.FitMode.RETRACT:
-                sl = slice(s, None)
-            else:
-                raise ValueError("Unknown fit_mode: ", options.fit_mode)
+            pbar.set_description_str("Fitting force curves...")
+            pbar.unit = " fits"
+            pbar.avg_time = None
+            pbar.reset(total=ncurves)
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
 
             property_names_units = {
                 "CalcIndentationModulus": "Pa",
@@ -677,12 +682,9 @@ class ForceVolumeWindow:
             property_map = np.empty(
                 ncurves, dtype=np.dtype([(name, "f4") for name in property_names_units]),
             )
-
-            pbar.set_description_str("Fitting force curves...")
-            pbar.unit = " fits"
-            pbar.avg_time = None
-            pbar.reset(total=ncurves)
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+            progress_image: matplotlib.image.AxesImage = self.img_ax.imshow(
+                np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
+            )  # transparent initial image, no need to use draw lock
             progress_array = progress_image.get_array()
             cancel_poller = async_tools.make_cancel_poller()
             draw_event = threading.Event()
@@ -704,7 +706,7 @@ class ForceVolumeWindow:
                         partial(
                             magic_calculation.calc_properties_imap, **dataclasses.asdict(options),
                         ),
-                        zip(delta[:, sl], f[:, sl], np.arange(ncurves)),
+                        zip(delta, f, np.arange(ncurves)),
                         chunksize=8,
                     ):
                         cancel_poller()
