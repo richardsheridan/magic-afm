@@ -1040,7 +1040,7 @@ def customize_colorbar(colorbar, unit, clim):
 
 def draw_data_table(data, ax):
     exp = np.log10(data.beta[0])
-    prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get((-exp + 2.7) // 3, "")
+    prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get((-exp + 2.7) // 3, ("", 1))
     table = ax.table(
         [
             [
@@ -1120,9 +1120,12 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
     f_fit = calc_fun(delta[sl], *beta)
     d_fit = f_fit / options.k
     cancel_poller()
-    deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
-        f[sl], beta, **dataclasses.asdict(options)
-    )
+    if np.all(np.isfinite(beta)):
+        deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
+            f[sl], beta, **dataclasses.asdict(options)
+        )
+    else:
+        deflection, indentation, z_true_surface = np.nan, np.nan, np.nan
     return ForceCurveData(
         s=s,
         z=z,
