@@ -877,13 +877,12 @@ class ForceVolumeWindow:
         manip_name = self.manipulate_strvar.get()
         current_name = self.image_name_strvar.get()
         current_names = list(self.image_name_menu.cget("values"))
-        unit = self.opened_fvol.get_image_units(current_name)
         name = "Calc" + manip_name + current_name
         if name not in self.opened_fvol.image_names:
             manip_fn = MANIPULATIONS[manip_name]
             manip_img = await trs(manip_fn, self.axesimage.get_array())
             self.opened_fvol.add_image(
-                name, unit, manip_img,
+                name, self.unit, manip_img,
             )
             if name not in current_names:
                 current_names.append(name)
@@ -1075,7 +1074,8 @@ def customize_colorbar(colorbar, unit, clim):
     """MPL keeps stomping on our settings so reset EVERYTHING"""
     colorbar.ax.set_navigate(True)
     colorbar.solids.set_picker(True)
-    colorbar.formatter = EngFormatter(unit, places=1)
+    if unit:
+        colorbar.formatter = EngFormatter(unit, places=1)
     colorbar.update_ticks()
     colorbar.solids.set_clim(*clim)
 
