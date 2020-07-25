@@ -37,10 +37,13 @@ def gauss3x3(img):
 
 
 def flatten(img):
-    img = np.asanyarray(img)
+    img = np.asarray(img)
     a = np.vander(img[0], 2)
     b = img.T
-    x = lstsq(a, b)[0]
+    try:
+        x = lstsq(a, b)[0]
+    except np.linalg.LinAlgError:
+        return np.full_like(img, fill_value=np.nan)
     return img-(a @ x).T
 
 
@@ -49,7 +52,10 @@ def planefit(img):
     ind = np.indices(img.shape)
     a = np.stack((np.ones_like(img.ravel()), ind[0].ravel(), ind[1].ravel())).T  # [1, x, y]
     b = img.ravel()
-    x = lstsq(a, b)[0]
+    try:
+        x = lstsq(a, b)[0]
+    except np.linalg.LinAlgError:
+        return np.full_like(img, fill_value=np.nan)
     return img-(a @ x).reshape(img.shape)
 
 

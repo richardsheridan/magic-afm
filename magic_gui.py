@@ -839,6 +839,7 @@ class ForceVolumeWindow:
                 picker=True,
                 cmap=cmap,
             )
+            self.axesimage.get_array().fill_value = np.nanmedian(image_array)
 
             self.transforms = ImagePoint.construct_transforms(self.axesimage)
 
