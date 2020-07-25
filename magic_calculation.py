@@ -17,36 +17,74 @@ A Docstring
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import enum
+from functools import partial
 
 import numpy as np
 from scipy.optimize import curve_fit, root_scalar
 from scipy.signal import resample
+from scipy.ndimage import median_filter, convolve1d
+from numpy.linalg import lstsq
 
 EPS = float(np.finfo(np.float64).eps)
 RT_EPS = float(np.sqrt(EPS))
 
+gkern = np.array([0.25, 0.5, 0.25], dtype=np.float32)
+
+
+def gauss3x3(img):
+    img = np.asanyarray(img)
+    return convolve1d(convolve1d(img, gkern, axis=1), gkern, axis=0)
+
+
+def flatten(img):
+    img = np.asanyarray(img)
+    a = np.vander(img[0], 2)
+    b = img.T
+    x = lstsq(a, b)[0]
+    return img-(a @ x).T
+
+
+def planefit(img):
+    img = np.asanyarray(img)
+    ind = np.indices(img.shape)
+    a = np.stack((np.ones_like(img.ravel()), ind[0].ravel(), ind[1].ravel())).T  # [1, x, y]
+    b = img.ravel()
+    x = lstsq(a, b)[0]
+    return img-(a @ x).reshape(img.shape)
+
+
+MANIPULATIONS = dict(
+    [
+        ("Flatten", flatten),
+        ("PlaneFit", planefit),
+        ("Median3x1", partial(median_filter, size=(3, 1))),
+        ("Median3x3", partial(median_filter, size=(3, 3))),
+        ("Gauss3x3", gauss3x3),
+    ]
+)
+
 
 def parse_notes(notes, disp=True):
     """Extract k, force_setpoint, z_rate, fs values from notes dict values"""
-    if int(notes['ForceMapImage']):
-        k = float(notes['SpringConstant'])
-        force_setpoint = float(notes['TriggerPoint']) * 1e9
-        z_rate = float(notes['ForceScanRate'])
-        fs = float(notes['NumPtsPerSec'])
-    elif int(notes['FastMapImage']):
-        k = float(notes['SpringConstant'])
-        force_setpoint = float(notes['FastMapSetpointNewtons']) * 1e9
-        z_rate = float(notes['FastMapZRate'])
-        fs = float(notes['NumPtsPerSec'])
+    if int(notes["ForceMapImage"]):
+        k = float(notes["SpringConstant"])
+        force_setpoint = float(notes["TriggerPoint"]) * 1e9
+        z_rate = float(notes["ForceScanRate"])
+        fs = float(notes["NumPtsPerSec"])
+    elif int(notes["FastMapImage"]):
+        k = float(notes["SpringConstant"])
+        force_setpoint = float(notes["FastMapSetpointNewtons"]) * 1e9
+        z_rate = float(notes["FastMapZRate"])
+        fs = float(notes["NumPtsPerSec"])
     else:
-        raise ValueError('Cannot identify data type: Neither ForceMap nor Fastmap')
+        raise ValueError("Cannot identify data type: Neither ForceMap nor Fastmap")
 
     if disp:
-        print(notes['ImageNote'])
-        print('k =', k, 'N/m')
-        print('F =', force_setpoint, 'nN')
-        print('rate =', z_rate, 'Hz')
-        print('SamplingFreq fs =', fs, 'Hz')
+        print(notes["ImageNote"])
+        print("k =", k, "N/m")
+        print("F =", force_setpoint, "nN")
+        print("rate =", z_rate, "Hz")
+        print("SamplingFreq fs =", fs, "Hz")
     return k, force_setpoint, z_rate, fs
 
 
@@ -54,11 +92,11 @@ def resample_dset(X, npts, fourier):
     """Consistent API for resampling force curves with Fourier or interpolation"""
     X = np.atleast_2d(X)
     if fourier:
-        return resample(X, npts, axis=1, window=('kaiser', 6), ).squeeze()
+        return resample(X, npts, axis=1, window=("kaiser", 6),).squeeze()
     else:
         tnew = np.linspace(0, 1, npts, endpoint=False)
         told = np.linspace(0, 1, X.shape[-1], endpoint=False)
-        return np.stack([np.interp(tnew, told, x, ) for x in X]).squeeze()
+        return np.stack([np.interp(tnew, told, x,) for x in X]).squeeze()
 
 
 def secant(func, x0, x1=None):
@@ -108,10 +146,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     else:
         eps = RT_EPS
         p1 = x0 * (1 + eps)
-        p1 += (eps if p1 >= 0 else -eps)
-    q0 = func(p0, )
+        p1 += eps if p1 >= 0 else -eps
+    q0 = func(p0,)
     # funcalls += 1
-    q1 = func(p1, )
+    q1 = func(p1,)
     # funcalls += 1
     if abs(q1) < abs(q0):
         p0, p1, q0, q1 = p1, p0, q1, q0
@@ -132,7 +170,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
             break
         p0, q0 = p1, q1
         p1 = p
-        q1 = func(p1, )
+        q1 = func(p1,)
         # funcalls += 1
     else:
         p = (p1 + p0) / 2.0
@@ -179,7 +217,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     delta = stop - start
     div = (num - 1) if endpoint else num
 
-    y = np.arange(0.0, num, )
+    y = np.arange(0.0, num,)
     y *= delta / div
     y += start
     if endpoint and num > 1:
@@ -215,7 +253,7 @@ def schwarz_red(red_f, red_fc, stab):
 # Exponents for LJ potential
 bigpow = 9
 lilpow = 3
-powrat = (bigpow / lilpow)
+powrat = bigpow / lilpow
 
 ### minimum value at delta=1
 prefactor = (powrat) ** (1 / (bigpow - lilpow))
@@ -227,7 +265,8 @@ lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))  # de
 # prefactor= (powrat*(bigpow+1)/(lilpow+1))**(1/(bigpow-lilpow))
 # lj_limit_factor = 1
 
-@np.errstate(all='ignore')
+
+@np.errstate(all="ignore")
 def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset=0):
     """Calculate a leonard-Jones force curve.
     
@@ -247,7 +286,9 @@ def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset=0):
     return postfactor * force_scale * (attraction - repulsion) / delta_scale - force_offset
 
 
-def red_extend(red_delta, red_fc, red_k, lj_delta_scale, ):
+def red_extend(
+    red_delta, red_fc, red_k, lj_delta_scale,
+):
     """Calculate, in reduced units, an extent Schwarz curve with long range LJ potential and snap-off physics.
     
     MUCH LESS TESTED THAN RED_RETRACT
@@ -280,10 +321,13 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale, ):
         # root_scalar is marginally faster with python scalars
         red_d_min = float(np.min(red_delta))
         args = (lj_delta_scale, red_fc, lj_delta_offset, red_k)
-        bracket = (red_d_min, lj_limit_factor * lj_delta_scale + lj_delta_offset,)
-        lj_end_pos = root_scalar(lj_gradient, args=args, bracket=bracket, ).root
+        bracket = (
+            red_d_min,
+            lj_limit_factor * lj_delta_scale + lj_delta_offset,
+        )
+        lj_end_pos = root_scalar(lj_gradient, args=args, bracket=bracket,).root
     except ValueError as e:
-        if str(e) != 'f(a) and f(b) must have different signs':
+        if str(e) != "f(a) and f(b) must have different signs":
             raise
         # If root finding fails, put the end pos somewhere quasi-reasonable
         if lj_gradient(red_d_min, *args) <= 0:
@@ -294,9 +338,11 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale, ):
     lj_end_force = lj_force(lj_end_pos, lj_delta_scale, red_fc, lj_delta_offset)
 
     # Overwrite after end position with tangent line
-    lj_f[red_delta >= lj_end_pos] = (red_delta[red_delta >= lj_end_pos] - lj_end_pos) * red_k + lj_end_force
+    lj_f[red_delta >= lj_end_pos] = (
+        red_delta[red_delta >= lj_end_pos] - lj_end_pos
+    ) * red_k + lj_end_force
 
-    # Unfortunately Schwarz is d(f) rather than f(d) so we need to infer the largest possible force    
+    # Unfortunately Schwarz is d(f) rather than f(d) so we need to infer the largest possible force
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
     red_f_max = secant(lambda x: schwarz_red(x, red_fc, 1) - red_d_max, x0=0, x1=red_fc)
@@ -370,11 +416,13 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
         df0dd0 = np.gradient(f0, d0)
 
         try:
-            s_end_pos = root_scalar(lambda x: np.interp(x, d0, df0dd0) - red_k, bracket=(d0[0], d0[-1])).root
+            s_end_pos = root_scalar(
+                lambda x: np.interp(x, d0, df0dd0) - red_k, bracket=(d0[0], d0[-1])
+            ).root
             s_end_force = np.interp(s_end_pos, d0, f0)
         except ValueError as e:
             # The named error happens when the bracket is quite small i.e. red_fc ~2
-            if str(e) != 'f(a) and f(b) must have different signs':
+            if str(e) != "f(a) and f(b) must have different signs":
                 raise
         else:
             # This fires if there is NOT a ValueError i.e. found a good end point
@@ -385,7 +433,9 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     s_f = np.atleast_1d(s_f).squeeze()  # don't choke on weird array shapes or scalars
 
     # overwrite portion after end position with tangent line
-    s_f[red_delta <= s_end_pos] = (red_delta[red_delta <= s_end_pos] - s_end_pos) * red_k + s_end_force
+    s_f[red_delta <= s_end_pos] = (
+        red_delta[red_delta <= s_end_pos] - s_end_pos
+    ) * red_k + s_end_force
     # alternative: solve for lj_force(x) = (x-s_end_pos)*red_k+s_end_force (rightmost soln)
 
     #     lj_f[red_delta>=s_end_pos] = np.inf # XXX: Why did you put this here?
@@ -393,8 +443,9 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     return np.minimum(s_f, lj_f)
 
 
-def force_curve(red_curve, delta, k, radius, K, fc, tau,
-                delta_shift, force_shift, lj_delta_scale, ):
+def force_curve(
+    red_curve, delta, k, radius, K, fc, tau, delta_shift, force_shift, lj_delta_scale,
+):
     """Calculate a force curve from indentation data."""
     # Catch crazy inputs early
     assert k > 0, k
@@ -407,7 +458,9 @@ def force_curve(red_curve, delta, k, radius, K, fc, tau,
     # Calculate reduced/dimensionless values of inputs
     #     ref_force = gamma*np.pi*radius
     #     red_fc = fc/ref_force
-    red_fc = (tau - 4) / 2  # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
+    red_fc = (
+        tau - 4
+    ) / 2  # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
     ref_force = fc / red_fc
     ref_radius = (ref_force * radius / K) ** (1 / 3)
     ref_delta = ref_radius * ref_radius / radius
@@ -416,14 +469,15 @@ def force_curve(red_curve, delta, k, radius, K, fc, tau,
     lj_delta_scale = lj_delta_scale / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
-    red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale, )
+    red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale,)
 
     # Rescale to dimensioned units
     return (red_force * ref_force) + force_shift
 
 
-def delta_curve(red_curve, force, k, radius, K, fc, tau,
-                delta_shift, force_shift, lj_delta_scale, ):
+def delta_curve(
+    red_curve, force, k, radius, K, fc, tau, delta_shift, force_shift, lj_delta_scale,
+):
     """Convenience function for inverse of force_curve, i.e. force->delta"""
     # Catch crazy inputs early
     assert k > 0, k
@@ -436,7 +490,9 @@ def delta_curve(red_curve, force, k, radius, K, fc, tau,
     # Calculate reduced/dimensionless values of inputs
     #     ref_force = gamma*np.pi*radius
     #     red_fc = fc/ref_force
-    red_fc = (tau - 4) / 2  # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
+    red_fc = (
+        tau - 4
+    ) / 2  # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
     ref_force = fc / red_fc
     red_force = (force - force_shift) / ref_force
     ref_radius = (ref_force * radius / K) ** (1 / 3)
@@ -445,13 +501,15 @@ def delta_curve(red_curve, force, k, radius, K, fc, tau,
     lj_delta_scale = lj_delta_scale / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
-    red_delta = red_curve(red_force, red_fc, -red_k, -lj_delta_scale, )
+    red_delta = red_curve(red_force, red_fc, -red_k, -lj_delta_scale,)
 
     # Rescale to dimensioned units
     return (red_delta * ref_delta) + delta_shift
 
 
-def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale, ):
+def schwarz_wrap(
+    red_force, red_fc, red_k, lj_delta_scale,
+):
     """So that schwarz can be directly jammed into delta_curve"""
     a = schwarz_red(red_force, red_fc, 1)
     # if np.isnan(a):
@@ -466,7 +524,7 @@ class FitMode(enum.IntEnum):
     RETRACT = enum.auto()
 
 
-@np.errstate(all='ignore')
+@np.errstate(all="ignore")
 def fitfun(delta, f, k, radius, tau, fit_mode, cancel_poller=lambda: None, **kwargs):
     # Very course estimate of force curve parameters for initial guess
     imin = np.argmin(f)  # TODO: better way to choose this for low adhesion
@@ -480,7 +538,13 @@ def fitfun(delta, f, k, radius, tau, fit_mode, cancel_poller=lambda: None, **kwa
     K_guess = (fmax - fmin) / np.sqrt(radius * (deltamax - deltamin) ** 3)
     if not np.isfinite(K_guess):
         K_guess = 1
-    p0 = [K_guess, fc_guess, deltamin, fzero, 1, ]
+    p0 = [
+        K_guess,
+        fc_guess,
+        deltamin,
+        fzero,
+        1,
+    ]
 
     assert fit_mode
     if fit_mode == FitMode.EXTEND:
@@ -488,28 +552,41 @@ def fitfun(delta, f, k, radius, tau, fit_mode, cancel_poller=lambda: None, **kwa
     elif fit_mode == FitMode.RETRACT:
         red_curve = red_retract
     else:
-        raise ValueError('Unknown fit_mode: ', fit_mode)
+        raise ValueError("Unknown fit_mode: ", fit_mode)
 
-    def partial_force_curve(delta, K, fc, delta_shift, force_shift, lj_delta_scale, ):
+    def partial_force_curve(
+        delta, K, fc, delta_shift, force_shift, lj_delta_scale,
+    ):
         cancel_poller()
         if np.any(np.isnan((K, fc, delta_shift, force_shift, lj_delta_scale,))):
-            print('Fit likely failed: NaNs in params')
+            print("Fit likely failed: NaNs in params")
             return np.full_like(delta, np.nan)
-        return force_curve(red_curve, delta, k, radius, K, fc, tau,
-                           delta_shift, force_shift, lj_delta_scale, )
+        return force_curve(
+            red_curve, delta, k, radius, K, fc, tau, delta_shift, force_shift, lj_delta_scale,
+        )
 
     try:
-        beta, cov = curve_fit(partial_force_curve, delta, f, p0=p0,
-                              bounds=np.transpose((
-                                  (0, np.inf),  # K
-                                  (-np.inf, 0),  # fc
-                                  # (0, 1),           # tau
-                                  (np.min(delta), np.max(delta)),  # delta_shift
-                                  (np.min(f), np.max(f)),  # force_shift
-                                  (0, 100),  # lj_delta_scale
-                              )),
-                              xtol=1e-9, ftol=1e-8,
-                              method='trf', verbose=0, jac='2-point')
+        beta, cov = curve_fit(
+            partial_force_curve,
+            delta,
+            f,
+            p0=p0,
+            bounds=np.transpose(
+                (
+                    (0, np.inf),  # K
+                    (-np.inf, 0),  # fc
+                    # (0, 1),           # tau
+                    (np.min(delta), np.max(delta)),  # delta_shift
+                    (np.min(f), np.max(f)),  # force_shift
+                    (0, 100),  # lj_delta_scale
+                )
+            ),
+            xtol=1e-9,
+            ftol=1e-8,
+            method="trf",
+            verbose=0,
+            jac="2-point",
+        )
     except Exception as e:
         print(str(e))
         print(p0)
@@ -533,15 +610,29 @@ def calc_def_ind_ztru(f, beta, radius, k, tau, fit_mode, **kwargs):
         red_curve = red_retract
         sl = slice(len(f) // 25)
     else:
-        raise ValueError('Unknown fit_mode: ', fit_mode)
+        raise ValueError("Unknown fit_mode: ", fit_mode)
 
     maxforce = f[sl].mean()
-    maxdelta = delta_curve(schwarz_wrap, maxforce, k, radius, K, fc, tau,
-                           delta_shift, force_shift, lj_delta_scale, )
-    mindelta = delta_curve(schwarz_wrap, fc + force_shift, k, radius, K, fc, tau,
-                           delta_shift, force_shift, lj_delta_scale, )
-    zeroindforce = float(force_curve(red_curve, delta_shift, k, radius, K, fc, tau,
-                                     delta_shift, force_shift, lj_delta_scale, ))
+    maxdelta = delta_curve(
+        schwarz_wrap, maxforce, k, radius, K, fc, tau, delta_shift, force_shift, lj_delta_scale,
+    )
+    mindelta = delta_curve(
+        schwarz_wrap,
+        fc + force_shift,
+        k,
+        radius,
+        K,
+        fc,
+        tau,
+        delta_shift,
+        force_shift,
+        lj_delta_scale,
+    )
+    zeroindforce = float(
+        force_curve(
+            red_curve, delta_shift, k, radius, K, fc, tau, delta_shift, force_shift, lj_delta_scale,
+        )
+    )
 
     deflection = (maxforce - (fc + force_shift)) / k
     indentation = maxdelta - mindelta
@@ -555,11 +646,11 @@ def calc_properties_imap(delta_f_i, **kwargs):
     if np.all(np.isfinite(beta)):
         (deflection, indentation, z_true_surface,) = calc_def_ind_ztru(f, beta, **kwargs)
         properties = (
-            beta[0]*1e9,
-            -beta[1]/1e9,
-            deflection/1e9,
-            indentation/1e9,
-            -z_true_surface/1e9,
+            beta[0] * 1e9,
+            -beta[1] / 1e9,
+            deflection / 1e9,
+            indentation / 1e9,
+            -z_true_surface / 1e9,
             deflection / indentation,
         )
     else:

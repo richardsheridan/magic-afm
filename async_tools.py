@@ -338,17 +338,23 @@ class AsyncARH5File:
         return await trs(self._images.__getitem__, image_name)
 
     def get_image_units(self, image_name):
+        image_name = self.strip_trace(image_name)
+        return self._units_map.get(image_name, "V")
+
+    def add_image(self, image_name, units, image):
+        self._calc_images[image_name] = image
+        image_name = self.strip_trace(image_name)
+        self._units_map[image_name] = units
+
+    @staticmethod
+    def strip_trace(image_name):
         # python 3.9+
         # image_name = image_name.removesuffix("Trace").removesuffix("Retrace")
         if image_name.endswith("Trace"):
             image_name = image_name[:-5]
         if image_name.endswith("Retrace"):
             image_name = image_name[:-6]
-        return self._units_map.get(image_name, "V")
-
-    def add_image(self, image_name, units, image):
-        self._units_map[image_name] = units
-        self._calc_images[image_name] = image
+        return image_name
 
 
 async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bound_limiter):

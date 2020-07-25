@@ -64,6 +64,7 @@ from tqdm.gui import tqdm_tk
 
 import async_tools
 import magic_calculation
+from magic_calculation import MANIPULATIONS
 from async_tools import trs, ctrs, LONGEST_IMPERCEPTIBLE_DELAY
 
 matplotlib.rcParams["savefig.dpi"] = 300
@@ -484,6 +485,19 @@ class ForceVolumeWindow:
         )
         self.colormap_menu.pack(fill="x")
         colormap_labelframe.pack(fill="x")
+        manipulate_labelframe = ttk.Labelframe(image_opts_frame, text="Manipulations")
+        self.manipulate_strvar = tk.StringVar(
+            manipulate_labelframe, value=next(iter(MANIPULATIONS))
+        )
+        self.manipulate_menu = ttk.Combobox(
+            manipulate_labelframe,
+            state="readonly",
+            textvariable=self.manipulate_strvar,
+            values=list(MANIPULATIONS),
+            # width=max(map(len, COLORMAPS)) - 1,
+        )
+        self.manipulate_menu.pack(fill="x")
+        manipulate_labelframe.pack(fill="x")
 
         image_opts_frame.grid(row=1, column=0, rowspan=2)
 
@@ -586,10 +600,7 @@ class ForceVolumeWindow:
         size_grip.lift()
 
         # Finalize pure ARDFWindow stuff
-        self.image_name_menu.configure(
-            values=list(self.opened_fvol.image_names),
-            width=max(map(len, self.opened_fvol.image_names)) - 1,
-        )
+        self.reset_image_name_menu(self.opened_fvol.image_names)
 
         # change_image_callback stuff
         self.colorbar: Optional[Colorbar] = None
@@ -602,6 +613,11 @@ class ForceVolumeWindow:
 
         # mpl_resize_event_callback
         self.resize_cancels_pending = set()
+
+    def reset_image_name_menu(self, names):
+        names = list(names)
+        longest = max(map(len, names))
+        self.image_name_menu.configure(values=names, width=min(longest - 1, 20))
 
     async def calc_prop_map_callback(self):
         options = ForceCurveOptions(
@@ -779,9 +795,7 @@ class ForceVolumeWindow:
             )
             if name not in combobox_values:
                 combobox_values.append(name)
-        self.image_name_menu.configure(
-            values=combobox_values, width=max(map(len, combobox_values)) - 1
-        )
+        self.reset_image_name_menu(combobox_values)
 
     async def change_cmap_callback(self):
         colormap_name = self.colormap_strvar.get()
@@ -857,6 +871,23 @@ class ForceVolumeWindow:
             for point in points:
                 await self.plot_curve_response(point, True)
             self.canvas.draw_idle()
+
+    async def manipulate_callback(self):
+        manip_name = self.manipulate_strvar.get()
+        current_name = self.image_name_strvar.get()
+        current_names = list(self.image_name_menu.cget("values"))
+        unit = self.opened_fvol.get_image_units(current_name)
+        name = "Calc" + manip_name + current_name
+        if name not in self.opened_fvol.image_names:
+            manip_fn = MANIPULATIONS[manip_name]
+            manip_img = await trs(manip_fn, self.axesimage.get_array())
+            self.opened_fvol.add_image(
+                name, unit, manip_img,
+            )
+            if name not in current_names:
+                current_names.append(name)
+            self.reset_image_name_menu(current_names)
+        self.image_name_menu.set(name)
 
     async def colorbar_freeze_response(self):
         async with self.canvas.draw_lock:
@@ -976,6 +1007,7 @@ class ForceVolumeWindow:
     async def window_task(self):
         nursery: trio.Nursery
         async with trio.open_nursery() as nursery:
+
             def spinner_start():
                 self.tkwindow.configure(cursor="watch")
                 self.options_frame.configure(cursor="watch")
@@ -1004,7 +1036,9 @@ class ForceVolumeWindow:
             self.colormap_strvar.trace_add(
                 "write", impartial(partial(nursery.start_soon, self.change_cmap_callback))
             )
-
+            self.manipulate_strvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.manipulate_callback))
+            )
             self.fit_intvar.trace_add(
                 "write", impartial(partial(nursery.start_soon, self.change_fit_callback))
             )
