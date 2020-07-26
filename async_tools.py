@@ -369,7 +369,12 @@ async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bo
 
     send_chan, recv_chan = trio.open_memory_channel(0)
     async with trio.open_nursery() as nursery:
+        t = trio.current_time()
         for i, item in enumerate(job_items):
+            t1 = trio.current_time()
+            if t1-t > LONGEST_IMPERCEPTIBLE_DELAY/2:
+                await trio.sleep(0)
+                t = t1
             nursery.start_soon(thread_worker, item, i, send_chan.clone())
         await send_chan.aclose()
         async for i, result in recv_chan:
