@@ -634,6 +634,22 @@ class ForceVolumeWindow:
             raise ValueError("Property map button should have been disabled")
 
         with self.spinner_scope() as cancel_scope:
+            # assign pbar and progress_image ASAP in case of cancel
+            pbar = tqdm_tk(
+                total=ncurves,
+                desc="Loading and resampling force curves...",
+                smoothing_time=0.25,
+                mininterval=LONGEST_IMPERCEPTIBLE_DELAY,
+                unit=" curves",
+                tk_parent=self.tkwindow,
+                grab=False,
+                leave=False,
+                cancel_callback=cancel_scope.cancel,
+            )
+            progress_image: matplotlib.image.AxesImage = self.img_ax.imshow(
+                np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
+            )  # transparent initial image, no need to use draw lock
+
             _, _, s = await self.opened_fvol.get_force_curve(0, 0)
             npts = len(_)
             s = s * resample_npts // npts
@@ -646,17 +662,6 @@ class ForceVolumeWindow:
             else:
                 raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
-            pbar = tqdm_tk(
-                total=ncurves,
-                desc="Loading and resampling force curves...",
-                smoothing_time=0.25,
-                mininterval=LONGEST_IMPERCEPTIBLE_DELAY,
-                unit=" curves",
-                tk_parent=self.tkwindow,
-                grab=False,
-                leave=False,
-                cancel_callback=cancel_scope.cancel,
-            )
             pbar_lock = threading.Lock()  # for thread_map
             pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
@@ -693,9 +698,6 @@ class ForceVolumeWindow:
             property_map = np.empty(
                 ncurves, dtype=np.dtype([(name, "f4") for name in property_names_units]),
             )
-            progress_image: matplotlib.image.AxesImage = self.img_ax.imshow(
-                np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
-            )  # transparent initial image, no need to use draw lock
             progress_array = progress_image.get_array()
             cancel_poller = async_tools.make_cancel_poller()
             draw_event = threading.Event()
