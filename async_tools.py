@@ -184,54 +184,54 @@ class ForceMapWorker:
 
 
 class FFMSingleWorker:
-    def __init__(self, drive, defl):
-        self.drive = drive
+    def __init__(self, raw, defl):
+        self.raw = raw
         self.defl = defl
 
     def get_force_curve(self, r, c):
-        z = self.drive[r, c]
+        z = self.raw[r, c]
         d = self.defl[r, c]
         return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION, len(z) // 2
 
     def get_all_curves(self, _poll_for_cancel=(lambda: None)):
         _poll_for_cancel()
-        z = self.drive[:] * NANOMETER_UNIT_CONVERSION
+        z = self.raw[:] * NANOMETER_UNIT_CONVERSION
         _poll_for_cancel()
         d = self.defl[:] * NANOMETER_UNIT_CONVERSION
         _poll_for_cancel()
-        s = self.drive.shape[-1] // 2
+        s = self.raw.shape[-1] // 2
         return z, d, s
 
 
 class FFMTraceRetraceWorker:
-    def __init__(self, drive_trace, defl_trace, drive_retrace, defl_retrace):
-        self.drive_trace = drive_trace
+    def __init__(self, raw_trace, defl_trace, raw_retrace, defl_retrace):
+        self.raw_trace = raw_trace
         self.defl_trace = defl_trace
-        self.drive_retrace = drive_retrace
+        self.raw_retrace = raw_retrace
         self.defl_retrace = defl_retrace
         self.trace = True
 
     def get_force_curve(self, r, c):
         if self.trace:
-            z = self.drive_trace[r, c]
+            z = self.raw_trace[r, c]
             d = self.defl_trace[r, c]
         else:
-            z = self.drive_retrace[r, c]
+            z = self.raw_retrace[r, c]
             d = self.defl_retrace[r, c]
         return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION, len(z) // 2
 
     def get_all_curves(self, _poll_for_cancel=(lambda: None)):
         _poll_for_cancel()
         if self.trace:
-            z = self.drive_trace[:] * NANOMETER_UNIT_CONVERSION
+            z = self.raw_trace[:] * NANOMETER_UNIT_CONVERSION
             _poll_for_cancel()
             d = self.defl_trace[:] * NANOMETER_UNIT_CONVERSION
         else:
-            z = self.drive_retrace[:] * NANOMETER_UNIT_CONVERSION
+            z = self.raw_retrace[:] * NANOMETER_UNIT_CONVERSION
             _poll_for_cancel()
             d = self.defl_retrace[:] * NANOMETER_UNIT_CONVERSION
         _poll_for_cancel()
-        s = self.drive_trace.shape[-1] // 2
+        s = self.raw_trace.shape[-1] // 2
         return z, d, s
 
 
@@ -311,16 +311,16 @@ class AsyncARH5File:
             self.scandown = bool(self.notes["ScanDown"])
             if "1" in h5data["FFM"]:
                 worker = FFMTraceRetraceWorker(
-                    h5data["FFM"]["0"]["Drive"],
+                    h5data["FFM"]["0"]["Raw"],
                     h5data["FFM"]["0"]["Defl"],
-                    h5data["FFM"]["1"]["Drive"],
+                    h5data["FFM"]["1"]["Raw"],
                     h5data["FFM"]["1"]["Defl"],
                 )
                 self._trace = True
             elif "0" in h5data["FFM"]:
-                worker = FFMSingleWorker(h5data["FFM"]["0"]["Drive"], h5data["FFM"]["0"]["Defl"],)
+                worker = FFMSingleWorker(h5data["FFM"]["0"]["Raw"], h5data["FFM"]["0"]["Defl"],)
             else:
-                worker = FFMSingleWorker(h5data["FFM"]["Drive"], h5data["FFM"]["Defl"],)
+                worker = FFMSingleWorker(h5data["FFM"]["Raw"], h5data["FFM"]["Defl"],)
         else:
             self.scandown = bool(self.notes["FMapScanDown"])
             worker = ForceMapWorker(h5data)
