@@ -18,7 +18,7 @@ A Docstring
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 import subprocess
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from functools import partial
 
 import h5py
@@ -385,46 +385,32 @@ async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bo
 
 async def spinner_task(set_spinner, set_normal, task_status):
     outstanding_scopes = 0
-    # will only be true before first ever scope entry or between
-    # last scope exit and new first scope entry
-    need_new_deadline = True
+    spinner_pending_or_active = trio.Event()
 
-    @contextmanager
-    def spinner_scope():
-        nonlocal outstanding_scopes, need_new_deadline
+    @asynccontextmanager
+    async def spinner_scope():
+        nonlocal outstanding_scopes, spinner_pending_or_active
         spinner_start.set()
         outstanding_scopes += 1
         with trio.CancelScope() as cancel_scope:
             try:
+                await spinner_pending_or_active.wait()
                 yield cancel_scope
             finally:
                 assert outstanding_scopes > 0
                 outstanding_scopes -= 1
                 if not outstanding_scopes:
                     set_normal()
-                    need_new_deadline = True
+                    pending_or_active_cscope.cancel()
+                    spinner_pending_or_active = trio.Event()
 
-    async def delayed_start():
-        # absolute deadline to start spinner means requests chain properly
-        await trio.sleep_until(deadline)
-        # actually set_spinner only if we're sure a scope is still open
-        if not need_new_deadline:
+    task_status.started(spinner_scope)
+    while True:
+        spinner_start = trio.Event()
+        await spinner_start.wait()
+
+        spinner_pending_or_active.set()
+        with trio.CancelScope() as pending_or_active_cscope:
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY * 5)
             set_spinner()
-
-    nursery: trio.Nursery
-    async with trio.open_nursery() as nursery:
-        # Ideally this would be called after assigning spinner_scope
-        # but it should not be inside the loop and nobody will open
-        # a spinner scope until the checkpoint
-        task_status.started(spinner_scope)
-        while True:
-            # wait for a new spinner_scope entry
-            spinner_start = trio.Event()
-            await spinner_start.wait()
-            if need_new_deadline:
-                # new first scope, new deadline
-                deadline = trio.current_time() + LONGEST_IMPERCEPTIBLE_DELAY * 5
-                need_new_deadline = False
-
-            # get that spinner going
-            nursery.start_soon(delayed_start)
+            await trio.sleep_forever()

@@ -248,7 +248,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
                     # One of the slowest processes. Stick it in a thread, but
                     # also prevent artists from changing the state while the
                     # thread is going using draw_lock
-                    with self.spinner_scope():
+                    async with self.spinner_scope():
                         # NOT self.draw() !! blit() can't be in thread
                         await trs(super().draw)
                         self.blit()
@@ -633,7 +633,7 @@ class ForceVolumeWindow:
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
 
-        with self.spinner_scope() as cancel_scope:
+        async with self.spinner_scope() as cancel_scope:
             # assign pbar and progress_image ASAP in case of cancel
             pbar = tqdm_tk(
                 total=ncurves,
@@ -861,7 +861,7 @@ class ForceVolumeWindow:
         self.fig.set_tight_layout(True)
 
     async def redraw_existing_points(self):
-        with self.spinner_scope():
+        async with self.spinner_scope():
             points = self.existing_points.copy()
             self.existing_points.clear()
             async with self.canvas.draw_lock:
@@ -926,7 +926,7 @@ class ForceVolumeWindow:
             for cancel_scope in self.cancels_pending:
                 cancel_scope.cancel()
             self.cancels_pending.clear()
-        with self.spinner_scope():
+        async with self.spinner_scope():
             with trio.CancelScope() as cancel_scope:
                 self.cancels_pending.add(cancel_scope)
 
