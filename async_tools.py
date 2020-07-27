@@ -30,7 +30,6 @@ LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 
 internal_threadpool_limiters = threadpool_limits(1)
 cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count())
-ctrs = partial(trio.to_thread.run_sync, cancellable=True, limiter=cpu_bound_limiter)
 trs = partial(trio.to_thread.run_sync, cancellable=True)
 
 

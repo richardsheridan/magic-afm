@@ -65,7 +65,7 @@ from tqdm.gui import tqdm_tk
 import async_tools
 import magic_calculation
 from magic_calculation import MANIPULATIONS
-from async_tools import trs, ctrs, LONGEST_IMPERCEPTIBLE_DELAY
+from async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY
 
 matplotlib.rcParams["savefig.dpi"] = 300
 
@@ -773,7 +773,7 @@ class ForceVolumeWindow:
             try:
                 await trs(pool_lock_helper)
                 async with trio.open_nursery() as nursery:
-                    nursery.start_soon(ctrs, calc_properties_in_process_pool)
+                    nursery.start_soon(trs, calc_properties_in_process_pool)
                     nursery.start_soon(progress_array_draw_task)
             finally:
                 pool_lock.release()
@@ -933,7 +933,7 @@ class ForceVolumeWindow:
                 # Calculation phase
                 # Do a few long-running jobs, likely to be canceled
                 force_curve = await self.opened_fvol.get_force_curve(point.r, point.c)
-                data = await ctrs(
+                data = await trs(
                     calculate_force_data, *force_curve, options, async_tools.make_cancel_poller()
                 )
                 del force_curve  # contained in data
