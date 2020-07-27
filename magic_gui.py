@@ -48,7 +48,6 @@ import matplotlib
 import numpy as np
 import outcome
 import trio
-import trio.testing
 from matplotlib.backend_bases import MouseButton
 from matplotlib.backends._backend_tk import FigureCanvasTk, blit as tk_blit
 from matplotlib.backends.backend_agg import FigureCanvasAgg
