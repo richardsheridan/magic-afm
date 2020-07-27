@@ -705,23 +705,10 @@ class ForceVolumeWindow:
             def calc_properties_in_process_pool():
                 """This task has essentially private access to delta, f, and properties
                 so it's totally cool to do this side-effect-full stuff in a thread"""
-                global pool
-
-                cancel_poller()
-                try:
-                    pool.__enter__()
-                except ValueError:
-                    pool = Pool()
                 try:
                     cancel_poller()
                     pbar.unpause()
-                    for i, properties in pool.imap_unordered(
-                        partial(
-                            magic_calculation.calc_properties_imap, **dataclasses.asdict(options),
-                        ),
-                        zip(delta, f, np.arange(ncurves)),
-                        chunksize=8,
-                    ):
+                    for i, properties in pool_iter:
                         cancel_poller()
 
                         if properties is None:
@@ -772,6 +759,16 @@ class ForceVolumeWindow:
 
             try:
                 await trs(pool_lock_helper)
+                global pool
+                try:
+                    pool.__enter__()
+                except ValueError:
+                    pool = await trs(Pool)
+                pool_iter = pool.imap_unordered(
+                    partial(magic_calculation.calc_properties_imap, **dataclasses.asdict(options)),
+                    zip(delta, f, range(ncurves)),
+                    chunksize=8,
+                )
                 async with trio.open_nursery() as nursery:
                     nursery.start_soon(trs, calc_properties_in_process_pool)
                     nursery.start_soon(progress_array_draw_task)
