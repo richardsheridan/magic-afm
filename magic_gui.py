@@ -251,7 +251,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
                     with self.spinner_scope():
                         # NOT self.draw() !! blit() can't be in thread
                         await trs(super().draw)
-                    self.blit()
+                        self.blit()
                     # Funny story, we want tight layout behavior on resize and
                     # a few other special cases, but also we want super().draw()
                     # and by extension draw_idle_task to be responsible for calling
