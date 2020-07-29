@@ -749,18 +749,7 @@ class ForceVolumeWindow:
                         # should only spin once or twice here
                         await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
 
-            def pool_lock_helper():
-                pool_lock.acquire()
-                try:
-                    cancel_poller()
-                except BaseException:
-                    # parent task may have cancelled and early-released long ago
-                    # so do it manually in this function
-                    pool_lock.release()
-                    raise
-
-            try:
-                await trs(pool_lock_helper)
+            async with pool_lock:
                 global pool
                 try:
                     pool.__enter__()
@@ -774,9 +763,6 @@ class ForceVolumeWindow:
                 async with trio.open_nursery() as nursery:
                     nursery.start_soon(trs, calc_properties_in_process_pool)
                     nursery.start_soon(progress_array_draw_task)
-            finally:
-                pool_lock.release()
-            await trio.sleep(0)  # check for race condition cancel
 
         async with self.canvas.draw_lock:
             progress_image.remove()
@@ -1386,7 +1372,7 @@ class FirstPool:
 
 
 pool = FirstPool()
-pool_lock = threading.Lock()
+pool_lock = trio.Lock()
 if __name__ == "__main__":
     freeze_support()
     main()
