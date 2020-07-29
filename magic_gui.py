@@ -733,7 +733,10 @@ class ForceVolumeWindow:
                 # Must be canceled when calc_properties_in_process_pool finishes
                 while True:
                     # wait for calc thread to finish an item
-                    await trs(draw_event.wait)
+                    try:
+                        await trs(draw_event.wait)
+                    finally:
+                        draw_event.set()  # don't leak cancelled threads
                     # arrange for draw to occur
                     async with self.canvas.draw_lock:
                         progress_image.changed()
