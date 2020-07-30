@@ -134,6 +134,7 @@ class ForceCurveData:
     defl: Optional[np.ndarray] = None
     ind: Optional[np.ndarray] = None
     z_tru: Optional[np.ndarray] = None
+    mindelta: Optional[np.ndarray] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1113,8 +1114,14 @@ def draw_force_curve(data, plot_ax, options):
             mopts = dict(
                 marker="X", markersize=8, linestyle="", markeredgecolor="k", markerfacecolor="k",
             )
-            artists.extend(plot_ax.plot(data.ind, data.defl * options.k + data.beta[1], **mopts,))
-            artists.extend(plot_ax.plot(0, data.beta[1], **mopts,))
+            artists.extend(
+                plot_ax.plot(
+                    data.ind + data.mindelta - data.beta[2],
+                    data.defl * options.k + data.beta[1],
+                    **mopts,
+                )
+            )
+            artists.extend(plot_ax.plot(data.mindelta - data.beta[2], data.beta[1], **mopts,))
         else:
             artists.extend(plot_ax.plot(data.delta[: data.s], data.f[: data.s]))
             artists.extend(plot_ax.plot(data.delta[data.s :], data.f[data.s :]))
@@ -1150,11 +1157,11 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
     d_fit = f_fit / options.k
     cancel_poller()
     if np.all(np.isfinite(beta)):
-        deflection, indentation, z_true_surface = magic_calculation.calc_def_ind_ztru(
+        deflection, indentation, z_true_surface, mindelta = magic_calculation.calc_def_ind_ztru(
             f[sl], beta, **dataclasses.asdict(options)
         )
     else:
-        deflection, indentation, z_true_surface = np.nan, np.nan, np.nan
+        deflection, indentation, z_true_surface, mindelta = np.nan, np.nan, np.nan, np.nan
     return ForceCurveData(
         s=s,
         z=z,
@@ -1170,6 +1177,7 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
         defl=deflection,
         ind=indentation,
         z_tru=z_true_surface,
+        mindelta=mindelta,
     )
 
 
