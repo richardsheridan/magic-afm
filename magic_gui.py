@@ -1075,7 +1075,7 @@ def draw_data_table(data, ax):
     table = ax.table(
         [
             [
-                "{:.2f}±{:.2f}".format(data.beta[0], data.beta_err[0],),
+                "{:.2f}±{:.2f}".format(data.beta[0]*fac, data.beta_err[0]*fac,),
                 "{:.2f}±{:.2f}".format(-data.beta[1], -data.beta_err[1]),
                 "{:.2f}".format(data.defl),
                 "{:.2f}".format(data.ind),
