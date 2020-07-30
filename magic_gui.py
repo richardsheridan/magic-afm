@@ -736,8 +736,9 @@ class ForceVolumeWindow:
                     # wait for calc thread to finish an item
                     try:
                         await trs(draw_event.wait)
-                    finally:
+                    except:
                         draw_event.set()  # don't leak cancelled threads
+                        raise
                     # arrange for draw to occur
                     async with self.canvas.draw_lock:
                         progress_image.changed()
