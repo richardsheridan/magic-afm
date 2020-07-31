@@ -854,8 +854,6 @@ class ForceVolumeWindow:
 
     async def redraw_existing_points(self):
         async with self.spinner_scope():
-            points = self.existing_points.copy()
-            self.existing_points.clear()
             async with self.canvas.draw_lock:
                 for artist in self.artists:
                     artist.remove()
@@ -863,8 +861,8 @@ class ForceVolumeWindow:
                 self.plot_ax.set_prop_cycle(None)
             self.artists.clear()
             await trio.sleep(0)
-            for point in points:
-                await self.plot_curve_response(point, True)
+            for point in self.existing_points:
+                await self.plot_curve_response(point, False)
             self.canvas.draw_idle()
 
     async def manipulate_callback(self):
@@ -900,10 +898,8 @@ class ForceVolumeWindow:
             self.colorbar.solids.set_clim(vmin, vmax)
             self.canvas.draw_idle()
 
-    async def plot_curve_response(self, point: ImagePoint, shift_held):
-        if shift_held and point in self.existing_points:
-            return
-        self.existing_points.add(point)  # should be before 1st await
+    async def plot_curve_response(self, point: ImagePoint, clear_previous):
+        self.existing_points.add(point)  # should be before 1st checkpoint
         self.plot_ax.set_autoscale_on(
             True
         )  # XXX: only needed on first plot. Maybe later make optional?
@@ -914,7 +910,7 @@ class ForceVolumeWindow:
             radius=float(self.fit_radius_sbox.get()),
             tau=float(self.fit_tau_sbox.get()),
         )
-        if not shift_held:
+        if clear_previous:
             for cancel_scope in self.cancels_pending:
                 cancel_scope.cancel()
             self.cancels_pending.clear()
@@ -943,7 +939,7 @@ class ForceVolumeWindow:
             async with self.canvas.draw_lock:
                 # Clearing Phase
                 # Clear previous artists and reset plots (faster than .clear()?)
-                if not shift_held:
+                if clear_previous:
                     for artist in self.artists:
                         artist.remove()
                     self.artists.clear()
@@ -984,7 +980,9 @@ class ForceVolumeWindow:
                 return
             point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, self.transforms)
             shift_held = mouseevent.guiEvent.state & TkState.SHIFT
-            await self.plot_curve_response(point, shift_held)
+            if shift_held and point in self.existing_points:
+                return
+            await self.plot_curve_response(point, not shift_held)
             self.canvas.draw_idle()
         elif mouseevent.inaxes is self.colorbar.ax:
             if mouseevent.button == MouseButton.MIDDLE or (
