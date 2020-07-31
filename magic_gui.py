@@ -98,6 +98,7 @@ class TkState(enum.IntFlag):
     MB1      = 0b00100000000
     MB2      = 0b01000000000
     MB3      = 0b10000000000
+    ALT=0b100000000000000000
     # fmt: on
 
 
@@ -428,8 +429,12 @@ class TkHost:
             date = datetime.datetime.now().isoformat().replace(":", ";")
             with open(f"traceback-{date}.dump", "w") as file:
                 exc = outcome_.error
-                traceback.print_exception(type(exc), exc, exc.__traceback__, file=file,)
-                traceback.print_exception(type(exc), exc, exc.__traceback__,)
+                traceback.print_exception(
+                    type(exc), exc, exc.__traceback__, file=file,
+                )
+                traceback.print_exception(
+                    type(exc), exc, exc.__traceback__,
+                )
         self.root.destroy()
 
 
@@ -975,17 +980,19 @@ class ForceVolumeWindow:
         control_held = event.guiEvent.state & TkState.CONTROL
         if event.name == "motion_notify_event" and not control_held:
             return
-        shift_held = mouseevent.guiEvent.state & TkState.SHIFT
         if mouseevent.inaxes is None:
             return
         elif mouseevent.inaxes is self.img_ax:
             if mouseevent.button != MouseButton.LEFT:
                 return
             point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, self.transforms)
+            shift_held = mouseevent.guiEvent.state & TkState.SHIFT
             await self.plot_curve_response(point, shift_held)
             self.canvas.draw_idle()
         elif mouseevent.inaxes is self.colorbar.ax:
-            if mouseevent.button == MouseButton.MIDDLE:
+            if mouseevent.button == MouseButton.MIDDLE or (
+                mouseevent.guiEvent.state & TkState.ALT and mouseevent.button == MouseButton.LEFT
+            ):
                 await self.colorbar_freeze_response()
             elif mouseevent.button == MouseButton.LEFT:
                 vmin = self.colorbar.norm.vmin
@@ -1372,8 +1379,12 @@ def main():
         date = datetime.datetime.now().isoformat().replace(":", ";")
         with open(f"traceback-{date}.dump", "w") as file:
             exc = outcome_.error
-            traceback.print_exception(type(exc), exc, exc.__traceback__, file=file,)
-            traceback.print_exception(type(exc), exc, exc.__traceback__,)
+            traceback.print_exception(
+                type(exc), exc, exc.__traceback__, file=file,
+            )
+            traceback.print_exception(
+                type(exc), exc, exc.__traceback__,
+            )
 
 
 class FirstPool:
