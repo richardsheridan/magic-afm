@@ -34,12 +34,13 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import collections
 import dataclasses
+import traceback
 import enum
 import tkinter as tk
-import traceback
+import tkinter.filedialog
+from tkinter import ttk
 from contextlib import nullcontext
 from functools import partial, wraps
-from tkinter import ttk, filedialog
 from typing import Optional, Callable
 from multiprocessing import Pool, freeze_support
 import threading
@@ -1217,7 +1218,7 @@ async def open_task(root):
     # Choose file
     filename = await trs(
         partial(
-            filedialog.askopenfilename,
+            tk.filedialog.askopenfilename,
             master=root,
             filetypes=[("AFM Data", "*.h5 *.ARDF"), ("AR HDF5", "*.h5"), ("ARDF", "*.ARDF"),],
         )
