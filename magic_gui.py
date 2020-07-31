@@ -707,21 +707,15 @@ class ForceVolumeWindow:
                 ncurves, dtype=np.dtype([(name, "f4") for name in property_names_units]),
             )
             progress_array = progress_image.get_array()
-            cancel_poller = async_tools.make_cancel_poller()
-            draw_event = threading.Event()
+            draw_event = trio.Event()
 
-            def calc_properties_in_process_pool():
-                """This task has essentially private access to delta, f, and properties
-                so it's totally cool to do this side-effect-full stuff in a thread"""
+            async def calc_property_map_task():
                 try:
-                    cancel_poller()
                     first = True
-                    for i, properties in pool_iter:
+                    async for i, properties in pool_iter:
                         if first:
                             pbar.unpause()
                             first = False
-
-                        cancel_poller()
 
                         if properties is None:
                             property_map[i] = np.nan
@@ -739,25 +733,20 @@ class ForceVolumeWindow:
                     raise
                 finally:
                     # stop progress_array_draw_task
-                    trio.from_thread.run_sync(nursery.cancel_scope.cancel)
+                    nursery.cancel_scope.cancel()
 
             async def progress_array_draw_task():
                 nonlocal draw_event
                 # Must be canceled when calc_properties_in_process_pool finishes
                 while True:
                     # wait for calc thread to finish an item
-                    try:
-                        await trs(draw_event.wait)
-                    except:
-                        draw_event.set()  # don't leak cancelled threads
-                        raise
+                    await draw_event.wait()
                     # arrange for draw to occur
                     async with self.canvas.draw_lock:
                         progress_image.changed()
                         progress_image.pchanged()
                         self.canvas.draw_idle()
-                    # "Clearing is bad" -- njsmith
-                    draw_event = threading.Event()
+                    draw_event = trio.Event()
                     # wait for idle_draw_task to start drawing
                     while not self.canvas.draw_lock.locked():
                         # should only spin once or twice here
@@ -769,13 +758,17 @@ class ForceVolumeWindow:
                     pool.__enter__()
                 except ValueError:
                     pool = await trs(Pool)
-                pool_iter = pool.imap_unordered(
-                    partial(magic_calculation.calc_properties_imap, **dataclasses.asdict(options)),
-                    zip(delta, f, range(ncurves)),
-                    chunksize=8,
+                pool_iter = async_tools.asyncify_iterator(
+                    pool.imap_unordered(
+                        partial(
+                            magic_calculation.calc_properties_imap, **dataclasses.asdict(options)
+                        ),
+                        zip(delta, f, range(ncurves)),
+                        chunksize=8,
+                    )
                 )
                 async with trio.open_nursery() as nursery:
-                    nursery.start_soon(trs, calc_properties_in_process_pool)
+                    nursery.start_soon(calc_property_map_task)
                     nursery.start_soon(progress_array_draw_task)
 
         async with self.canvas.draw_lock:
