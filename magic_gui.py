@@ -425,8 +425,11 @@ class TkHost:
         """
         print(f"Trio shutdown. Outcome: {outcome_}")
         if isinstance(outcome_, outcome.Error):
-            exc = outcome_.error
-            traceback.print_exception(type(exc), exc, exc.__traceback__)
+            date = datetime.datetime.now().isoformat().replace(":", ";")
+            with open(f"traceback-{date}.dump", "w") as file:
+                exc = outcome_.error
+                traceback.print_exception(type(exc), exc, exc.__traceback__, file=file,)
+                traceback.print_exception(type(exc), exc, exc.__traceback__,)
         self.root.destroy()
 
 
@@ -1075,7 +1078,7 @@ def draw_data_table(data, ax):
     table = ax.table(
         [
             [
-                "{:.2f}±{:.2f}".format(data.beta[0]*fac, data.beta_err[0]*fac,),
+                "{:.2f}±{:.2f}".format(data.beta[0] * fac, data.beta_err[0] * fac,),
                 "{:.2f}±{:.2f}".format(-data.beta[1], -data.beta_err[1]),
                 "{:.2f}".format(data.defl),
                 "{:.2f}".format(data.ind),
@@ -1366,8 +1369,11 @@ def main():
     outcome_ = outcome.capture(root.mainloop)
     print("Tk shutdown. Outcome:", outcome_)
     if isinstance(outcome_, outcome.Error):
-        exc = outcome_.error
-        traceback.print_exception(type(exc), exc, exc.__traceback__)
+        date = datetime.datetime.now().isoformat().replace(":", ";")
+        with open(f"traceback-{date}.dump", "w") as file:
+            exc = outcome_.error
+            traceback.print_exception(type(exc), exc, exc.__traceback__, file=file,)
+            traceback.print_exception(type(exc), exc, exc.__traceback__,)
 
 
 class FirstPool:
