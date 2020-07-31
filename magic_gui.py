@@ -648,7 +648,7 @@ class ForceVolumeWindow:
                 total=ncurves,
                 desc="Loading and resampling force curves...",
                 smoothing_time=0.25,
-                mininterval=LONGEST_IMPERCEPTIBLE_DELAY,
+                mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 2,
                 unit=" curves",
                 tk_parent=self.tkwindow,
                 grab=False,
@@ -672,7 +672,6 @@ class ForceVolumeWindow:
                 raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
             pbar_lock = threading.Lock()  # for thread_map
-            pbar.update(0)
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
 
             delta = np.empty((ncurves, segment_npts), np.float32)
@@ -716,8 +715,12 @@ class ForceVolumeWindow:
                 so it's totally cool to do this side-effect-full stuff in a thread"""
                 try:
                     cancel_poller()
-                    pbar.unpause()
+                    first = True
                     for i, properties in pool_iter:
+                        if first:
+                            pbar.unpause()
+                            first = False
+
                         cancel_poller()
 
                         if properties is None:
