@@ -1210,7 +1210,7 @@ async def ardf_converter(filename, root):
             await window.window_task()
 
 
-async def open_callback(root):
+async def open_task(root):
     """Open a file using a dialog box, then create a window for data analysis
 
     """
@@ -1307,11 +1307,34 @@ async def about_task(root):
     top.destroy()
 
 
+def open_with_os_default(file_url_etc):
+    """Open a string using the OS's default program
+
+    from https://stackoverflow.com/a/61968360/4504950 CC BY-SA 4.0
+    """
+    import subprocess
+    import os
+
+    try:  # should work on Windows
+        os.startfile(file_url_etc)
+    except AttributeError:
+        try:  # should work on MacOS and most linux versions
+            subprocess.call(["open", file_url_etc])
+        except:
+            print("Could not open with OS")
+
+
 async def main_task(root):
     nursery: trio.Nursery
     async with trio.open_nursery() as nursery:
+        # local names of actions
+        quit_callback = nursery.cancel_scope.cancel
+        open_callback = partial(nursery.start_soon, open_task, root)
+        about_callback = partial(nursery.start_soon, about_task, root)
+        help_action = partial(open_with_os_default, "help_page.html")
+
         # calls root.destroy by default
-        root.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+        root.protocol("WM_DELETE_WINDOW", quit_callback)
 
         # Build menus
         menu_frame = tk.Menu(root, relief="groove", tearoff=False)
@@ -1319,38 +1342,28 @@ async def main_task(root):
 
         file_menu = tk.Menu(menu_frame, tearoff=False)
         file_menu.add_command(
-            label="Open...",
-            accelerator="Ctrl+O",
-            underline=0,
-            command=partial(nursery.start_soon, open_callback, root),
+            label="Open...", accelerator="Ctrl+O", underline=0, command=open_callback,
         )
-        file_menu.bind("<KeyRelease-o>", func=partial(nursery.start_soon, open_callback, root))
-        root.bind_all(
-            "<Control-KeyPress-o>", func=impartial(partial(nursery.start_soon, open_callback, root))
-        )
+        file_menu.bind("<KeyRelease-o>", func=open_callback)
+        root.bind_all("<Control-KeyPress-o>", func=impartial(open_callback))
         file_menu.add_command(
-            label="Quit", accelerator="Ctrl+Q", underline=0, command=nursery.cancel_scope.cancel
+            label="Quit", accelerator="Ctrl+Q", underline=0, command=quit_callback
         )
-        file_menu.bind("<KeyRelease-q>", func=nursery.cancel_scope.cancel)
-        root.bind_all("<Control-KeyPress-q>", func=impartial(nursery.cancel_scope.cancel))
+        file_menu.bind("<KeyRelease-q>", func=quit_callback)
+        root.bind_all("<Control-KeyPress-q>", func=impartial(quit_callback))
         menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
 
         help_menu = tk.Menu(menu_frame, tearoff=False)
         help_menu.add_command(
-            label="About...",
-            accelerator=None,
-            underline=0,
-            command=partial(nursery.start_soon, about_task, root),
+            label="Open help", accelerator="F1", underline=5, command=help_action,
         )
-        help_menu.bind("<KeyRelease-a>", func=partial(nursery.start_soon, about_task, root))
-        root.bind_all(
-            "<Control-KeyPress-F1>", func=impartial(partial(nursery.start_soon, about_task, root))
+        help_menu.bind("<KeyRelease-h>", func=help_action)
+        root.bind_all("<KeyRelease-F1>", func=impartial(help_action))
+        help_menu.add_command(
+            label="About...", accelerator=None, underline=0, command=about_callback,
         )
+        help_menu.bind("<KeyRelease-a>", func=about_callback)
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
-
-        toolbar_frame = ttk.Frame(root)
-        # Eventually some buttons go here!
-        toolbar_frame.grid(row=0, column=0, sticky="ew")
 
         await trio.sleep_forever()  # needed if nursery never starts a long running child
 
