@@ -383,11 +383,13 @@ async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bo
 
 async def spinner_task(set_spinner, set_normal, task_status):
     outstanding_scopes = 0
+    spinner_start = trio.Event()
     spinner_pending_or_active = trio.Event()
 
     @asynccontextmanager
     async def spinner_scope():
-        nonlocal outstanding_scopes, spinner_pending_or_active
+        nonlocal outstanding_scopes
+        nonlocal spinner_start, spinner_pending_or_active
         spinner_start.set()
         outstanding_scopes += 1
         with trio.CancelScope() as cancel_scope:
@@ -401,10 +403,10 @@ async def spinner_task(set_spinner, set_normal, task_status):
                     set_normal()
                     pending_or_active_cscope.cancel()
                     spinner_pending_or_active = trio.Event()
+                    spinner_start = trio.Event()
 
     task_status.started(spinner_scope)
     while True:
-        spinner_start = trio.Event()
         await spinner_start.wait()
 
         spinner_pending_or_active.set()
