@@ -382,6 +382,7 @@ async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bo
 
 
 async def spinner_task(set_spinner, set_normal, task_status):
+    # Invariant: number of open+opening spinner_scopes equals outstanding scopes
     outstanding_scopes = 0
     spinner_start = trio.Event()
     spinner_pending_or_active = trio.Event()
@@ -395,18 +396,23 @@ async def spinner_task(set_spinner, set_normal, task_status):
         with trio.CancelScope() as cancel_scope:
             try:
                 await spinner_pending_or_active.wait()
+                # Invariant: spinner_pending_or_active set while any scopes entered
                 yield cancel_scope
             finally:
                 assert outstanding_scopes > 0
                 outstanding_scopes -= 1
+                # Invariant: if zero, task state is equivalent to initial state
+                # just after calling task_status.started
                 if not outstanding_scopes:
                     set_normal()
+                    # these actions must occur atomically
                     pending_or_active_cscope.cancel()
                     spinner_pending_or_active = trio.Event()
                     spinner_start = trio.Event()
 
     task_status.started(spinner_scope)
     while True:
+        # Invariant: set the spinner once after a delay after spinner_start.set
         await spinner_start.wait()
 
         spinner_pending_or_active.set()
