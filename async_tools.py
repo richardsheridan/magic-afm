@@ -18,6 +18,7 @@ A Docstring
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 import subprocess
+import abc
 from contextlib import asynccontextmanager
 from functools import partial
 
@@ -25,6 +26,8 @@ import h5py
 import numpy as np
 import trio
 from threadpoolctl import threadpool_limits
+
+import magic_calculation
 
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 
@@ -113,7 +116,7 @@ async def convert_ardf(
     return h5file_path
 
 
-class BaseForceVolumeFile:
+class BaseForceVolumeFile(metaclass=abc.ABCMeta):
 
     _basic_units_map = {}
 
@@ -128,9 +131,11 @@ class BaseForceVolumeFile:
     def image_names(self):
         return self._calc_images.keys() | self._file_image_names
 
+    @abc.abstractmethod
     def ainitialize(self):
         raise NotImplementedError
 
+    @abc.abstractmethod
     def aclose(self):
         raise NotImplementedError
 
@@ -161,14 +166,56 @@ class BaseForceVolumeFile:
             image_name = image_name[:-5]
         return image_name
 
+    @abc.abstractmethod
     async def get_force_curve(self, r, c):
         raise NotImplementedError
+
+    @abc.abstractmethod
+    async def get_all_curves(self):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    async def get_image(self, image_name):
+        raise NotImplementedError
+
+
+class DemoForceVolumeFile(BaseForceVolumeFile):
+    def __init__(self, path):
+        path = trio.Path(path)
+        super().__init__(path)
+        self._file_image_names.add("Demo")
+        self.params["scansize"] = 100
+        self.params["k"] = 1
+        self.scandown = True
+
+    async def ainitialize(self):
+        self.shape = (64, 64)
+        self.npts = 1024
+        self.delta = (np.cos(np.linspace(0, np.pi * 2, self.npts, endpoint=False)) - 0.90) * 25
+        return self
+
+    async def aclose(self):
+        pass
+
+    async def get_force_curve(self, r, c):
+        gen = np.random.default_rng(seed=(r, c))
+        fext = magic_calculation.force_curve(
+            magic_calculation.red_extend, self.delta[: self.npts // 2], 1, 10, 1, -10, 1, 0, 0, 10
+        )
+        fret = magic_calculation.force_curve(
+            magic_calculation.red_retract, self.delta[self.npts // 2 :], 1, 10, 1, -10, 1, 0, 0, 10
+        )
+        d = np.concatenate((fext, fret))
+        z = self.delta + d
+        d += gen.normal(scale=0.1, size=d.size)
+        z += gen.normal(scale=0.01, size=z.size)
+        return z, d, self.npts // 2
 
     async def get_all_curves(self):
         raise NotImplementedError
 
     async def get_image(self, image_name):
-        raise NotImplementedError
+        return np.zeros(self.shape, dtype=np.float32)
 
 
 NANOMETER_UNIT_CONVERSION = 1e9  # maybe we can intelligently read this from the file someday
@@ -394,7 +441,7 @@ async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bo
     async with trio.open_nursery() as nursery:
         t = trio.current_time()
         for i, item in enumerate(job_items):
-            if trio.current_time()-t > LONGEST_IMPERCEPTIBLE_DELAY/2:
+            if trio.current_time() - t > LONGEST_IMPERCEPTIBLE_DELAY / 2:
                 await trio.sleep(0)
                 t = trio.current_time()
             nursery.start_soon(thread_worker, item, i, send_chan.clone())

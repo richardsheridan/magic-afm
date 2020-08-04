@@ -4,6 +4,7 @@
 __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
+import pathlib
 import sys
 from itertools import repeat
 
@@ -1043,7 +1044,7 @@ class ForceVolumeWindow:
             # StringVar.set() won't be effective to plot unless it happens after the
             # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
             # due to resize, but let's not rely on that!
-            for name in ("MapHeight", "ZSensorTrace"):
+            for name in ("MapHeight", "ZSensorTrace", "Demo"):
                 if name in self.opened_fvol.image_names:
                     self.image_name_strvar.set(name)
                     break
@@ -1224,6 +1225,12 @@ async def open_task(root):
         raise ValueError("Unknown filename suffix: ", suffix)
 
 
+async def demo_task(root):
+    async with async_tools.DemoForceVolumeFile("Demo") as opened_arh5:
+        window = await trs(ForceVolumeWindow, root, opened_arh5)
+        await window.window_task()
+
+
 async def about_task(root):
     """Display and control the About menu
 
@@ -1316,6 +1323,7 @@ async def main_task(root):
         # local names of actions
         quit_callback = nursery.cancel_scope.cancel
         open_callback = partial(nursery.start_soon, open_task, root)
+        demo_callback = partial(nursery.start_soon, demo_task, root)
         about_callback = partial(nursery.start_soon, about_task, root)
         help_action = partial(open_with_os_default, "help_page.html")
 
@@ -1332,6 +1340,7 @@ async def main_task(root):
         )
         file_menu.bind("<KeyRelease-o>", func=open_callback)
         root.bind_all("<Control-KeyPress-o>", func=impartial(open_callback))
+        file_menu.add_command(label="Demo", underline=0, command=demo_callback)
         file_menu.add_command(
             label="Quit", accelerator="Ctrl+Q", underline=0, command=quit_callback
         )
