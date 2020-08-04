@@ -457,7 +457,7 @@ class ForceVolumeWindow:
     def __init__(self, root, opened_fvol, figsize=default_figsize, **kwargs):
         self.opened_fvol = opened_fvol
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
-        window.wm_title(self.opened_fvol.h5file_path.name)
+        window.wm_title(self.opened_fvol.path.name)
         window._host = self
 
         # Build figure

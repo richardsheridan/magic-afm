@@ -113,6 +113,63 @@ async def convert_ardf(
     return h5file_path
 
 
+class BaseForceVolumeFile:
+
+    _basic_units_map = {}
+
+    def __init__(self, path):
+        self.path = path
+        self._units_map = self._basic_units_map.copy()
+        self._calc_images = {}
+        self._file_image_names = set()
+        self.params = {}
+
+    @property
+    def image_names(self):
+        return self._calc_images.keys() | self._file_image_names
+
+    def ainitialize(self):
+        raise NotImplementedError
+
+    def aclose(self):
+        raise NotImplementedError
+
+    async def __aenter__(self):
+        await self.ainitialize()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.aclose()
+
+    def get_image_units(self, image_name):
+        image_name = self.strip_trace(image_name)
+        return self._units_map.get(image_name, "V")
+
+    def add_image(self, image_name, units, image):
+        self._calc_images[image_name] = image
+        image_name = self.strip_trace(image_name)
+        self._units_map[image_name] = units
+
+    @staticmethod
+    def strip_trace(image_name):
+        # python 3.9+
+        # image_name = image_name.removesuffix("Trace").removesuffix("Retrace")
+        if image_name.endswith("Trace"):
+            image_name = image_name[:-5]
+        if image_name.endswith("Retrace"):
+            image_name = image_name[:-6]
+        return image_name
+
+    async def get_force_curve(self, r, c):
+        raise NotImplementedError
+
+    async def get_all_curves(self):
+        raise NotImplementedError
+
+    async def get_image(self, image_name):
+        raise NotImplementedError
+
+
 NANOMETER_UNIT_CONVERSION = 1e9  # maybe we can intelligently read this from the file someday
 
 
@@ -234,7 +291,7 @@ class FFMTraceRetraceWorker:
         return z, d, s
 
 
-class AsyncARH5File:
+class AsyncARH5File(BaseForceVolumeFile):
 
     _basic_units_map = {
         "Adhesion": "N",
@@ -248,12 +305,8 @@ class AsyncARH5File:
         "MapHeight": "m",
     }
 
-    def __init__(self, h5file_path):
-        self.h5file_path = h5file_path
-        self._units_map = self._basic_units_map.copy()
-        self._calc_images = {}
-        self._h5_image_names = set()
-        self.params = {}
+    def __init__(self, path):
+        super().__init__(path)
         self._trace = None
 
     @property
@@ -265,12 +318,8 @@ class AsyncARH5File:
         self._worker.trace = trace
         self._trace = trace
 
-    @property
-    def image_names(self):
-        return self._calc_images.keys() | self._h5_image_names
-
     async def ainitialize(self):
-        h5data = await trs(h5py.File, self.h5file_path, "r")
+        h5data = await trs(h5py.File, self.path, "r")
         # The notes have a very regular key-value structure, so we convert to dict for later access
         self.notes = await trs(
             dict,
@@ -285,7 +334,7 @@ class AsyncARH5File:
         self._h5data = h5data
         self._worker = worker
         self._images = images
-        self._h5_image_names = image_names
+        self._file_image_names = image_names
         self.shape = await trs(lambda name: images[name].shape, next(iter(image_names)))
         self.npts = len((await self.get_force_curve(0, 0))[0])
 
@@ -297,13 +346,6 @@ class AsyncARH5File:
     async def aclose(self):
         with trio.CancelScope(shield=True):
             await trs(self._h5data.close)
-
-    async def __aenter__(self):
-        await self.ainitialize()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.aclose()
 
     def _choose_worker(self, h5data):
         if "FFM" in h5data:
@@ -335,25 +377,6 @@ class AsyncARH5File:
         if image_name in self._calc_images:
             return self._calc_images[image_name]
         return await trs(self._images.__getitem__, image_name)
-
-    def get_image_units(self, image_name):
-        image_name = self.strip_trace(image_name)
-        return self._units_map.get(image_name, "V")
-
-    def add_image(self, image_name, units, image):
-        self._calc_images[image_name] = image
-        image_name = self.strip_trace(image_name)
-        self._units_map[image_name] = units
-
-    @staticmethod
-    def strip_trace(image_name):
-        # python 3.9+
-        # image_name = image_name.removesuffix("Trace").removesuffix("Retrace")
-        if image_name.endswith("Trace"):
-            image_name = image_name[:-5]
-        if image_name.endswith("Retrace"):
-            image_name = image_name[:-6]
-        return image_name
 
 
 async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bound_limiter):
