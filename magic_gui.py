@@ -5,6 +5,7 @@ __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
 import sys
+from itertools import repeat
 
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     from _version import __version__
@@ -180,9 +181,7 @@ class ImagePoint:
 class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
         self._resize_cancels_pending = set()
-        self._trio_draw_event = trio.Event()
-        # draw_lock must be used around all MPL *drawing* code or suffer jank
-        self.draw_lock = trio.Lock()
+        self.draw_send, self.draw_recv = trio.open_memory_channel(0)
         self._idle_task_running = False
         super(FigureCanvasTk, self).__init__(figure)
         t1, t2, w, h = self.figure.bbox.bounds
@@ -231,38 +230,38 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         self._tkcanvas.focus_set()
 
     def draw_idle(self):
-        self._trio_draw_event.set()
+        async def null_draw_afn():
+            pass
+
+        try:
+            self.draw_send.send_nowait(null_draw_afn)
+        except trio.WouldBlock:
+            pass
 
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
-        assert not self._idle_task_running
-        self._idle_task_running = True
         task_status.started()
-        try:
-            while True:
-                # Sleep until someone calls draw_idle()
-                await self._trio_draw_event.wait()
-                # Batch rapid draw_idle requests
+        while True:
+            # Sleep until someone sends artist calls
+            afn = await self.draw_recv.receive()
+            async with self.spinner_scope():
+                await afn()
+                # Batch rapid artist call requests
                 # This batching calibrates LONGEST_IMPERCEPTIBLE_DELAY
-                await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-                async with self.draw_lock:
-                    # allow tasks to trigger next draw
-                    self._trio_draw_event = trio.Event()
-                    # One of the slowest processes. Stick it in a thread, but
-                    # also prevent artists from changing the state while the
-                    # thread is going using draw_lock
-                    async with self.spinner_scope():
-                        # NOT self.draw() !! blit() can't be in thread
-                        await trs(super().draw)
-                        self.blit()
-                    # Funny story, we want tight layout behavior on resize and
-                    # a few other special cases, but also we want super().draw()
-                    # and by extension draw_idle_task to be responsible for calling
-                    # figure.tight_layout().
-                    # So everywhere desired, use set_tight_layout(True) before
-                    # calling idle_draw() and it will be reset here.
-                    self.figure.set_tight_layout(False)
-        finally:
-            self._idle_task_running = False
+                with trio.move_on_after(LONGEST_IMPERCEPTIBLE_DELAY):
+                    async for afn in self.draw_recv:
+                        with trio.CancelScope(shield=True):
+                            await afn()
+                # One of the slowest processes. Stick it in a thread.
+                # NOT self.draw() !! blit() can't be in a thread.
+                await trs(super().draw)
+                self.blit()
+            # Funny story, we want tight layout behavior on resize and
+            # a few other special cases, but also we want super().draw()
+            # and by extension draw_idle_task to be responsible for calling
+            # figure.tight_layout().
+            # So everywhere desired, send set_tight_layout(True)
+            # and it will be reset here.
+            self.figure.set_tight_layout(False)
 
     def draw(self):
         super().draw()
@@ -283,9 +282,11 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         width, height = event.width, event.height
         winch = width / dpival
         hinch = height / dpival
-        with trio.CancelScope() as cancel_scope:
-            self._resize_cancels_pending.add(cancel_scope)
-            async with self.draw_lock:
+        cancel_scope = trio.CancelScope()
+        self._resize_cancels_pending.add(cancel_scope)
+
+        async def draw_afn():
+            with cancel_scope:
                 self.figure.set_size_inches(winch, hinch, forward=False)
                 self._tkcanvas.delete(self._tkphoto)
                 self._tkphoto = await trs(
@@ -303,7 +304,9 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
                 )
                 self.figure.set_tight_layout(True)
                 self.resize_event()  # draw_idle called in here
-        self._resize_cancels_pending.discard(cancel_scope)
+            self._resize_cancels_pending.discard(cancel_scope)
+
+        await self.draw_send.send(draw_afn)
 
     def teach_canvas_to_use_trio(self, nursery, spinner_scope):
         self._tkcanvas.bind("<Configure>", partial(nursery.start_soon, self.resize))
@@ -629,13 +632,14 @@ class ForceVolumeWindow:
         self.image_name_menu.configure(values=names, width=min(longest - 1, 20))
 
     async def calc_prop_map_callback(self):
-        options = ForceCurveOptions(
+        optionsdict = dict(
             fit_mode=self.fit_intvar.get(),
             disp_kind=self.disp_kind_intvar.get(),
             k=self.opened_fvol.params["k"],
             radius=float(self.fit_radius_sbox.get()),
             tau=float(self.fit_tau_sbox.get()),
         )
+        options = ForceCurveOptions(**optionsdict)
         img_shape = self.opened_fvol.shape
         ncurves = img_shape[0] * img_shape[1]
         resample_npts = 512
@@ -657,7 +661,7 @@ class ForceVolumeWindow:
             )
             progress_image: matplotlib.image.AxesImage = self.img_ax.imshow(
                 np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
-            )  # transparent initial image, no need to use draw lock
+            )  # transparent initial image, no need to draw
 
             _, _, s = await self.opened_fvol.get_force_curve(0, 0)
             npts = len(_)
@@ -707,9 +711,24 @@ class ForceVolumeWindow:
                 ncurves, dtype=np.dtype([(name, "f4") for name in property_names_units]),
             )
             progress_array = progress_image.get_array()
-            draw_event = trio.Event()
 
-            async def calc_property_map_task():
+            async def draw_afn():
+                progress_image.changed()
+                progress_image.pchanged()
+
+            async with pool_lock:
+                global pool
+                try:
+                    pool.__enter__()
+                except ValueError:
+                    pool = await trs(Pool)
+                pool_iter = async_tools.asyncify_iterator(
+                    pool.imap_unordered(
+                        magic_calculation.calc_properties_imap,
+                        zip(delta, f, range(ncurves), repeat(optionsdict)),
+                        chunksize=8,
+                    )
+                )
                 try:
                     first = True
                     async for i, properties in pool_iter:
@@ -727,53 +746,18 @@ class ForceVolumeWindow:
                         pbar.update()
                         r, c = np.unravel_index(i, img_shape)
                         progress_array[r, c, :] = color
-                        draw_event.set()
-                except BaseException:
+                        try:
+                            self.canvas.draw_send.send_nowait(draw_afn)
+                        except trio.WouldBlock:
+                            pass
+                except:
                     pool.terminate()
                     raise
-                finally:
-                    # stop progress_array_draw_task
-                    nursery.cancel_scope.cancel()
 
-            async def progress_array_draw_task():
-                nonlocal draw_event
-                # Must be canceled when calc_properties_in_process_pool finishes
-                while True:
-                    # wait for calc thread to finish an item
-                    await draw_event.wait()
-                    # arrange for draw to occur
-                    async with self.canvas.draw_lock:
-                        progress_image.changed()
-                        progress_image.pchanged()
-                        self.canvas.draw_idle()
-                    draw_event = trio.Event()
-                    # wait for idle_draw_task to start drawing
-                    while not self.canvas.draw_lock.locked():
-                        # should only spin once or twice here
-                        await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-
-            async with pool_lock:
-                global pool
-                try:
-                    pool.__enter__()
-                except ValueError:
-                    pool = await trs(Pool)
-                pool_iter = async_tools.asyncify_iterator(
-                    pool.imap_unordered(
-                        partial(
-                            magic_calculation.calc_properties_imap, **dataclasses.asdict(options)
-                        ),
-                        zip(delta, f, range(ncurves)),
-                        chunksize=8,
-                    )
-                )
-                async with trio.open_nursery() as nursery:
-                    nursery.start_soon(calc_property_map_task)
-                    nursery.start_soon(progress_array_draw_task)
-
-        async with self.canvas.draw_lock:
+        async def draw_afn():
             progress_image.remove()
-            self.canvas.draw_idle()
+
+        await self.canvas.draw_send.send(draw_afn)
         pbar.close()
 
         if cancel_scope.cancelled_caught:
@@ -795,14 +779,16 @@ class ForceVolumeWindow:
         colormap_name = self.colormap_strvar.get()
         # save old clim
         clim = self.axesimage.get_clim()
-        async with self.canvas.draw_lock:
+
+        async def draw_afn():
             # prevent cbar from getting expanded
             self.axesimage.set_clim(self.image_min, self.image_max)
             # actually change cmap
             self.axesimage.set_cmap(colormap_name)
             # reset everything
             customize_colorbar(self.colorbar, self.unit, clim)
-            self.canvas.draw_idle()
+
+        await self.canvas.draw_send.send(draw_afn)
 
     async def change_image_callback(self):
         image_name = self.image_name_strvar.get()
@@ -821,7 +807,7 @@ class ForceVolumeWindow:
         scansize = self.opened_fvol.params["scansize"]
         s = (scansize + scansize / len(image_array)) // 2
 
-        async with self.canvas.draw_lock:
+        async def draw_afn():
             self.img_ax.set_title(image_name)
             self.img_ax.set_ylabel("Y piezo (nm)")
             self.img_ax.set_xlabel("X piezo (nm)")
@@ -841,7 +827,8 @@ class ForceVolumeWindow:
             self.navbar.update()  # let navbar catch new cax in fig
             customize_colorbar(self.colorbar, self.unit, clim)
             self.fig.set_tight_layout(True)
-            self.canvas.draw_idle()
+
+        await self.canvas.draw_send.send(draw_afn)
 
     async def change_fit_callback(self):
         self.calc_props_button.configure(state="normal" if self.fit_intvar.get() else "disabled")
@@ -853,17 +840,17 @@ class ForceVolumeWindow:
         self.fig.set_tight_layout(True)
 
     async def redraw_existing_points(self):
-        async with self.spinner_scope():
-            async with self.canvas.draw_lock:
-                for artist in self.artists:
-                    artist.remove()
-                self.plot_ax.relim()
-                self.plot_ax.set_prop_cycle(None)
+        async def draw_afn():
+            for artist in self.artists:
+                artist.remove()
+            self.plot_ax.relim()
+            self.plot_ax.set_prop_cycle(None)
             self.artists.clear()
-            await trio.sleep(0)
+
+        await self.canvas.draw_send.send(draw_afn)
+        async with self.spinner_scope():
             for point in self.existing_points:
                 await self.plot_curve_response(point, False)
-            self.canvas.draw_idle()
 
     async def manipulate_callback(self):
         manip_name = self.manipulate_strvar.get()
@@ -882,21 +869,23 @@ class ForceVolumeWindow:
         self.image_name_menu.set(name)
 
     async def colorbar_freeze_response(self):
-        async with self.canvas.draw_lock:
+        async def draw_afn():
             self.colorbar.draw_all()
             if isinstance(self.colorbar.mappable, ContourSet):
                 CS = self.colorbar.mappable
                 if not CS.filled:
                     self.colorbar.add_lines(CS)
             self.colorbar.stale = True
-            self.canvas.draw_idle()
+
+        await self.canvas.draw_send.send(draw_afn)
 
     async def colorbar_limits_response(self, vmin, vmax):
-        async with self.canvas.draw_lock:
+        async def draw_afn():
             self.colorbar.norm.vmin = vmin
             self.colorbar.norm.vmax = vmax
             self.colorbar.solids.set_clim(vmin, vmax)
-            self.canvas.draw_idle()
+
+        await self.canvas.draw_send.send(draw_afn)
 
     async def plot_curve_response(self, point: ImagePoint, clear_previous):
         self.existing_points.add(point)  # should be before 1st checkpoint
@@ -936,7 +925,7 @@ class ForceVolumeWindow:
                 self.existing_points.discard(point)
                 return
 
-            async with self.canvas.draw_lock:
+            async def draw_afn():
                 # Clearing Phase
                 # Clear previous artists and reset plots (faster than .clear()?)
                 if clear_previous:
@@ -968,6 +957,8 @@ class ForceVolumeWindow:
                     table = await trs(draw_data_table, data, self.plot_ax,)
                     self.artists.append(table)
 
+            await self.canvas.draw_send.send(draw_afn)
+
     async def mpl_pick_motion_event_callback(self, event):
         mouseevent = getattr(event, "mouseevent", event)
         control_held = event.guiEvent.state & TkState.CONTROL
@@ -983,7 +974,6 @@ class ForceVolumeWindow:
             if shift_held and point in self.existing_points:
                 return
             await self.plot_curve_response(point, not shift_held)
-            self.canvas.draw_idle()
         elif mouseevent.inaxes is self.colorbar.ax:
             if mouseevent.button == MouseButton.MIDDLE or (
                 mouseevent.guiEvent.state & TkState.ALT and mouseevent.button == MouseButton.LEFT

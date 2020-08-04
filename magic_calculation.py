@@ -648,8 +648,8 @@ def calc_def_ind_ztru(f, beta, radius, k, tau, fit_mode, **kwargs):
     return deflection, indentation, z_true_surface, mindelta
 
 
-def calc_properties_imap(delta_f_i, **kwargs):
-    delta, f, i = delta_f_i
+def calc_properties_imap(delta_f_i_kwargs):
+    delta, f, i, kwargs = delta_f_i_kwargs
     beta, beta_err, partial_force_curve = fitfun(delta, f, **kwargs)
     if np.all(np.isfinite(beta)):
         (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(f, beta, **kwargs)
