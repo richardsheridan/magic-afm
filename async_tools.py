@@ -152,12 +152,13 @@ class BaseForceVolumeFile:
 
     @staticmethod
     def strip_trace(image_name):
+        image_name = image_name.lower()
         # python 3.9+
-        # image_name = image_name.removesuffix("Trace").removesuffix("Retrace")
-        if image_name.endswith("Trace"):
-            image_name = image_name[:-5]
-        if image_name.endswith("Retrace"):
+        # image_name = image_name.removesuffix("retrace").removesuffix("trace")
+        if image_name.endswith("retrace"):
             image_name = image_name[:-6]
+        elif image_name.endswith("trace"):
+            image_name = image_name[:-5]
         return image_name
 
     async def get_force_curve(self, r, c):
