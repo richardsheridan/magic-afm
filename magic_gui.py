@@ -287,6 +287,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
 
         async def draw_afn():
             with cancel_scope:
+                await trio.sleep(0)
                 self.figure.set_size_inches(winch, hinch, forward=False)
                 self._tkcanvas.delete(self._tkphoto)
                 self._tkphoto = await trs(
