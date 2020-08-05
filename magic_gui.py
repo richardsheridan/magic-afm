@@ -4,7 +4,6 @@
 __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
-import pathlib
 import sys
 from itertools import repeat
 
@@ -15,10 +14,8 @@ else:
 
     __version__ = make_version.get()
 
-import datetime
-
 __short_license__ = f"""{__app_name__} {__version__}
-Copyright (C) 2020-{datetime.datetime.now().year} {__author__}
+Copyright (C) {__author__}
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -36,6 +33,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import collections
 import dataclasses
+import datetime
 import traceback
 import enum
 import tkinter as tk
