@@ -685,7 +685,7 @@ class ForceVolumeWindow:
 
             def resample_helper(i):
                 r, c = np.unravel_index(i, img_shape)
-                z, d, _ = self.opened_fvol._worker.get_force_curve(r, c)
+                z, d, _ = trio.from_thread.run(self.opened_fvol.get_force_curve, r, c)
                 z = magic_calculation.resample_dset(z, resample_npts, True)[sl]
                 d = magic_calculation.resample_dset(d, resample_npts, True)[sl]
                 delta[i, :] = z - d
