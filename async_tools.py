@@ -157,12 +157,12 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
 
     @staticmethod
     def strip_trace(image_name):
-        image_name = image_name.lower()
+        image_name_l = image_name.lower()
         # python 3.9+
         # image_name = image_name.removesuffix("retrace").removesuffix("trace")
-        if image_name.endswith("retrace"):
+        if image_name_l.endswith("retrace"):
             image_name = image_name[:-6]
-        elif image_name.endswith("trace"):
+        elif image_name_l.endswith("trace"):
             image_name = image_name[:-5]
         return image_name
 
