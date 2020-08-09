@@ -7,6 +7,8 @@ __app_name__ = __doc__.split("\n", 1)[0]
 import sys
 from itertools import repeat
 
+import data_readers
+
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     from _version import __version__
 else:
@@ -557,7 +559,7 @@ class ForceVolumeWindow:
         )
         fit_ret_button.grid(row=0, column=2)
 
-        fit_radius_label = ttk.Label(fit_labelframe, text="Radius (nm)")
+        fit_radius_label = ttk.Label(fit_labelframe, text="Tip radius (nm)")
         fit_radius_label.grid(row=1, column=0, columnspan=2, sticky="W")
         self.fit_radius_sbox = ttk.Spinbox(
             fit_labelframe,
@@ -635,7 +637,7 @@ class ForceVolumeWindow:
         optionsdict = dict(
             fit_mode=self.fit_intvar.get(),
             disp_kind=self.disp_kind_intvar.get(),
-            k=self.opened_fvol.params["k"],
+            k=self.opened_fvol.k,
             radius=float(self.fit_radius_sbox.get()),
             tau=float(self.fit_tau_sbox.get()),
         )
@@ -665,7 +667,11 @@ class ForceVolumeWindow:
 
             _, _, s = await self.opened_fvol.get_force_curve(0, 0)
             npts = len(_)
-            s = s * resample_npts // npts
+            resample = npts > resample_npts
+            if resample:
+                s = s * resample_npts // npts
+            else:
+                resample_npts = npts
             if options.fit_mode == magic_calculation.FitMode.EXTEND:
                 sl = slice(s)
                 segment_npts = s
@@ -691,7 +697,17 @@ class ForceVolumeWindow:
                 with pbar_lock:
                     pbar.update()
 
-            await async_tools.thread_map(resample_helper, range(ncurves))
+            if resample:
+                await async_tools.thread_map(resample_helper, range(ncurves))
+            else:
+                for i in range(ncurves):
+                    r, c = np.unravel_index(i, img_shape)
+                    z, d, _ = await self.opened_fvol.get_force_curve(r, c)
+                    z = z[sl]
+                    d = d[sl]
+                    delta[i, :] = z - d
+                    f[i, :] = d * options.k
+                    pbar.update()
 
             pbar.set_description_str("Fitting force curves...")
             pbar.unit = " fits"
@@ -769,7 +785,10 @@ class ForceVolumeWindow:
         # Actually write out results to external world
         for name in property_names_units:
             self.opened_fvol.add_image(
-                name, property_names_units[name], property_map[name].squeeze()
+                image_name=name,
+                units=property_names_units[name],
+                scandown=True,
+                image=property_map[name].squeeze(),
             )
             if name not in combobox_values:
                 combobox_values.append(name)
@@ -793,7 +812,7 @@ class ForceVolumeWindow:
     async def change_image_callback(self):
         image_name = self.image_name_strvar.get()
         cmap = self.colormap_strvar.get()
-        image_array = await self.opened_fvol.get_image(image_name)
+        image_array, self.scandown = await self.opened_fvol.get_image(image_name)
         clim = np.nanquantile(image_array, [0.01, 0.99])
         self.unit = self.opened_fvol.get_image_units(image_name)
         self.image_min = float(np.nanmin(image_array))
@@ -804,7 +823,7 @@ class ForceVolumeWindow:
         if self.axesimage is not None:
             self.axesimage.remove()
 
-        scansize = self.opened_fvol.params["scansize"]
+        scansize = self.opened_fvol.scansize
         s = (scansize + scansize / len(image_array)) // 2
 
         async def draw_afn():
@@ -814,7 +833,7 @@ class ForceVolumeWindow:
 
             self.axesimage = self.img_ax.imshow(
                 image_array,
-                origin="lower" if self.opened_fvol.scandown else "upper",
+                origin="lower" if self.scandown else "upper",
                 extent=(-s, s, -s, s,),
                 picker=True,
                 cmap=cmap,
@@ -861,7 +880,7 @@ class ForceVolumeWindow:
             manip_fn = MANIPULATIONS[manip_name]
             manip_img = await trs(manip_fn, self.axesimage.get_array())
             self.opened_fvol.add_image(
-                name, self.unit, manip_img,
+                name, self.unit, self.scandown, manip_img,
             )
             if name not in current_names:
                 current_names.append(name)
@@ -895,7 +914,7 @@ class ForceVolumeWindow:
         options = ForceCurveOptions(
             fit_mode=self.fit_intvar.get(),
             disp_kind=self.disp_kind_intvar.get(),
-            k=self.opened_fvol.params["k"],
+            k=self.opened_fvol.k,
             radius=float(self.fit_radius_sbox.get()),
             tau=float(self.fit_tau_sbox.get()),
         )
@@ -1042,7 +1061,7 @@ class ForceVolumeWindow:
             # StringVar.set() won't be effective to plot unless it happens after the
             # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
             # due to resize, but let's not rely on that!
-            for name in ("MapHeight", "ZSensorTrace", "Demo"):
+            for name in ("MapHeight", "ZSensorTrace", "Demo", "Height Sensor"):
                 if name in self.opened_fvol.image_names:
                     self.image_name_strvar.set(name)
                     break
@@ -1177,54 +1196,50 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
     )
 
 
-async def ardf_converter(filename, root):
-    """Convert ARDF file to ARH5"""
-    with trio.CancelScope() as cscope:
-        pbar = tqdm_tk(
-            tk_parent=root,
-            cancel_callback=cscope.cancel,
-            total=100,
-            unit="%",
-            leave=False,
-            smoothing_time=1,
-            miniters=1,
-        )
-        filename = await async_tools.convert_ardf(filename, "ARDFtoHDF5.exe", True, pbar)
-        async with async_tools.AsyncARH5File(filename) as opened_arh5:
-            window = await trs(ForceVolumeWindow, root, opened_arh5)
-            await window.window_task()
-
-
 async def open_task(root):
     """Open a file using a dialog box, then create a window for data analysis
 
     """
     # Choose file
-    filename = await trs(
+    path = await trs(
         partial(
             tk.filedialog.askopenfilename,
             master=root,
-            filetypes=[("AFM Data", "*.h5 *.ARDF"), ("AR HDF5", "*.h5"), ("ARDF", "*.ARDF"),],
+            filetypes=[
+                ("AFM Data", "*.h5 *.ARDF *.spm *.pfc"),
+                ("AR HDF5", "*.h5"),
+                ("ARDF", "*.ARDF"),
+                ("Nanoscope", "*.spm *.pfc"),
+            ],
         )
     )
-    if not filename:
+    if not path:
         return  # Cancelled
-    filename = trio.Path(filename)
+    path = trio.Path(path)
 
     # choose handler based on file suffix
-    suffix = filename.suffix
-    if suffix == ".ARDF":
-        await ardf_converter(filename, root)
-    elif suffix == ".h5":
-        async with async_tools.AsyncARH5File(filename) as opened_arh5:
-            window = await trs(ForceVolumeWindow, root, opened_arh5)
-            await window.window_task()
-    else:
-        raise ValueError("Unknown filename suffix: ", suffix)
+    if path.suffix == ".ARDF":
+        with trio.CancelScope() as cscope:
+            pbar = tqdm_tk(
+                tk_parent=root,
+                cancel_callback=cscope.cancel,
+                total=100,
+                unit="%",
+                leave=False,
+                smoothing_time=0.5,
+                miniters=1,
+            )
+            path = await data_readers.convert_ardf(path, force=True, pbar=pbar)
+        if cscope.cancelled_caught:
+            return
+
+    async with data_readers.SUFFIX_FVFILE_MAP[path.suffix](path) as opened_fv:
+        window = await trs(ForceVolumeWindow, root, opened_fv)
+        await window.window_task()
 
 
 async def demo_task(root):
-    async with async_tools.DemoForceVolumeFile("Demo") as opened_arh5:
+    async with data_readers.DemoForceVolumeFile("Demo") as opened_arh5:
         window = await trs(ForceVolumeWindow, root, opened_arh5)
         await window.window_task()
 
