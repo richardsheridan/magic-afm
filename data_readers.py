@@ -328,7 +328,7 @@ class ARH5File(BaseForceVolumeFile):
             (
                 line.split(":", 1)
                 for line in h5data.attrs["Note"].decode("utf8").split("\n")
-                if ":" in line
+                if ":" in line and "@Line:" not in line
             ),
         )
         worker = await trs(self._choose_worker, h5data)
