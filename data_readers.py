@@ -385,6 +385,9 @@ class ARH5File(BaseForceVolumeFile):
 
 
 class NanoscopeFile(BaseForceVolumeFile):
+    _basic_units_map = {
+        "Height Sensor": "m",
+    }
     async def ainitialize(self):
         self.header = header = await read_nanoscope_header(self.path)
         # \Frame direction: Down
@@ -455,7 +458,9 @@ class NanoscopeFile(BaseForceVolumeFile):
             self._z_scale = np.float32(soft_scale * hard_scale)
         else:
             self._z_raw_ints = None
-            self._height_for_z = await self.get_image("Height Sensor")
+            image, scandown = await self.get_image("Height Sensor")
+            image *= NANOMETER_UNIT_CONVERSION
+            self._height_for_z = image, scandown
             amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
             self._z_scale = -amp * np.cos(
                 np.linspace(0, 2 * np.pi, npts, endpoint=False, dtype=np.float32)
@@ -507,7 +512,7 @@ class NanoscopeFile(BaseForceVolumeFile):
 
         value = h["@2:Z scale"]
         hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
-        scale = np.float32(hard_scale * soft_scale)
+        scale = np.float32(hard_scale * soft_scale) / NANOMETER_UNIT_CONVERSION
         data_length = int(h["Data length"])
         offset = int(h["Data offset"])
         bpp = bruker_bpp_fix(h["Bytes/pixel"], self._version)
