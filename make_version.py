@@ -11,14 +11,13 @@ def get():
     ).stdout.decode()[:-1]
 
 
-def check(version):
+def read():
     try:
         with filename.open("r") as f:
             oldversion = f.read()
     except FileNotFoundError:
         return False
-    oldversion = oldversion.split("=")[-1].strip()
-    return oldversion == version
+    return oldversion.split("=")[-1].strip()[1:-1]
 
 
 def write(version):
@@ -29,5 +28,5 @@ def write(version):
 
 if __name__ == "__main__":
     v = get()
-    if not check(v):
+    if not read() == v:
         write(v)
