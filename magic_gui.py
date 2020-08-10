@@ -343,7 +343,17 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
         async with trio.open_nursery() as nursery:
             await nursery.start(canvas.idle_draw_task)
-            canvas.teach_canvas_to_use_trio(nursery)
+
+            def spinner_start():
+                self.window.configure(cursor="watch")
+
+            def spinner_stop():
+                self.window.configure(cursor="arrow")
+
+            self.spinner_scope = await nursery.start(
+                async_tools.spinner_task, spinner_start, spinner_stop,
+            )
+            canvas.teach_canvas_to_use_trio(nursery, self.spinner_scope)
             SubplotTool(self.canvas.figure, toolfig)
             window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
         window.destroy()
