@@ -1,9 +1,7 @@
 import abc
-import dataclasses
 import mmap
 import os
 import subprocess
-from typing import Tuple
 
 import h5py
 import numpy as np
@@ -154,6 +152,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         self.scandown = True
 
     async def ainitialize(self):
+        await trio.sleep(0)
         self.shape = (64, 64)
         self.npts = 1024
         self.delta = (np.cos(np.linspace(0, np.pi * 2, self.npts, endpoint=False)) - 0.90) * 25
@@ -162,6 +161,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         pass
 
     async def get_force_curve(self, r, c):
+        await trio.sleep(0)
         gen = np.random.default_rng(seed=(r, c))
         fext = magic_calculation.force_curve(
             magic_calculation.red_extend, self.delta[: self.npts // 2], 1, 10, 1, -10, 1, 0, 0, 10
@@ -176,6 +176,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         return z, d, self.npts // 2
 
     async def get_image(self, image_name):
+        await trio.sleep(0)
         return np.zeros(self.shape, dtype=np.float32), True
 
 
@@ -493,6 +494,7 @@ class NanoscopeFile(BaseForceVolumeFile):
 
     async def get_image(self, image_name):
         if image_name in self._calc_images:
+            await trio.sleep(0)
             image, scandown = self._calc_images[image_name]
         else:
             image, scandown = await trs(self._sync_get_image, image_name)
