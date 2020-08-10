@@ -854,11 +854,19 @@ class ForceVolumeWindow:
     async def change_fit_callback(self):
         self.calc_props_button.configure(state="normal" if self.fit_intvar.get() else "disabled")
         await self.redraw_existing_points()
-        self.fig.set_tight_layout(True)
+
+        def draw_fn():
+            self.fig.set_tight_layout(True)
+
+        await self.canvas.draw_send.send(draw_fn)
 
     async def change_disp_kind_callback(self):
         await self.redraw_existing_points()
-        self.fig.set_tight_layout(True)
+
+        def draw_fn():
+            self.fig.set_tight_layout(True)
+
+        await self.canvas.draw_send.send(draw_fn)
 
     async def redraw_existing_points(self):
         def draw_fn():
