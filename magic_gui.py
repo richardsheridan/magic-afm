@@ -90,6 +90,7 @@ COLORMAPS = [
 
 class Box:
     """Hashable mutable objects with mutable content"""
+
     def __init__(self, content):
         self.content = content
 
@@ -246,24 +247,28 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
             pass
 
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
+        delay = LONGEST_IMPERCEPTIBLE_DELAY
         task_status.started()
+        # One of the slowest processes. Stick everything in a thread.
         while True:
             # Sleep until someone sends artist calls
             fn = await self.draw_recv.receive()
             async with self.spinner_scope():
                 await trs(fn)
                 # Batch rapid artist call requests
-                # This batching calibrates LONGEST_IMPERCEPTIBLE_DELAY
-                with trio.move_on_after(LONGEST_IMPERCEPTIBLE_DELAY):
+                # spend roughly equal time building artists and drawing
+                with trio.move_on_after(delay):
                     async for fn in self.draw_recv:
                         with trio.CancelScope(shield=True):
                             # Cancelling this would drop the fn
                             # would be nicer to prepend back into channel but...
                             await trs(fn)
-                # One of the slowest processes. Stick it in a thread.
-                # NOT self.draw() !! blit() can't be in a thread.
-                await trs(super().draw)
-                self.blit()
+                t = trio.current_time()
+                await trs(super().draw)  # XXX: NOT self.draw()!
+                self.blit()  # blit() can't be in a thread.
+                # previous delay is not great predictor of next delay
+                # for now try exponential moving average
+                delay = ((trio.current_time() - t) + delay * 1) / 2
             # Funny story, we want tight layout behavior on resize and
             # a few other special cases, but also we want super().draw()
             # and by extension draw_idle_task to be responsible for calling
