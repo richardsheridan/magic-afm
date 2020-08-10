@@ -408,7 +408,9 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         for image_name in self.window._host.image_name_menu.cget("values"):
             if image_name.startswith("Calc"):
                 exporter = exporter_map.get(ext, imageio.imwrite)
-                image = await self.window._host.opened_fvol.get_image(image_name)
+                image, scandown = await self.window._host.opened_fvol.get_image(image_name)
+                if not scandown:
+                    image = image[::-1]
                 await trs(
                     exporter, root + "_" + image_name[4:] + ext, image,
                 )
