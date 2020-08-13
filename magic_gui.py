@@ -685,9 +685,6 @@ class ForceVolumeWindow:
         self.artists = []
         self.existing_points = set()
 
-        # mpl_resize_event_callback
-        self.resize_cancels_pending = set()
-
     def reset_image_name_menu(self, names):
         names = list(names)
         longest = max(map(len, names))
