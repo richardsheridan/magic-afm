@@ -431,17 +431,29 @@ class TkHost:
         Based on `tkinter source comments <https://github.com/python/cpython/blob/a5d6aba318ead9cc756ba750a70da41f5def3f8f/Modules/_tkinter.c#L1472-L1555>`_
         the issuance of the tcl call to after itself is thread-safe since it is sent
         to the `appropriate thread <https://github.com/python/cpython/blob/a5d6aba318ead9cc756ba750a70da41f5def3f8f/Modules/_tkinter.c#L814-L824>`_ on line 1522.
+        Tkapp_ThreadSend effectively uses "after 0" while putting the command in the
+        event queue so the `"after idle after 0" <https://wiki.tcl-lang.org/page/after#096aeab6629eae8b244ae2eb2000869fbe377fa988d192db5cf63defd3d8c061>`_ incantation
+        is unnecessary here.
 
         Compare to `tkthread <https://github.com/serwy/tkthread/blob/1f612e1dd46e770bd0d0bb64d7ecb6a0f04875a3/tkthread/__init__.py#L163>`_
         where definitely thread unsafe `eval <https://github.com/python/cpython/blob/a5d6aba318ead9cc756ba750a70da41f5def3f8f/Modules/_tkinter.c#L1567-L1585>`_
         is used to send thread safe signals between tcl interpreters.
-
-        If .call is called from the Tcl thread, the locking and sending are optimized away
-        so it should be fast enough that the run_sync_soon_not_threadsafe version is unnecessary.
         """
         # self.root.after(0, func) # does a fairly intensive wrapping to each func
         self._q.append(func)
         self.root.call("after", "idle", self._tk_func_name)
+
+    def run_sync_soon_not_threadsafe(self, func):
+        """Use Tcl "after" command to schedule a function call from the main thread
+
+        If .call is called from the Tcl thread, the locking and sending are optimized away
+        so it should be fast enough.
+
+        The incantation `"after idle after 0" <https://wiki.tcl-lang.org/page/after#096aeab6629eae8b244ae2eb2000869fbe377fa988d192db5cf63defd3d8c061>`_ avoids blocking the normal event queue with
+        an unending stream of idle tasks.
+        """
+        self._q.append(func)
+        self.root.call("after", "idle", "after", 0, self._tk_func_name)
 
     def done_callback(self, outcome_):
         """End the Tk app.
@@ -1419,6 +1431,7 @@ def main():
         main_task,
         root,
         run_sync_soon_threadsafe=host.run_sync_soon_threadsafe,
+        run_sync_soon_not_threadsafe=host.run_sync_soon_not_threadsafe,
         done_callback=host.done_callback,
     )
     outcome_ = outcome.capture(root.mainloop)
