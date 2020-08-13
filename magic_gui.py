@@ -191,19 +191,30 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
         self._resize_cancels_pending = set()
         self.draw_send, self.draw_recv = trio.open_memory_channel(0)
-        self._idle_task_running = False
+
+        #############################################
+        # Uncomment when bugfixes released upstream #
+        #############################################
+        # super().__init__(figure, master, resize_callback)
+
+        ##########################################
+        # Remove when bugfixes released upstream #
+        ##########################################
         super(FigureCanvasTk, self).__init__(figure)
         t1, t2, w, h = self.figure.bbox.bounds
         w, h = int(w), int(h)
         self._tkcanvas = tk.Canvas(
-            master=master, width=w, height=h, borderwidth=0, highlightthickness=0,
+            master=master,
+            width=w,
+            height=h,
+            borderwidth=0,
+            highlightthickness=0,
+            background="white",
         )
         self._tkphoto = tk.PhotoImage(master=self._tkcanvas, width=w, height=h)
         self._tkcanvas.create_image(w // 2, h // 2, image=self._tkphoto)
         self._resize_callback = resize_callback
-        # Late bound in teach_canvas_to_use_trio
-        # Swallows initial resize, OK because of change_image_callback
-        # self._tkcanvas.bind("<Configure>", self.resize)
+        self._tkcanvas.bind("<Configure>", self.resize)
         self._tkcanvas.bind("<Key>", self.key_press)
         self._tkcanvas.bind("<Motion>", self.motion_notify_event)
         self._tkcanvas.bind("<Enter>", self.enter_notify_event)
@@ -230,13 +241,18 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         # to the window and filter.
         def filter_destroy(evt):
             if evt.widget is self._tkcanvas:
-                # self._master.update_idletasks()
+                # self._master.update_idletasks()  # this is the upstream change needed
                 self.close_event()
 
         root.bind("<Destroy>", filter_destroy, "+")
 
         self._master = master
         self._tkcanvas.focus_set()
+
+        ########################################
+        # Keep when bugfixes released upstream #
+        ########################################
+        self._tkcanvas.configure(background="gray94")  # surely there's a better name...
 
     def draw_idle(self):
         def null_draw_fn():
@@ -281,14 +297,24 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
             # and it will be reset here.
             self.figure.set_tight_layout(False)
 
+    ##########################################
+    # Remove when bugfixes released upstream #
+    ##########################################
     def draw(self):
         super().draw()
         tk_blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
 
+    ##########################################
+    # Remove when bugfixes released upstream #
+    ##########################################
     def blit(self, bbox=None):
         tk_blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3), bbox=bbox)
 
-    async def resize(self, event):
+    def resize(self, event):
+        # Swallows initial resize, OK because of change_image_callback
+        pass
+
+    async def aresize(self, event):
         for cancel_box in self._resize_cancels_pending:
             cancel_box.content = True
         self._resize_cancels_pending.clear()
@@ -322,7 +348,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         await self.draw_send.send(draw_fn)
 
     def teach_canvas_to_use_trio(self, nursery, spinner_scope):
-        self._tkcanvas.bind("<Configure>", partial(nursery.start_soon, self.resize))
+        self._tkcanvas.bind("<Configure>", partial(nursery.start_soon, self.aresize))
         self.spinner_scope = spinner_scope
 
 
