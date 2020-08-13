@@ -63,6 +63,7 @@ from matplotlib.ticker import EngFormatter
 from matplotlib.transforms import Bbox, BboxTransform
 from matplotlib.widgets import SubplotTool
 from tqdm.gui import tqdm_tk
+import imageio
 
 import async_tools
 import magic_calculation
@@ -302,17 +303,17 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         def draw_fn():
             if cancel_box.content:
                 return
-            else:
-                self.figure.set_size_inches(winch, hinch, forward=False)
-                self._tkcanvas.delete(self._tkphoto)
-                self._tkphoto = tk.PhotoImage(
-                    master=self._tkcanvas, width=int(width), height=int(height)
-                )
-                self._tkcanvas.create_image(
-                    int(width / 2), int(height / 2), image=self._tkphoto,
-                )
-                self.figure.set_tight_layout(True)
-                self.resize_event()  # draw_idle called in here
+
+            self.figure.set_size_inches(winch, hinch, forward=False)
+            self._tkcanvas.delete(self._tkphoto)
+            self._tkphoto = tk.PhotoImage(
+                master=self._tkcanvas, width=int(width), height=int(height)
+            )
+            self._tkcanvas.create_image(
+                int(width / 2), int(height / 2), image=self._tkphoto,
+            )
+            self.figure.set_tight_layout(True)
+            self.resize_event()  # draw_idle called in here
             self._resize_cancels_pending.discard(cancel_box)
 
         await self.draw_send.send(draw_fn)
@@ -364,7 +365,6 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
     async def _aexport_calculations(self):
         ### it's also possible to export image stacks but need a way to indicate that
         import os
-        import imageio
 
         # fmt: off
         export_filetypes = (
