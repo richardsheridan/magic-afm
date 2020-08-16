@@ -42,7 +42,6 @@ def make_cancel_poller():
 
 
 async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bound_limiter):
-    job_items = list(job_items)
 
     async def thread_worker(item, i, send_chan):
         async with send_chan:
@@ -53,17 +52,15 @@ async def thread_map(sync_fn, job_items, *args, cancellable=True, limiter=cpu_bo
 
     send_chan, recv_chan = trio.open_memory_channel(0)
     async with trio.open_nursery() as nursery:
-        t = trio.current_time()
         for i, item in enumerate(job_items):
-            if trio.current_time() - t > LONGEST_IMPERCEPTIBLE_DELAY / 2:
-                await trio.sleep(0)
-                t = trio.current_time()
-            nursery.start_soon(thread_worker, item, i, send_chan.clone())
+            async with limiter:
+                nursery.start_soon(thread_worker, item, i, send_chan.clone())
         await send_chan.aclose()
+        results = []
         async for i, result in recv_chan:
-            job_items[i] = result
+            results.append(result)
 
-    return job_items
+    return results
 
 
 async def spinner_task(set_spinner, set_normal, task_status):
