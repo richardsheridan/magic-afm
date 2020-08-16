@@ -738,38 +738,53 @@ class ForceVolumeWindow:
             else:
                 raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
-            pbar_lock = threading.Lock()  # for thread_map
+            # Help progress bar appear
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
 
             delta = np.empty((ncurves, segment_npts), np.float32)
             f = np.empty((ncurves, segment_npts), np.float32)
 
-            def resample_helper(i):
+            async def resample_helper(i):
                 r, c = np.unravel_index(i, img_shape)
-                z, d, _ = trio.from_thread.run(self.opened_fvol.get_force_curve, r, c)
-                z = magic_calculation.resample_dset(z, resample_npts, True)[sl]
-                d = magic_calculation.resample_dset(d, resample_npts, True)[sl]
+                z, d, _ = await self.opened_fvol.get_force_curve(r, c)
+                if resample:
+                    z = await trio.to_thread.run_sync(
+                        magic_calculation.resample_dset,
+                        z,
+                        resample_npts,
+                        True,
+                        cancellable=True,
+                        limiter=async_tools.cpu_bound_limiter,
+                    )
+                    d = await trio.to_thread.run_sync(
+                        magic_calculation.resample_dset,
+                        d,
+                        resample_npts,
+                        True,
+                        cancellable=True,
+                        limiter=async_tools.cpu_bound_limiter,
+                    )
+                else:
+                    # coordinate with parent task limit spawning
+                    # not 100% sure it's necessary though
+                    await async_tools.cpu_bound_limiter.acquire()
+                    async_tools.cpu_bound_limiter.release()
+                z = z[sl]
+                d = d[sl]
                 delta[i, :] = z - d
                 f[i, :] = d * options.k
-                with pbar_lock:
-                    pbar.update()
+                pbar.update()
 
-            if resample:
-                await async_tools.thread_map(resample_helper, range(ncurves))
-            else:
+            async with trio.open_nursery() as nursery:
                 for i in range(ncurves):
-                    r, c = np.unravel_index(i, img_shape)
-                    z, d, _ = await self.opened_fvol.get_force_curve(r, c)
-                    z = z[sl]
-                    d = d[sl]
-                    delta[i, :] = z - d
-                    f[i, :] = d * options.k
-                    pbar.update()
+                    async with async_tools.cpu_bound_limiter:
+                        nursery.start_soon(resample_helper, i)
 
             pbar.set_description_str("Fitting force curves...")
             pbar.unit = " fits"
             pbar.avg_time = None
             pbar.reset(total=ncurves)
+            # Help progress bar changes appear
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
 
             property_names_units = {
@@ -1321,6 +1336,9 @@ async def about_task(root):
     top.wm_title(f"About {__app_name__}")
     message = tk.Message(top, text=__short_license__)
     message.pack()
+    task = tk.StringVar(top)
+    task_label = ttk.Label(top, textvariable=task)
+    task_label.pack()
     thread_cpu = tk.StringVar(top)
     thread_cpu_label = ttk.Label(top, textvariable=thread_cpu)
     thread_cpu_label.pack()
