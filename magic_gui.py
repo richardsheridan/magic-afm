@@ -1349,14 +1349,14 @@ async def about_task(root):
     process_label = ttk.Label(top, textvariable=process)
     process_label.pack()
     opts = dict(mode="indeterminate", maximum=80, length=300)
-    timely_trio_pbar = ttk.Progressbar(top, **opts)
-    timely_trio_pbar.pack()
     tk_pbar = ttk.Progressbar(top, **opts)
     tk_pbar.pack()
     trio_pbar = ttk.Progressbar(top, **opts)
     trio_pbar.pack()
+    timely_trio_pbar = ttk.Progressbar(top, **opts)
+    timely_trio_pbar.pack()
 
-    interval = 10
+    interval = 20
 
     async def pbar_runner():
         while True:
@@ -1375,6 +1375,12 @@ async def about_task(root):
     async def state_poller_task():
         while True:
             t = trio.current_time()
+            task_stats = trio.lowlevel.current_statistics()
+            task.set(
+                f"Tasks living: {task_stats.tasks_living}\n"
+                f"Tasks runnable: {task_stats.tasks_runnable}\n"
+                f"Unprocessed callbacks: {task_stats.run_sync_soon_queue_size}"
+            )
             thread_cpu.set(
                 "CPU-bound threads:" + repr(async_tools.cpu_bound_limiter).split(",")[1][:-1]
             )
