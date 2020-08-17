@@ -76,6 +76,7 @@ from magic_calculation import MANIPULATIONS
 from async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY
 
 matplotlib.rcParams["savefig.dpi"] = 300
+RESAMPLE_NPTS = 512
 
 COLORMAPS = [
     "viridis",
@@ -706,7 +707,6 @@ class ForceVolumeWindow:
         options = ForceCurveOptions(**optionsdict)
         img_shape = self.opened_fvol.shape
         ncurves = img_shape[0] * img_shape[1]
-        resample_npts = 512
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
 
@@ -729,9 +729,9 @@ class ForceVolumeWindow:
 
             _, _, s = await self.opened_fvol.get_force_curve(0, 0)
             npts = len(_)
-            resample = npts > resample_npts
+            resample = npts > RESAMPLE_NPTS
             if resample:
-                s = s * resample_npts // npts
+                s = s * RESAMPLE_NPTS // npts
             else:
                 resample_npts = npts
             if options.fit_mode == magic_calculation.FitMode.EXTEND:
@@ -1237,9 +1237,11 @@ def draw_force_curve(data, plot_ax, options):
 
 def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
     cancel_poller()
-    resample_npts = 512
-    s = s * resample_npts // len(z)
-    z, d = magic_calculation.resample_dset([z, d], resample_npts, True)
+    npts = len(z)
+    if npts > RESAMPLE_NPTS:
+        s = s * RESAMPLE_NPTS // npts
+        z = magic_calculation.resample_dset(z, RESAMPLE_NPTS, True)
+        d = magic_calculation.resample_dset(d, RESAMPLE_NPTS, True)
     # Transform data to model units
     f = d * options.k
     delta = z - d
