@@ -715,7 +715,7 @@ class ForceVolumeWindow:
             pbar = tqdm_tk(
                 total=ncurves,
                 desc="Loading and resampling force curves...",
-                smoothing_time=0.25,
+                smoothing_time=2,
                 mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 2,
                 unit=" curves",
                 tk_parent=self.tkwindow,
@@ -748,8 +748,13 @@ class ForceVolumeWindow:
 
             delta = np.empty((ncurves, segment_npts), np.float32)
             f = np.empty((ncurves, segment_npts), np.float32)
+            first = True
 
             async def resample_helper(i):
+                nonlocal first
+                if first:
+                    pbar.unpause()
+                    first = False
                 r, c = np.unravel_index(i, img_shape)
                 z, d, _ = await self.opened_fvol.get_force_curve(r, c)
                 if resample:
