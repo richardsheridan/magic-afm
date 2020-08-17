@@ -4,7 +4,6 @@ block_cipher = None
 
 
 a = Analysis(['magic_gui.py'],
-             pathex=['C:\\Users\\richard\\Documents\\GitHub\\magic-afm'],
              binaries=[],
              datas=[('ARDFtoHDF5.exe','.'),('help_page.html','.')],
              hiddenimports=['_version'],
