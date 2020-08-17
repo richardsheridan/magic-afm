@@ -45,7 +45,12 @@ from contextlib import nullcontext
 from functools import partial, wraps
 from typing import Optional, Callable
 from multiprocessing import Pool, freeze_support
-import threading
+import ctypes
+
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except AttributeError:
+    pass
 
 import matplotlib
 import numpy as np
@@ -1472,6 +1477,8 @@ def main():
     root.wm_resizable(False, False)
     root.wm_minsize(300, 20)
     root.wm_title("Magic AFM")
+    dpi = ctypes.windll.user32.GetDpiForWindow(root.winfo_id())
+    matplotlib.rcParams["figure.dpi"] = dpi
     # root.wm_iconbitmap("something.ico")
     # sabotage update command so that we crash instead of deadlocking
     # breaks ttk.Combobox, maybe others
