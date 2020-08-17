@@ -1,0 +1,8 @@
+h5py
+imageio
+matplotlib @ git+https://github.com/matplotlib/matplotlib/@71de09a8478bc3f4e901a2a7ccb25e1cf4a067a9
+pyinstaller @ git+https://github.com/bwoodsend/pyinstaller@9ffdec5542349673a6c6dc02126c9a0d962d0a21
+scipy
+threadpoolctl
+tqdm @ git+https://github.com/richardsheridan/tqdm/@3caa265562afc68e8ea9e2355502a85cb5084a54
+trio>=0.16.0
