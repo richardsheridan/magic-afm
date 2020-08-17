@@ -732,6 +732,7 @@ class ForceVolumeWindow:
             resample = npts > RESAMPLE_NPTS
             if resample:
                 s = s * RESAMPLE_NPTS // npts
+                npts = RESAMPLE_NPTS
             else:
                 resample_npts = npts
             if options.fit_mode == magic_calculation.FitMode.EXTEND:
@@ -739,7 +740,7 @@ class ForceVolumeWindow:
                 segment_npts = s
             elif options.fit_mode == magic_calculation.FitMode.RETRACT:
                 sl = slice(s, None)
-                segment_npts = resample_npts - s
+                segment_npts = npts - s
             else:
                 raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
@@ -761,7 +762,7 @@ class ForceVolumeWindow:
                     z = await trio.to_thread.run_sync(
                         magic_calculation.resample_dset,
                         z,
-                        resample_npts,
+                        npts,
                         True,
                         cancellable=True,
                         limiter=async_tools.cpu_bound_limiter,
@@ -769,7 +770,7 @@ class ForceVolumeWindow:
                     d = await trio.to_thread.run_sync(
                         magic_calculation.resample_dset,
                         d,
-                        resample_npts,
+                        npts,
                         True,
                         cancellable=True,
                         limiter=async_tools.cpu_bound_limiter,
