@@ -107,15 +107,8 @@ async def spinner_task(set_spinner, set_normal, task_status):
 async def asyncify_iterator(iter):
     sentinel = object()
 
-    def sentinel_next():
-        """Returns a sentinel object instead of raising StopIteration"""
-        try:
-            return next(iter)
-        except StopIteration:
-            return sentinel
-
     while True:
-        result = await trs(sentinel_next)
+        result = await trs(next, iter, sentinel)
         if result is sentinel:
             return
         yield result
