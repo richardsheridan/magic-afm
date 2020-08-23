@@ -193,6 +193,19 @@ class ImagePoint:
         return cls(r, c, x, y)
 
 
+@dataclasses.dataclass(frozen=True)
+class ImageStats:
+    min: float
+    q01: float
+    q50: float
+    q99: float
+    max: float
+
+    @classmethod
+    def from_array(cls, array):
+        return cls(*np.nanquantile(array, [0, 0.01, 0.5, 0.99, 1]).tolist())
+
+
 class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
     def __init__(self, figure, master=None, resize_callback=None):
         self._resize_cancels_pending = set()
@@ -884,11 +897,13 @@ class ForceVolumeWindow:
 
         def draw_fn():
             # prevent cbar from getting expanded
-            self.axesimage.set_clim(self.image_min, self.image_max)
+            self.axesimage.set_clim(self.image_stats.min, self.image_stats.max)
             # actually change cmap
             self.axesimage.set_cmap(colormap_name)
             # reset everything
-            customize_colorbar(self.colorbar, self.unit, clim)
+            customize_colorbar(self.colorbar, *clim, unit=self.unit)
+            if self.colorbar.frozen:
+                expand_colorbar(self.colorbar)
 
         await self.canvas.draw_send.send(draw_fn)
 
@@ -896,10 +911,8 @@ class ForceVolumeWindow:
         image_name = self.image_name_strvar.get()
         cmap = self.colormap_strvar.get()
         image_array, self.scandown = await self.opened_fvol.get_image(image_name)
-        clim = np.nanquantile(image_array, [0.01, 0.99])
+        self.image_stats = ImageStats.from_array(image_array)
         self.unit = self.opened_fvol.get_image_units(image_name)
-        self.image_min = float(np.nanmin(image_array))
-        self.image_max = float(np.nanmax(image_array))
 
         if self.colorbar is not None:
             self.colorbar.remove()
@@ -926,8 +939,13 @@ class ForceVolumeWindow:
             self.transforms = ImagePoint.construct_transforms(self.axesimage)
 
             self.colorbar = self.fig.colorbar(self.axesimage, ax=self.img_ax, use_gridspec=True,)
-            self.navbar.update()  # let navbar catch new cax in fig
-            customize_colorbar(self.colorbar, self.unit, clim)
+            self.navbar.update()  # let navbar catch new cax in fig for tooltips
+            customize_colorbar(self.colorbar, self.image_stats.q01, self.image_stats.q99, self.unit)
+
+            # start frozen
+            self.colorbar.frozen = True
+            expand_colorbar(self.colorbar)
+
             self.fig.set_tight_layout(True)
 
         await self.canvas.draw_send.send(draw_fn)
@@ -978,22 +996,22 @@ class ForceVolumeWindow:
             self.reset_image_name_menu(current_names)
         self.image_name_menu.set(name)
 
-    async def colorbar_freeze_response(self):
-        def draw_fn():
-            self.colorbar.draw_all()
-            if isinstance(self.colorbar.mappable, ContourSet):
-                CS = self.colorbar.mappable
-                if not CS.filled:
-                    self.colorbar.add_lines(CS)
-            self.colorbar.stale = True
+    async def colorbar_state_response(self):
+        if self.colorbar.frozen:
+            self.colorbar.frozen = False
+            clim = self.axesimage.get_clim()
 
-        await self.canvas.draw_send.send(draw_fn)
+            def draw_fn():
+                # make full range colorbar especially solids
+                self.axesimage.set_clim(self.image_stats.min, self.image_stats.max)
+                # reset customizations
+                customize_colorbar(self.colorbar, *clim)
 
-    async def colorbar_limits_response(self, vmin, vmax):
-        def draw_fn():
-            self.colorbar.norm.vmin = vmin
-            self.colorbar.norm.vmax = vmax
-            self.colorbar.solids.set_clim(vmin, vmax)
+        else:
+            self.colorbar.frozen = True
+
+            def draw_fn():
+                expand_colorbar(self.colorbar)
 
         await self.canvas.draw_send.send(draw_fn)
 
@@ -1088,15 +1106,27 @@ class ForceVolumeWindow:
             if mouseevent.button == MouseButton.MIDDLE or (
                 mouseevent.guiEvent.state & TkState.ALT and mouseevent.button == MouseButton.LEFT
             ):
-                await self.colorbar_freeze_response()
-            elif mouseevent.button == MouseButton.LEFT:
+                await self.colorbar_state_response()
+                return
+            if self.colorbar.frozen:
+                return
+            if mouseevent.button == MouseButton.LEFT:
                 vmin = self.colorbar.norm.vmin
                 vmax = max(mouseevent.ydata, vmin)
-                await self.colorbar_limits_response(vmin, vmax)
             elif mouseevent.button == MouseButton.RIGHT:
                 vmax = self.colorbar.norm.vmax
                 vmin = min(mouseevent.ydata, vmax)
-                await self.colorbar_limits_response(vmin, vmax)
+            else:
+                # discard all others
+                return
+
+            # fallthrough for left and right clicks
+            def draw_fn():
+                self.colorbar.norm.vmin = vmin
+                self.colorbar.norm.vmax = vmax
+                self.colorbar.solids.set_clim(vmin, vmax)
+
+            await self.canvas.draw_send.send(draw_fn)
 
     async def window_task(self):
         nursery: trio.Nursery
@@ -1164,14 +1194,31 @@ class ForceVolumeWindow:
         self.tkwindow.destroy()
 
 
-def customize_colorbar(colorbar, unit, clim):
-    """MPL keeps stomping on our settings so reset EVERYTHING"""
+def customize_colorbar(colorbar, vmin=None, vmax=None, unit=None):
+    """Central function to reset colorbar as MPL keeps stomping on our settings"""
+    # for coordinate/value display on hover
     colorbar.ax.set_navigate(True)
+    # for receiving events
     colorbar.solids.set_picker(True)
-    if unit:
+    # set range of colors and ticks without changing range of colorbar axes
+    if vmin is not None and vmax is not None:
+        # other permutations handled internally
+        colorbar.solids.set_clim(vmin, vmax)
+    # pretty engineering units display
+    if unit is not None:
         colorbar.formatter = EngFormatter(unit, places=1)
-    colorbar.update_ticks()
-    colorbar.solids.set_clim(*clim)
+        colorbar.update_ticks()
+
+
+def expand_colorbar(colorbar):
+    """This is the last part of Colorbar.update_normal()"""
+    colorbar.draw_all()
+    if isinstance(colorbar.mappable, ContourSet):
+        CS = colorbar.mappable
+        if not CS.filled:
+            colorbar.add_lines(CS)
+    colorbar.stale = True
+    colorbar.solids.set_picker(True)
 
 
 def draw_data_table(data, ax):
