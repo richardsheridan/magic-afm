@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from functools import partial
 from concurrent.futures import ProcessPoolExecutor, FIRST_COMPLETED, wait
 from typing import Optional
+from itertools import islice
 
 import trio
 from threadpoolctl import threadpool_limits
@@ -75,6 +76,26 @@ async def to_process_run_sync(sync_fn, *args, cancellable=True, limiter=cpu_boun
             raise
 
 
+def _chunk_producer(fn, job_items, chunksize):
+    while x := tuple(islice(job_items, chunksize)):
+        yield fn, x
+
+
+def _chunk_consumer(chunk):
+    return tuple(map(*chunk))
+
+
+def _top_up_not_done(not_done, sync_fn, job_items):
+    limit = cpu_bound_limiter.total_tokens*2
+    sentinel = object()
+    while len(not_done) < limit:
+        job_item = next(job_items, sentinel)
+        if job_item is sentinel:
+            break
+        not_done.add(EXECUTOR.submit(sync_fn, job_item))
+    return not_done
+
+
 async def to_process_map_unordered(
     sync_fn, job_items, chunksize=1, cancellable=True, task_status=trio.TASK_STATUS_IGNORED
 ):
@@ -86,7 +107,6 @@ async def to_process_map_unordered(
     Awaiting this function produces an in-memory iterable of the map results.
     Using nursery.start() on this function produces a MemoryRecieveChannel
     with no buffer to receive results as-completed"""
-    # TODO: respect chunksize
     await start_global_executor()
 
     if task_status is trio.TASK_STATUS_IGNORED:
@@ -96,24 +116,15 @@ async def to_process_map_unordered(
     send_chan, recv_chan = trio.open_memory_channel(buffer)
     task_status.started(recv_chan)
 
-    limit = cpu_bound_limiter.total_tokens
     not_done = set()
-    sentinel = object()
     job_items = iter(job_items)  # treat as read-once iterable
+    if chunksize != 1:
+        job_items = _chunk_producer(sync_fn, job_items, chunksize)
+        sync_fn = _chunk_consumer
 
     try:
-        while True:
-            # top up not_done with futures
-            while len(not_done) < limit:
-                job_item = next(job_items, sentinel)
-                if job_item is sentinel:
-                    break
-                not_done.add(EXECUTOR.submit(sync_fn, job_item))
-
-            # quit if nothing left to wait for
-            if not not_done:  # haw
-                break  # NORMAL way to exit the loop
-
+        # use walrus helper to submit jobs lazily to the pool
+        while not_done := _top_up_not_done(not_done, sync_fn, job_items):
             # use thread to do nonblocking wait
             done, not_done = await trs(
                 wait, not_done, None, FIRST_COMPLETED, cancellable=cancellable
@@ -122,7 +133,14 @@ async def to_process_map_unordered(
             # Send off results one-by-one
             for cf_fut in done:
                 # Yes, crash hard if TimeoutError or CancelledError
-                await send_chan.send(cf_fut.result(timeout=0))
+                # The above waiting logic SHOULD only produce done futures
+                # For errors raised in the pool, all bets are off
+                res = cf_fut.result(timeout=0)
+                if chunksize == 1:
+                    await send_chan.send(res)
+                else:
+                    for r in res:
+                        await send_chan.send(r)
     except:
         for cf_fut in not_done:
             cf_fut.cancel()

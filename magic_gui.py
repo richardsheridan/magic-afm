@@ -803,6 +803,7 @@ class ForceVolumeWindow:
                 for i in range(ncurves):
                     async with async_tools.cpu_bound_limiter:
                         nursery.start_soon(resample_helper, i)
+                    # await resample_helper(i) # single threaded
 
             pbar.set_description_str("Fitting force curves...")
             pbar.unit = " fits"
@@ -828,43 +829,60 @@ class ForceVolumeWindow:
                 progress_image.changed()
                 progress_image.pchanged()
 
-            async with pool_lock:
-                global pool
-                try:
-                    pool.__enter__()
-                except ValueError:
-                    pool = await trs(Pool)
-                pool_iter = async_tools.asyncify_iterator(
-                    pool.imap_unordered(
-                        magic_calculation.calc_properties_imap,
-                        zip(delta, f, range(ncurves), repeat(optionsdict)),
-                        chunksize=8,
-                    )
+            # Multiprocessing
+            # try:
+            #     await pool_lock.acquire()
+            #     global pool
+            #     try:
+            #         pool.__enter__()
+            #     except ValueError:
+            #         pool = await trs(Pool)
+            #     property_iter = pool.imap_unordered(
+            #             magic_calculation.calc_properties_imap,
+            #             zip(delta, f, range(ncurves), repeat(optionsdict)),
+            #             chunksize=8,
+            #     )
+            #
+            #     # Single Threaded
+            #     property_iter = map(
+            #             magic_calculation.calc_properties_imap,
+            #             zip(delta, f, range(ncurves), repeat(optionsdict)),
+            #     )
+            #
+            #     property_aiter = async_tools.asyncify_iterator(property_iter)
+            # Async Native
+            async with trio.open_nursery() as nursery:
+                property_aiter = await nursery.start(
+                    async_tools.to_process_map_unordered,
+                    magic_calculation.calc_properties_imap,
+                    zip(delta, f, range(ncurves), repeat(optionsdict)),
+                    16,  # chunksize, but sadly can't use kwarg
                 )
-                try:
-                    first = True
-                    async for i, properties in pool_iter:
-                        if first:
-                            pbar.unpause()
-                            first = False
+                first = True
+                async for i, properties in property_aiter:
+                    if first:
+                        pbar.unpause()
+                        first = False
 
-                        if properties is None:
-                            property_map[i] = np.nan
-                            color = (1, 0, 0, 0.5)
-                        else:
-                            property_map[i] = properties
-                            color = (0, 1, 0, 0.5)
+                    if properties is None:
+                        property_map[i] = np.nan
+                        color = (1, 0, 0, 0.5)
+                    else:
+                        property_map[i] = properties
+                        color = (0, 1, 0, 0.5)
 
-                        pbar.update()
-                        r, c = np.unravel_index(i, img_shape)
-                        progress_array[r, c, :] = color
-                        try:
-                            self.canvas.draw_send.send_nowait(draw_fn)
-                        except trio.WouldBlock:
-                            pass
-                except:
-                    pool.terminate()
-                    raise
+                    pbar.update()
+                    r, c = np.unravel_index(i, img_shape)
+                    progress_array[r, c, :] = color
+                    try:
+                        self.canvas.draw_send.send_nowait(draw_fn)
+                    except trio.WouldBlock:
+                        pass
+            # except:
+            # pool.terminate()
+            # raise
+            # finally:
+            #     pool_lock.release()
 
         def draw_fn():
             progress_image.remove()
@@ -1568,6 +1586,9 @@ class FirstPool:
 
     def __repr__(self):
         return "nothing state=None pool_size=None>"
+
+    def terminate(self):
+        pass
 
 
 pool = FirstPool()
