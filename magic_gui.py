@@ -757,9 +757,6 @@ class ForceVolumeWindow:
             else:
                 raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
-            # Help progress bar appear
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-
             delta = np.empty((ncurves, segment_npts), np.float32)
             f = np.empty((ncurves, segment_npts), np.float32)
             first = True
@@ -809,8 +806,7 @@ class ForceVolumeWindow:
             pbar.unit = " fits"
             pbar.avg_time = None
             pbar.reset(total=ncurves)
-            # Help progress bar changes appear
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+            pbar.smoothing_time = 0.1
 
             property_names_units = {
                 "CalcIndentationModulus": "Pa",
@@ -858,12 +854,12 @@ class ForceVolumeWindow:
                     zip(delta, f, range(ncurves), repeat(optionsdict)),
                     16,  # chunksize, but sadly can't use kwarg
                 )
-                first = True
+                t0 = trio.current_time()
+                check_time = True
                 async for i, properties in property_aiter:
-                    if first:
-                        pbar.unpause()
-                        first = False
-
+                    if check_time and (trio.current_time() - t0 > 10):
+                        check_time = False
+                        pbar.smoothing_time = 5
                     if properties is None:
                         property_map[i] = np.nan
                         color = (1, 0, 0, 0.5)
