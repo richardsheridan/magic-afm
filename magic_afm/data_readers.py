@@ -7,8 +7,8 @@ import h5py
 import numpy as np
 import trio
 
-import magic_calculation
-from async_tools import trs, make_cancel_poller
+from . import calculation
+from .async_tools import trs, make_cancel_poller
 
 
 async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", force=False, pbar=None):
@@ -167,11 +167,11 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
     async def get_force_curve(self, r, c):
         await trio.sleep(0)
         gen = np.random.default_rng(seed=(r, c))
-        fext = magic_calculation.force_curve(
-            magic_calculation.red_extend, self.delta[: self.npts // 2], 1, 10, 1, -10, 1, 0, 0, 10
+        fext = calculation.force_curve(
+            calculation.red_extend, self.delta[: self.npts // 2], 1, 10, 1, -10, 1, 0, 0, 10
         )
-        fret = magic_calculation.force_curve(
-            magic_calculation.red_retract, self.delta[self.npts // 2 :], 1, 10, 1, -10, 1, 0, 0, 10
+        fret = calculation.force_curve(
+            calculation.red_retract, self.delta[self.npts // 2:], 1, 10, 1, -10, 1, 0, 0, 10
         )
         d = np.concatenate((fext, fret))
         z = self.delta + d

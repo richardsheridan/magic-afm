@@ -7,13 +7,10 @@ __app_name__ = __doc__.split("\n", 1)[0]
 import sys
 from itertools import repeat
 
-import data_readers
-
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-    from _version import __version__
+    from magic_afm._version import __version__
 else:
-    import make_version
-
+    from magic_afm import make_version
     __version__ = make_version.get()
 
 __short_license__ = f"""{__app_name__} {__version__}
@@ -70,10 +67,8 @@ from matplotlib.widgets import SubplotTool
 from tqdm.gui import tqdm_tk
 import imageio
 
-import async_tools
-import magic_calculation
-from magic_calculation import MANIPULATIONS
-from async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY
+from magic_afm import calculation, async_tools, data_readers
+from magic_afm.async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY
 
 matplotlib.rcParams["savefig.dpi"] = 300
 RESAMPLE_NPTS = 512
@@ -128,7 +123,7 @@ class DispKind(enum.IntEnum):
 
 @dataclasses.dataclass
 class ForceCurveOptions:
-    fit_mode: magic_calculation.FitMode
+    fit_mode: calculation.FitMode
     disp_kind: DispKind
     k: float
     radius: float
@@ -580,13 +575,13 @@ class ForceVolumeWindow:
         colormap_labelframe.pack(fill="x")
         manipulate_labelframe = ttk.Labelframe(image_opts_frame, text="Manipulations")
         self.manipulate_strvar = tk.StringVar(
-            manipulate_labelframe, value=next(iter(MANIPULATIONS))
+            manipulate_labelframe, value=next(iter(calculation.MANIPULATIONS))
         )
         self.manipulate_menu = ttk.Combobox(
             manipulate_labelframe,
             state="readonly",
             textvariable=self.manipulate_strvar,
-            values=list(MANIPULATIONS),
+            values=list(calculation.MANIPULATIONS),
             # width=max(map(len, COLORMAPS)) - 1,
         )
         self.manipulate_menu.pack(fill="x")
@@ -615,25 +610,25 @@ class ForceVolumeWindow:
         disp_labelframe.grid(row=0, column=0)
 
         fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
-        self.fit_intvar = tk.IntVar(fit_labelframe, value=magic_calculation.FitMode.SKIP.value)
+        self.fit_intvar = tk.IntVar(fit_labelframe, value=calculation.FitMode.SKIP.value)
         fit_skip_button = ttk.Radiobutton(
             fit_labelframe,
             text="Skip",
-            value=magic_calculation.FitMode.SKIP.value,
+            value=calculation.FitMode.SKIP.value,
             variable=self.fit_intvar,
         )
         fit_skip_button.grid(row=0, column=0)
         fit_ext_button = ttk.Radiobutton(
             fit_labelframe,
             text="Extend",
-            value=magic_calculation.FitMode.EXTEND.value,
+            value=calculation.FitMode.EXTEND.value,
             variable=self.fit_intvar,
         )
         fit_ext_button.grid(row=0, column=1)
         fit_ret_button = ttk.Radiobutton(
             fit_labelframe,
             text="Retract",
-            value=magic_calculation.FitMode.RETRACT.value,
+            value=calculation.FitMode.RETRACT.value,
             variable=self.fit_intvar,
         )
         fit_ret_button.grid(row=0, column=2)
@@ -748,10 +743,10 @@ class ForceVolumeWindow:
                 npts = RESAMPLE_NPTS
             else:
                 resample_npts = npts
-            if options.fit_mode == magic_calculation.FitMode.EXTEND:
+            if options.fit_mode == calculation.FitMode.EXTEND:
                 sl = slice(s)
                 segment_npts = s
-            elif options.fit_mode == magic_calculation.FitMode.RETRACT:
+            elif options.fit_mode == calculation.FitMode.RETRACT:
                 sl = slice(s, None)
                 segment_npts = npts - s
             else:
@@ -770,7 +765,7 @@ class ForceVolumeWindow:
                 z, d, _ = await self.opened_fvol.get_force_curve(r, c)
                 if resample:
                     z = await trio.to_thread.run_sync(
-                        magic_calculation.resample_dset,
+                        calculation.resample_dset,
                         z,
                         npts,
                         True,
@@ -778,7 +773,7 @@ class ForceVolumeWindow:
                         limiter=async_tools.cpu_bound_limiter,
                     )
                     d = await trio.to_thread.run_sync(
-                        magic_calculation.resample_dset,
+                        calculation.resample_dset,
                         d,
                         npts,
                         True,
@@ -828,7 +823,7 @@ class ForceVolumeWindow:
             async with trio.open_nursery() as nursery:
                 property_aiter = await nursery.start(
                     async_tools.to_process_map_unordered,
-                    magic_calculation.calc_properties_imap,
+                    calculation.calc_properties_imap,
                     zip(delta, f, range(ncurves), repeat(optionsdict)),
                     16,  # chunksize, but sadly can't use kwarg
                 )
@@ -973,7 +968,7 @@ class ForceVolumeWindow:
         current_names = list(self.image_name_menu.cget("values"))
         name = "Calc" + manip_name + current_name
         if name not in self.opened_fvol.image_names:
-            manip_fn = MANIPULATIONS[manip_name]
+            manip_fn = calculation.MANIPULATIONS[manip_name]
             manip_img = await trs(manip_fn, self.axesimage.get_array())
             self.opened_fvol.add_image(
                 name, self.unit, self.scandown, manip_img,
@@ -1275,8 +1270,8 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
     npts = len(z)
     if npts > RESAMPLE_NPTS:
         s = s * RESAMPLE_NPTS // npts
-        z = magic_calculation.resample_dset(z, RESAMPLE_NPTS, True)
-        d = magic_calculation.resample_dset(d, RESAMPLE_NPTS, True)
+        z = calculation.resample_dset(z, RESAMPLE_NPTS, True)
+        d = calculation.resample_dset(d, RESAMPLE_NPTS, True)
     # Transform data to model units
     f = d * options.k
     delta = z - d
@@ -1284,22 +1279,22 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
     if not options.fit_mode:
         return ForceCurveData(s=s, z=z, d=d, f=f, delta=delta,)
 
-    if options.fit_mode == magic_calculation.FitMode.EXTEND:
+    if options.fit_mode == calculation.FitMode.EXTEND:
         sl = slice(s)
-    elif options.fit_mode == magic_calculation.FitMode.RETRACT:
+    elif options.fit_mode == calculation.FitMode.RETRACT:
         sl = slice(s, None)
     else:
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
     cancel_poller()
-    beta, beta_err, calc_fun = magic_calculation.fitfun(
+    beta, beta_err, calc_fun = calculation.fitfun(
         delta[sl], f[sl], **dataclasses.asdict(options), cancel_poller=cancel_poller,
     )
     f_fit = calc_fun(delta[sl], *beta)
     d_fit = f_fit / options.k
     cancel_poller()
     if np.all(np.isfinite(beta)):
-        deflection, indentation, z_true_surface, mindelta = magic_calculation.calc_def_ind_ztru(
+        deflection, indentation, z_true_surface, mindelta = calculation.calc_def_ind_ztru(
             f[sl], beta, **dataclasses.asdict(options)
         )
     else:
