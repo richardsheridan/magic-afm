@@ -44,7 +44,7 @@ from tkinter import ttk
 from contextlib import nullcontext
 from functools import partial, wraps
 from typing import Optional, Callable
-from multiprocessing import Pool, freeze_support
+from multiprocessing import freeze_support
 import ctypes
 
 try:
@@ -825,28 +825,6 @@ class ForceVolumeWindow:
                 progress_image.changed()
                 progress_image.pchanged()
 
-            # Multiprocessing
-            # try:
-            #     await pool_lock.acquire()
-            #     global pool
-            #     try:
-            #         pool.__enter__()
-            #     except ValueError:
-            #         pool = await trs(Pool)
-            #     property_iter = pool.imap_unordered(
-            #             magic_calculation.calc_properties_imap,
-            #             zip(delta, f, range(ncurves), repeat(optionsdict)),
-            #             chunksize=8,
-            #     )
-            #
-            #     # Single Threaded
-            #     property_iter = map(
-            #             magic_calculation.calc_properties_imap,
-            #             zip(delta, f, range(ncurves), repeat(optionsdict)),
-            #     )
-            #
-            #     property_aiter = async_tools.asyncify_iterator(property_iter)
-            # Async Native
             async with trio.open_nursery() as nursery:
                 property_aiter = await nursery.start(
                     async_tools.to_process_map_unordered,
@@ -874,11 +852,6 @@ class ForceVolumeWindow:
                         self.canvas.draw_send.send_nowait(draw_fn)
                     except trio.WouldBlock:
                         pass
-            # except:
-            # pool.terminate()
-            # raise
-            # finally:
-            #     pool_lock.release()
 
         def draw_fn():
             progress_image.remove()
@@ -1462,7 +1435,11 @@ async def about_task(root):
                 "Default threads:"
                 + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
             )
-            process.set("Processes: " + " ".join(repr(pool).split()[1:])[:-1])
+            if async_tools.EXECUTOR is None:
+                numprocs = 0
+            else:
+                numprocs = len(async_tools.EXECUTOR._processes)
+            process.set("Worker Processes: " + str(numprocs))
             await trio.sleep_until(t + interval / 1000)
 
     # run using tcl event loop
@@ -1574,21 +1551,6 @@ def main():
             )
 
 
-class FirstPool:
-    """Allows check for existing and open Pool instance in one try"""
-
-    def __enter__(self):
-        raise ValueError()
-
-    def __repr__(self):
-        return "nothing state=None pool_size=None>"
-
-    def terminate(self):
-        pass
-
-
-pool = FirstPool()
-pool_lock = trio.Lock()
 if __name__ == "__main__":
     freeze_support()
     main()
