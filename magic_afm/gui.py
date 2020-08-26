@@ -4,6 +4,7 @@
 __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
+import itertools
 import sys
 from itertools import repeat
 
@@ -42,7 +43,7 @@ import tkinter.filedialog
 from tkinter import ttk
 from contextlib import nullcontext
 from functools import partial, wraps
-from typing import Optional, Callable
+from typing import Optional, Callable, ClassVar
 from multiprocessing import freeze_support
 import ctypes
 
@@ -161,9 +162,15 @@ class ImagePoint:
     c: int
     x: float
     y: float
+    _transforms: ClassVar[dict] = {}
 
-    @staticmethod
-    def construct_transforms(axesimage):
+    @classmethod
+    def get_transforms(cls, axesimage):
+        try:
+            return cls._transforms[axesimage]
+        except KeyError:
+            pass
+
         xmin, xmax, ymin, ymax = axesimage.get_extent()
         rows, cols = axesimage.get_size()
         if axesimage.origin == "upper":
@@ -179,14 +186,24 @@ class ImagePoint:
         def array_index_to_data_coords(r, c):
             return invtrans.transform_point([r, c])[::-1]
 
-        return data_coords_to_array_index, array_index_to_data_coords
+        transforms = cls._transforms[axesimage] = (
+            data_coords_to_array_index,
+            array_index_to_data_coords,
+        )
+        if len(cls._transforms) > 100:
+            cls._transforms = dict(
+                itertools.islice(cls._transforms.items(), len(cls._transforms) - 50)
+            )
+        return transforms
 
     @classmethod
-    def from_index(cls, r, c, transforms):
+    def from_index(cls, r, c, axesimage):
+        transforms = cls.get_transforms(axesimage)
         return cls(r, c, *transforms[1](r, c))
 
     @classmethod
-    def from_data(cls, x, y, transforms):
+    def from_data(cls, x, y, axesimage):
+        transforms = cls.get_transforms(axesimage)
         r, c = transforms[0](x, y)
         # center x, y
         x, y = transforms[1](r, c)
@@ -924,8 +941,6 @@ class ForceVolumeWindow:
             )
             self.axesimage.get_array().fill_value = np.nanmedian(image_array)
 
-            self.transforms = ImagePoint.construct_transforms(self.axesimage)
-
             self.colorbar = self.fig.colorbar(self.axesimage, ax=self.img_ax, use_gridspec=True,)
             self.navbar.update()  # let navbar catch new cax in fig for tooltips
             customize_colorbar(self.colorbar, self.image_stats.q01, self.image_stats.q99, self.unit)
@@ -1088,7 +1103,7 @@ class ForceVolumeWindow:
         elif mouseevent.inaxes is self.img_ax:
             if mouseevent.button != MouseButton.LEFT:
                 return
-            point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, self.transforms)
+            point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, self.axesimage)
             shift_held = mouseevent.guiEvent.state & TkState.SHIFT
             if shift_held and point in self.existing_points:
                 return
