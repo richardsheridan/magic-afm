@@ -42,7 +42,7 @@ def flatten(img):
     b = img.T
     keep = ~np.logical_or.reduce(~np.isfinite(b), axis=1)
     try:
-        x = lstsq(a[keep, :], b[keep, :])[0]
+        x = lstsq(a[keep, :], b[keep, :], rcond=None)[0]
     except np.linalg.LinAlgError:
         return np.full_like(img, fill_value=np.nan)
     return img - (a @ x).T
@@ -55,7 +55,7 @@ def planefit(img):
     b = img.ravel()
     keep = np.isfinite(b)
     try:
-        x = lstsq(a[keep, :], b[keep])[0]
+        x = lstsq(a[keep, :], b[keep], rcond=None)[0]
     except np.linalg.LinAlgError:
         return np.full_like(img, fill_value=np.nan)
     return img - (a @ x).reshape(img.shape)

@@ -11,6 +11,7 @@ if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     from magic_afm._version import __version__
 else:
     from magic_afm import make_version
+
     __version__ = make_version.get()
 
 __short_license__ = f"""{__app_name__} {__version__}
@@ -30,6 +31,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import warnings
 import collections
 import dataclasses
 import datetime
@@ -65,10 +67,13 @@ from matplotlib.ticker import EngFormatter
 from matplotlib.transforms import Bbox, BboxTransform
 from matplotlib.widgets import SubplotTool
 from tqdm.gui import tqdm_tk
+from tqdm.std import TqdmExperimentalWarning
 import imageio
 
 from magic_afm import calculation, async_tools, data_readers
 from magic_afm.async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY
+
+warnings.simplefilter("ignore", TqdmExperimentalWarning)
 
 matplotlib.rcParams["savefig.dpi"] = 300
 RESAMPLE_NPTS = 512
