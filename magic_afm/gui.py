@@ -203,6 +203,7 @@ class ImageStats:
 
     @classmethod
     def from_array(cls, array):
+        # noinspection PyArgumentList
         return cls(*np.nanquantile(array, [0, 0.01, 0.5, 0.99, 1]).tolist())
 
 
@@ -933,6 +934,7 @@ class ForceVolumeWindow:
             self.colorbar.frozen = True
             expand_colorbar(self.colorbar)
 
+            # noinspection PyTypeChecker
             self.fig.set_tight_layout(True)
 
         await self.canvas.draw_send.send(draw_fn)
@@ -942,6 +944,7 @@ class ForceVolumeWindow:
         await self.redraw_existing_points()
 
         def draw_fn():
+            # noinspection PyTypeChecker
             self.fig.set_tight_layout(True)
 
         await self.canvas.draw_send.send(draw_fn)
@@ -950,6 +953,7 @@ class ForceVolumeWindow:
         await self.redraw_existing_points()
 
         def draw_fn():
+            # noinspection PyTypeChecker
             self.fig.set_tight_layout(True)
 
         await self.canvas.draw_send.send(draw_fn)
@@ -1438,6 +1442,7 @@ async def about_task(root):
             if async_tools.EXECUTOR is None:
                 numprocs = 0
             else:
+                # noinspection PyUnresolvedReferences
                 numprocs = len(async_tools.EXECUTOR._processes)
             process.set("Worker Processes: " + str(numprocs))
             await trio.sleep_until(t + interval / 1000)
