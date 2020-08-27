@@ -832,7 +832,7 @@ class ForceVolumeWindow:
                 "CalcDeflection": "m",
                 "CalcIndentation": "m",
                 "CalcTrueHeight": "m",  # Hi z -> lo h
-                "CalcIndentationRatio": "",
+                "CalcIndentationRatio": None,
             }
             property_map = np.empty(
                 ncurves, dtype=np.dtype([(name, "f4") for name in property_names_units]),
