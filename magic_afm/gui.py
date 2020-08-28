@@ -1534,6 +1534,8 @@ async def main_task(root):
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
         await trio.sleep_forever()  # needed if nursery never starts a long running child
+    if async_tools.EXECUTOR is not None:
+        async_tools.EXECUTOR.shutdown(wait=True)
 
 
 def main():

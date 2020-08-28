@@ -85,17 +85,57 @@ def _chunk_consumer(chunk):
     return tuple(map(*chunk))
 
 
-def _top_up_not_done(not_done, sync_fn, job_items):
+def _release_obo(limiter, future_token):
+    trio_token = trio.lowlevel.current_trio_token()
+
+    def limiter_release_callback(cf_fut):
+        try:
+            trio.lowlevel.current_task()
+        except RuntimeError:
+            trio.from_thread.run_sync(
+                limiter.release_on_behalf_of, future_token, trio_token=trio_token
+            )
+        else:
+            limiter.release_on_behalf_of(future_token)
+
+    return limiter_release_callback
+
+
+async def _top_up_not_done(not_done, sync_fn, job_items, limiter):
+    """Top up set of not_done futures while respecting the limiter"""
+    if not_done and not limiter.available_tokens:
+        # Can't top up now, just bail and wait on cf.wait
+        return not_done
+
+    # need to do borrow before submitting to executor
+    future_token = object()
+    # XXX: unfortunate wait here in case of limiter contention
+    await limiter.acquire_on_behalf_of(future_token)
+
     for job_item in job_items:
-        not_done.add(EXECUTOR.submit(sync_fn, job_item))
-        # exceed pool size slightly to maximize utilization
-        if len(not_done) > cpu_bound_limiter.total_tokens:
+        cf_fut = EXECUTOR.submit(sync_fn, job_item)
+        not_done.add(cf_fut)
+        # tokens are effectively paired with futures via this callback
+        cf_fut.add_done_callback(_release_obo(limiter, future_token))
+
+        # prefer waiting on cf.wait
+        future_token = object()
+        try:
+            limiter.acquire_on_behalf_of_nowait(future_token)
+        except trio.WouldBlock:
             break
+
+    # not_done can be empty here iff it was empty and no job_items left
     return not_done
 
 
 async def to_process_map_unordered(
-    sync_fn, job_items, chunksize=1, cancellable=True, task_status=trio.TASK_STATUS_IGNORED
+    sync_fn,
+    job_items,
+    chunksize=1,
+    cancellable=True,
+    limiter=cpu_bound_limiter,
+    task_status=trio.TASK_STATUS_IGNORED,
 ):
     """Run many job items in separate processes
 
@@ -122,7 +162,7 @@ async def to_process_map_unordered(
 
     try:
         # use walrus helper to submit jobs lazily to the pool
-        while not_done := _top_up_not_done(not_done, sync_fn, job_items):
+        while not_done := await _top_up_not_done(not_done, sync_fn, job_items, limiter):
             # use thread to do nonblocking wait
             done, not_done = await trs(
                 wait, not_done, None, FIRST_COMPLETED, cancellable=cancellable
