@@ -71,7 +71,7 @@ async def to_process_run_sync(sync_fn, *args, cancellable=True, limiter=cpu_boun
             return await trs(
                 cf_fut.result, cancellable=cancellable, limiter=trio.CapacityLimiter(1)
             )
-        except:
+        except:  # noqa: E722
             cf_fut.cancel()
             raise
 
@@ -86,13 +86,11 @@ def _chunk_consumer(chunk):
 
 
 def _top_up_not_done(not_done, sync_fn, job_items):
-    limit = cpu_bound_limiter.total_tokens*2
-    sentinel = object()
-    while len(not_done) < limit:
-        job_item = next(job_items, sentinel)
-        if job_item is sentinel:
-            break
+    for job_item in job_items:
         not_done.add(EXECUTOR.submit(sync_fn, job_item))
+        # exceed pool size slightly to maximize utilization
+        if len(not_done) > cpu_bound_limiter.total_tokens:
+            break
     return not_done
 
 
@@ -141,11 +139,9 @@ async def to_process_map_unordered(
                 else:
                     for r in res:
                         await send_chan.send(r)
-    except:
+    finally:
         for cf_fut in not_done:
             cf_fut.cancel()
-        raise
-    finally:
         await send_chan.aclose()
 
     if task_status is trio.TASK_STATUS_IGNORED:
