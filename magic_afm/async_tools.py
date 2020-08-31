@@ -81,6 +81,17 @@ def _chunk_producer(fn, job_items, chunksize):
         yield fn, x
 
 
+async def _async_chunk_producer(fn, job_items, chunksize):
+    x = []
+    async for job_item in job_items:
+        x.append(job_item)
+        if len(x) == chunksize:
+            yield fn, tuple(x)
+            x.clear()
+    if x:
+        yield fn, tuple(x)
+
+
 def _chunk_consumer(chunk):
     return tuple(map(*chunk))
 
@@ -112,17 +123,17 @@ async def _top_up_not_done(not_done, sync_fn, job_items, limiter):
     # XXX: unfortunate wait here in case of limiter contention
     await limiter.acquire_on_behalf_of(future_token)
 
-    for job_item in job_items:
+    async for job_item in job_items:
         cf_fut = EXECUTOR.submit(sync_fn, job_item)
         not_done.add(cf_fut)
         # tokens are effectively paired with futures via this callback
         cf_fut.add_done_callback(_release_obo(limiter, future_token))
 
-        # prefer waiting on cf.wait
         future_token = object()
         try:
             limiter.acquire_on_behalf_of_nowait(future_token)
         except trio.WouldBlock:
+            # prefer waiting on cf.wait
             break
 
     # not_done can be empty here iff it was empty and no job_items left
@@ -142,6 +153,9 @@ async def to_process_map_unordered(
     This imitates the multiprocessing.Pool.imap_unordered API, but using
     minimal threads to make the behavior properly nonblocking and cancellable.
 
+    Job items can be any iterable, sync or async, finite or infinite,
+    blocking or non-blocking.
+
     Awaiting this function produces an in-memory iterable of the map results.
     Using nursery.start() on this function produces a MemoryRecieveChannel
     with no buffer to receive results as-completed."""
@@ -155,10 +169,20 @@ async def to_process_map_unordered(
     task_status.started(recv_chan)
 
     not_done = set()
-    job_items = iter(job_items)  # treat as read-once iterable
-    if chunksize != 1:
-        job_items = _chunk_producer(sync_fn, job_items, chunksize)
-        sync_fn = _chunk_consumer
+    try:
+        job_items = iter(job_items)  # Duck type any iterable
+    except TypeError as e:
+        if not str(e).endswith("object is not iterable"):
+            raise e
+        job_items = job_items.__aiter__()  # Duck type any async iterable
+        if chunksize != 1:
+            job_items = _async_chunk_producer(sync_fn, job_items, chunksize)
+            sync_fn = _chunk_consumer
+    else:
+        if chunksize != 1:
+            job_items = _chunk_producer(sync_fn, job_items, chunksize)
+            sync_fn = _chunk_consumer
+        job_items = asyncify_iterator(job_items)
 
     try:
         # use walrus helper to submit jobs lazily to the pool
