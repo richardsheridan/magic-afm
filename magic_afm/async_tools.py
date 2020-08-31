@@ -100,14 +100,7 @@ def _release_obo(limiter, future_token):
     trio_token = trio.lowlevel.current_trio_token()
 
     def limiter_release_callback(cf_fut):
-        try:
-            trio.lowlevel.current_task()
-        except RuntimeError:
-            trio.from_thread.run_sync(
-                limiter.release_on_behalf_of, future_token, trio_token=trio_token
-            )
-        else:
-            limiter.release_on_behalf_of(future_token)
+        trio_token.run_sync_soon(limiter.release_on_behalf_of, future_token)
 
     return limiter_release_callback
 
