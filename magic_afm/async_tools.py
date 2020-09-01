@@ -52,6 +52,9 @@ async def start_global_executor():
         # submit trash to start processes
         cf_fut = await trs(EXECUTOR.submit, int)
         cf_fut.cancel()
+        import psutil
+        for pid in EXECUTOR._processes:
+            psutil.Process(pid).nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
 
 
 async def to_process_run_sync(sync_fn, *args, cancellable=True, limiter=cpu_bound_limiter):
