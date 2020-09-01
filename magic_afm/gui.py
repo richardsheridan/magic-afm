@@ -308,6 +308,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
         while True:
             # Sleep until someone sends artist calls
             draw_fn = await self.draw_recv.receive()
+            # Set deadline ASAP so delay scope is accurate
             deadline = trio.current_time() + delay
             async with self.spinner_scope():
                 await trs(draw_fn)
