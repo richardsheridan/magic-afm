@@ -111,23 +111,31 @@ async def _top_up_not_done(not_done, sync_fn, job_items, limiter):
         # Can't top up now, just bail and wait on cf.wait
         return not_done
 
-    # need to do borrow before submitting to executor
+    # need to acquire limiter before submitting to executor
     future_token = object()
-    # XXX: unfortunate wait here in case of limiter contention
+    # wait here in case of limiter contention
     await limiter.acquire_on_behalf_of(future_token)
 
-    async for job_item in job_items:
-        cf_fut = EXECUTOR.submit(sync_fn, job_item)
-        not_done.add(cf_fut)
-        # tokens are effectively paired with futures via this callback
-        cf_fut.add_done_callback(_release_obo(limiter, future_token))
+    try:
+        async for job_item in job_items:
+            cf_fut = EXECUTOR.submit(sync_fn, job_item)
+            not_done.add(cf_fut)
+            # tokens are effectively paired with futures via this callback
+            cf_fut.add_done_callback(_release_obo(limiter, future_token))
 
-        future_token = object()
-        try:
-            limiter.acquire_on_behalf_of_nowait(future_token)
-        except trio.WouldBlock:
-            # prefer waiting on cf.wait
-            break
+            future_token = object()
+            try:
+                limiter.acquire_on_behalf_of_nowait(future_token)
+            except trio.WouldBlock:
+                # prefer waiting on cf.wait
+                break
+        else:
+            # iterator exhausted, need to release the limiter manually
+            limiter.release_on_behalf_of(future_token)
+    except trio.Cancelled as e:
+        # cancelled while waiting for a job, release limiter manually
+        limiter.release_on_behalf_of(future_token)
+        raise e
 
     # not_done can be empty here iff it was empty and no job_items left
     return not_done
