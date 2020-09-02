@@ -392,6 +392,7 @@ class NanoscopeFile(BaseForceVolumeFile):
     _basic_units_map = {
         "Height Sensor": "m",
     }
+
     async def ainitialize(self):
         self.header = header = await read_nanoscope_header(self.path)
         # \Frame direction: Down
@@ -418,6 +419,10 @@ class NanoscopeFile(BaseForceVolumeFile):
             npts *= 2  # 2x for ext+ret, 2x for ???
         assert bpp * r * c * npts == length
         self.npts = npts
+        rate, unit = header["Ciao scan list"]["PFT Freq"].split()
+        assert unit.lower() == "khz"
+        self.rate = float(rate)
+        self.sync_dist = int(round(float(header["Ciao scan list"]["Sync Distance"])))
 
         self._file = file = await self.path.open("rb", buffering=0)
         self._mm = mm = await trio.to_thread.run_sync(
@@ -497,8 +502,7 @@ class NanoscopeFile(BaseForceVolumeFile):
             if d[0] == -32768 * self._defl_scale:
                 d[0] = d[1]
 
-        # naive phase sync
-        d = np.roll(d, s-np.argmax(d))  # TODO roll across two adjacent indents
+        d = np.roll(d, s - self.sync_dist)  # TODO roll across two adjacent indents
         return z, d, s
 
     async def get_image(self, image_name):
