@@ -516,7 +516,7 @@ class NanoscopeFile(BaseForceVolumeFile):
 
         value = h["@2:Z scale"]
         hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
-        scale = np.float32(hard_scale * soft_scale) / NANOMETER_UNIT_CONVERSION
+        scale = np.float32(hard_scale * soft_scale / NANOMETER_UNIT_CONVERSION)
         data_length = int(h["Data length"])
         offset = int(h["Data offset"])
         bpp = bruker_bpp_fix(h["Bytes/pixel"], self._version)

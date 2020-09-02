@@ -765,8 +765,6 @@ class ForceVolumeWindow:
             if resample:
                 s = s * RESAMPLE_NPTS // npts
                 npts = RESAMPLE_NPTS
-            else:
-                resample_npts = npts
             if options.fit_mode == calculation.FitMode.EXTEND:
                 sl = slice(s)
                 segment_npts = s
