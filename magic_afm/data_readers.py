@@ -431,9 +431,6 @@ class NanoscopeFile(BaseForceVolumeFile):
         self._defl_raw_ints = np.ndarray(
             shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset,
         )
-        scandown = data_header["Frame direction"] == "Down"
-        if not scandown:
-            self._defl_raw_ints = self._defl_raw_ints[::-1]
 
         scansize, units = header["Ciao scan list"]["Scan Size"].split()
         if units == "nm":
@@ -495,8 +492,6 @@ class NanoscopeFile(BaseForceVolumeFile):
         else:
             # need to infer z from amp/height
             image, scandown = self._height_for_z
-            if not scandown:
-                image = image[::-1]
             z = self._z_scale - image[r, c]
 
             # remove blip
