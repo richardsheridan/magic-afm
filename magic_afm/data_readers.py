@@ -424,10 +424,10 @@ class NanoscopeFile(BaseForceVolumeFile):
         self.rate = float(rate)
         self.sync_dist = int(round(float(header["Ciao scan list"]["Sync Distance"])))
 
-        self._file = file = await self.path.open("rb", buffering=0)
-        self._mm = mm = await trio.to_thread.run_sync(
-            mmap.mmap, file.fileno(), 0, None, mmap.ACCESS_READ,
-        )
+        async with await self.path.open("rb", buffering=0) as file:
+            self._mm = mm = await trio.to_thread.run_sync(
+                mmap.mmap, file.fileno(), 0, None, mmap.ACCESS_READ,
+            )
         self._defl_raw_ints = np.ndarray(
             shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset,
         )
@@ -476,9 +476,10 @@ class NanoscopeFile(BaseForceVolumeFile):
             )
 
     async def aclose(self):
+        self._defl_raw_ints = None
+        self._z_raw_ints = None
         with trio.CancelScope(shield=True):
-            await trs(self._mm.close)
-            await self._file.aclose()
+            await trio.to_thread.run_sync(self._mm.close)
 
     async def get_force_curve(self, r, c):
         return await trs(self._sync_get_force_curve, r, c)
