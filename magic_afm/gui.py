@@ -457,7 +457,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         fname = await trs(
             partial(
                 tk.filedialog.asksaveasfilename,
-                master=self.canvas.get_tk_widget().master,
+                master=self,
                 title="Export calculated images",
                 filetypes=export_filetypes,
                 defaultextension=defaultextension,
