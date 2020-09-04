@@ -40,6 +40,7 @@ import traceback
 import enum
 import tkinter as tk
 import tkinter.filedialog
+import tkinter.messagebox
 from tkinter import ttk
 from contextlib import nullcontext
 from functools import partial, wraps
@@ -478,9 +479,20 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
                 image, scandown = await self.window._host.opened_fvol.get_image(image_name)
                 if not scandown:
                     image = image[::-1]
-                await trs(
-                    exporter, root + "_" + image_name[4:] + ext, image,
-                )
+                try:
+                    await trio.to_thread.run_sync(
+                        exporter, root + "_" + image_name[4:] + ext, image,
+                    )
+                except Exception as e:
+                    await trio.to_thread.run_sync(
+                        partial(
+                            tkinter.messagebox.showerror,
+                            master=self,
+                            title="Export error",
+                            message=repr(e),
+                        )
+                    )
+                    break
 
 
 class TkHost:
