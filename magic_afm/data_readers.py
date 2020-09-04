@@ -93,6 +93,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         self._file_image_names = set()
         self.params = {}
         self._trace = None
+        self.sync_dist = 0
 
     @property
     def trace(self):
