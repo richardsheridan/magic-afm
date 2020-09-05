@@ -403,7 +403,6 @@ class NanoscopeFile(BaseForceVolumeFile):
         self._file_image_names = header["Image"].keys()
 
         data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
-        ramp_name = header["Ciao force list"]["@4:Ramp channel"].split('"')[1]
 
         data_header = header["FV"][data_name]
         offset = int(data_header["Data offset"])
@@ -415,11 +414,7 @@ class NanoscopeFile(BaseForceVolumeFile):
             int(header["Ciao scan list"]["Lines"]),
         )
 
-        npts = int(header["Ciao force list"]["force/line"].split()[0])
-        while bpp * r * c * npts < length:
-            npts *= 2  # 2x for ext+ret, 2x for ???
-        assert bpp * r * c * npts == length
-        self.npts = npts
+        self.npts = npts = length // (bpp * r * c)
         rate, unit = header["Ciao scan list"]["PFT Freq"].split()
         assert unit.lower() == "khz"
         self.rate = float(rate)
@@ -451,8 +446,8 @@ class NanoscopeFile(BaseForceVolumeFile):
 
         await trio.sleep(0)
 
-        if ramp_name in header["FV"]:
-            ramp_header = header["FV"][ramp_name]
+        if "Height Sensor" in header["FV"]:
+            ramp_header = header["FV"]["Height Sensor"]
             offset = int(ramp_header["Data offset"])
             bpp = bruker_bpp_fix(ramp_header["Bytes/pixel"], version)
             self._z_raw_ints = np.ndarray(
