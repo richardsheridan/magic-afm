@@ -151,12 +151,14 @@ async def to_process_map_unordered(
         job_items = asyncify_iterator(job_items)
 
     async def worker(job_item):
-        result = await to_process_run_sync(sync_fn, job_item, limiter=limiter)
-        if chunksize == 1:
-            await send_chan.send(result)
-        else:
-            for r in result:
-                await send_chan.send(r)
+        # Backpressure: hold limiter for entire task to avoid spawning too many workers
+        async with limiter:
+            result = await to_process_run_sync(sync_fn, job_item, limiter=trio.CapacityLimiter(1))
+            if chunksize == 1:
+                await send_chan.send(result)
+            else:
+                for r in result:
+                    await send_chan.send(r)
 
     async with send_chan, trio.open_nursery() as nursery:
         async for job_item in job_items:
@@ -209,10 +211,12 @@ async def to_thread_map_unordered(
         job_items = asyncify_iterator(job_items)
 
     async def thread_worker(job_item):
-        result = await trio.to_thread.run_sync(
-            sync_fn, job_item, cancellable=cancellable, limiter=limiter
-        )
-        await send_chan.send(result)
+        # Backpressure: hold limiter for entire task to avoid spawning too many workers
+        async with limiter:
+            result = await trio.to_thread.run_sync(
+                sync_fn, job_item, cancellable=cancellable, limiter=trio.CapacityLimiter(1)
+            )
+            await send_chan.send(result)
 
     async with send_chan, trio.open_nursery() as nursery:
         async for job_item in job_items:
