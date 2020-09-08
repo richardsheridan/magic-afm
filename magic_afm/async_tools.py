@@ -199,17 +199,25 @@ async def to_thread_map_unordered(
     send_chan, recv_chan = trio.open_memory_channel(buffer)
     task_status.started(recv_chan)
 
-    async def thread_worker(item, send_chan_clone):
-        async with send_chan_clone:
-            result = await trio.to_thread.run_sync(
-                sync_fn, item, cancellable=cancellable, limiter=limiter
-            )
-            await send_chan_clone.send(result)
+    try:
+        job_items = iter(job_items)  # Duck type any iterable
+    except TypeError as e:
+        if not str(e).endswith("object is not iterable"):
+            raise e
+        job_items = job_items.__aiter__()  # Duck type any async iterable
+    else:
+        job_items = asyncify_iterator(job_items)
+
+    async def thread_worker(job_item):
+        result = await trio.to_thread.run_sync(
+            sync_fn, job_item, cancellable=cancellable, limiter=limiter
+        )
+        await send_chan.send(result)
 
     async with send_chan, trio.open_nursery() as nursery:
-        for job_item in job_items:
+        async for job_item in job_items:
             async with limiter:
-                nursery.start_soon(thread_worker, job_item, send_chan.clone())
+                nursery.start_soon(thread_worker, job_item)
 
     if task_status is trio.TASK_STATUS_IGNORED:
         # internal details version
