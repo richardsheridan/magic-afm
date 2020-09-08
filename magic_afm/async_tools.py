@@ -62,23 +62,27 @@ async def start_global_executor():
                 await trs(nicifier, pid)
 
 
-async def to_process_run_sync(sync_fn, *args, cancellable=True, limiter=cpu_bound_limiter):
+async def to_process_run_sync(sync_fn, *args, limiter=cpu_bound_limiter):
     """Run sync_fn in a separate process
 
     This is a simple wrapping of concurrent.futures.ProcessPoolExecutor.submit
-    that follows the API of trio.to_thread.run_sync, using one thread per call
-    up to the limiter total_tokens.
+    that follows the API of trio.to_thread.run_sync.
 
     If submitting many sync_fn calls a slightly more efficient method may be
     to_process_map_unordered."""
     await start_global_executor()
+    done_event = trio.Event()
+    trio_token = trio.lowlevel.current_trio_token()
+
+    def done_callback(cf_fut):
+        trio_token.run_sync_soon(done_event.set)
 
     async with limiter:
         cf_fut = EXECUTOR.submit(sync_fn, *args)
         try:
-            return await trs(
-                cf_fut.result, cancellable=cancellable, limiter=trio.CapacityLimiter(1)
-            )
+            cf_fut.add_done_callback(done_callback)
+            await done_event.wait()
+            return cf_fut.result(timeout=0)
         except:  # noqa: E722
             cf_fut.cancel()
             raise
@@ -104,56 +108,10 @@ def _chunk_consumer(chunk):
     return tuple(map(*chunk))
 
 
-def _release_obo(limiter, future_token):
-    trio_token = trio.lowlevel.current_trio_token()
-
-    def limiter_release_callback(cf_fut):
-        trio_token.run_sync_soon(limiter.release_on_behalf_of, future_token)
-
-    return limiter_release_callback
-
-
-async def _top_up_not_done(not_done, sync_fn, job_items, limiter):
-    """Top up set of not_done futures while respecting the limiter"""
-    if not_done and not limiter.available_tokens:
-        # Can't top up now, just bail and wait on cf.wait
-        return not_done
-
-    # need to acquire limiter before submitting to executor
-    future_token = object()
-    # wait here in case of limiter contention
-    await limiter.acquire_on_behalf_of(future_token)
-
-    try:
-        async for job_item in job_items:
-            cf_fut = EXECUTOR.submit(sync_fn, job_item)
-            not_done.add(cf_fut)
-            # tokens are effectively paired with futures via this callback
-            cf_fut.add_done_callback(_release_obo(limiter, future_token))
-
-            future_token = object()
-            try:
-                limiter.acquire_on_behalf_of_nowait(future_token)
-            except trio.WouldBlock:
-                # prefer waiting on cf.wait
-                break
-        else:
-            # iterator exhausted, need to release the limiter manually
-            limiter.release_on_behalf_of(future_token)
-    except trio.Cancelled as e:
-        # cancelled while waiting for a job, release limiter manually
-        limiter.release_on_behalf_of(future_token)
-        raise e
-
-    # not_done can be empty here iff it was empty and no job_items left
-    return not_done
-
-
 async def to_process_map_unordered(
     sync_fn,
     job_items,
     chunksize=1,
-    cancellable=True,
     limiter=cpu_bound_limiter,
     task_status=trio.TASK_STATUS_IGNORED,
 ):
@@ -177,7 +135,6 @@ async def to_process_map_unordered(
     send_chan, recv_chan = trio.open_memory_channel(buffer)
     task_status.started(recv_chan)
 
-    not_done = set()
     try:
         job_items = iter(job_items)  # Duck type any iterable
     except TypeError as e:
@@ -193,29 +150,18 @@ async def to_process_map_unordered(
             sync_fn = _chunk_consumer
         job_items = asyncify_iterator(job_items)
 
-    try:
-        # use walrus helper to submit jobs lazily to the pool
-        while not_done := await _top_up_not_done(not_done, sync_fn, job_items, limiter):
-            # use thread to do nonblocking wait
-            done, not_done = await trs(
-                wait, not_done, None, FIRST_COMPLETED, cancellable=cancellable
-            )
+    async def worker(job_item):
+        result = await to_process_run_sync(sync_fn, job_item, limiter=limiter)
+        if chunksize == 1:
+            await send_chan.send(result)
+        else:
+            for r in result:
+                await send_chan.send(r)
 
-            # Send off results one-by-one
-            for cf_fut in done:
-                # Yes, crash hard if TimeoutError or CancelledError
-                # The above waiting logic SHOULD only produce done futures
-                # For errors raised in the pool, all bets are off
-                res = cf_fut.result(timeout=0)
-                if chunksize == 1:
-                    await send_chan.send(res)
-                else:
-                    for r in res:
-                        await send_chan.send(r)
-    finally:
-        for cf_fut in not_done:
-            cf_fut.cancel()
-        await send_chan.aclose()
+    async with send_chan, trio.open_nursery() as nursery:
+        async for job_item in job_items:
+            async with limiter:
+                nursery.start_soon(worker, job_item)
 
     if task_status is trio.TASK_STATUS_IGNORED:
         # internal details version
