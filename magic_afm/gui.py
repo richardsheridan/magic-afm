@@ -1412,7 +1412,7 @@ async def open_task(root):
                 smoothing_time=0.5,
                 miniters=1,
             )
-            path = await data_readers.convert_ardf(path, force=True, pbar=pbar)
+            path = await data_readers.convert_ardf(path, pbar=pbar)
         if cscope.cancelled_caught:
             return
 

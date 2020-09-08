@@ -1,7 +1,6 @@
 import abc
 import mmap
-import os
-import subprocess
+from subprocess import PIPE, STARTF_USESHOWWINDOW, STARTUPINFO
 
 import h5py
 import numpy as np
@@ -11,73 +10,63 @@ from . import calculation
 from .async_tools import trs, make_cancel_poller
 
 
-async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", force=False, pbar=None):
+async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
     """Turn an ARDF path into a corresponding HDF5 path, converting the file if it doesn't exist.
 
     Can force the conversion with the force flag if necessary (e.g. overwriting with new data).
     Requires converter executable available from Asylum Research"""
     ardf_path = trio.Path(ardf_path)
-    #     conv_path = trio.Path(conv_path)
     h5file_path = ardf_path.with_suffix(".h5")
 
-    if (not force) and (await h5file_path.is_file()):
-        return h5file_path
-
-    startupinfo = None
-    creationflags = None
-    if os.name == "nt":
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        creationflags = subprocess.CREATE_NO_WINDOW
+    if pbar is None:
+        try:
+            import tqdm
+        except ImportError:
+            pass
+        else:
+            pbar = tqdm.tqdm(total=100, unit="%",)
 
     if pbar is None:
-        import tqdm
-
-        pbar = tqdm.tqdm(total=100, unit="%",)
-
-    pbar.set_description_str("Converting " + ardf_path.name)
+        pipe = None
+    else:
+        pbar.set_description_str("Converting " + ardf_path.name)
+        pipe = PIPE
 
     async def reading_stdout():
         stdout = bytearray()
         async for bytes_ in proc.stdout:
             stdout.extend(bytes_)
         stdout = stdout.decode()
-        print(stdout)
         if "Failed" in stdout:
-            raise RuntimeError()
+            raise RuntimeError(stdout)
+        else:
+            print(stdout)
 
     async def reading_stderr():
-        async for stuff in proc.stderr:
-            i = stuff.rfind(b"\x08") + 1  # first thing on right not a backspace
-            most_recent_numeric_output = stuff[i:-1]  # crop % sign
+        async for bytes_ in proc.stderr:
+            i = bytes_.rfind(b"\x08") + 1  # first thing on right not a backspace
+            most_recent_numeric_output = bytes_[i:-1]  # crop % sign
             if most_recent_numeric_output:
                 pbar.update(float(most_recent_numeric_output.decode()) - pbar.n)
 
     try:
         async with await trio.open_process(
             [str(conv_path), str(ardf_path), str(h5file_path),],
-            stderr=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            startupinfo=startupinfo,
-            creationflags=creationflags,
+            stderr=pipe,
+            stdout=pipe,
+            startupinfo=STARTUPINFO(dwFlags=STARTF_USESHOWWINDOW),
         ) as proc:
-            async with trio.open_nursery() as nursery:
-                nursery.start_soon(reading_stdout)
-                nursery.start_soon(reading_stderr)
-    except FileNotFoundError as e:
-        print(
-            "Please ensure the full path to the Asylum converter tool "
-            "ARDFtoHDF5.exe is in the conv_path argument",
-            flush=True,
-            sep="\n",
-        )
-        raise e
+            if pbar is not None:
+                async with trio.open_nursery() as nursery:
+                    nursery.start_soon(reading_stdout)
+                    nursery.start_soon(reading_stderr)
     except:
         with trio.CancelScope(shield=True):
             await h5file_path.unlink(missing_ok=True)
         raise
     finally:
-        pbar.close()
+        if pbar is not None:
+            pbar.close()
 
     return h5file_path
 
@@ -172,7 +161,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
             calculation.red_extend, self.delta[: self.npts // 2], 1, 10, 1, -10, 1, 0, 0, 10
         )
         fret = calculation.force_curve(
-            calculation.red_retract, self.delta[self.npts // 2:], 1, 10, 1, -10, 1, 0, 0, 10
+            calculation.red_retract, self.delta[self.npts // 2 :], 1, 10, 1, -10, 1, 0, 0, 10
         )
         d = np.concatenate((fext, fret))
         z = self.delta + d
