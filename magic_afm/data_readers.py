@@ -1,5 +1,4 @@
 import abc
-import mmap
 from subprocess import PIPE, STARTF_USESHOWWINDOW, STARTUPINFO
 
 import numpy as np
@@ -384,6 +383,7 @@ class NanoscopeFile(BaseForceVolumeFile):
     }
 
     async def ainitialize(self):
+        import mmap
         self.header = header = await read_nanoscope_header(self.path)
         # \Frame direction: Down
         # \Line Direction: Retrace
