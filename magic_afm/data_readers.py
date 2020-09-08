@@ -2,7 +2,6 @@ import abc
 import mmap
 from subprocess import PIPE, STARTF_USESHOWWINDOW, STARTUPINFO
 
-import h5py
 import numpy as np
 import trio
 
@@ -315,6 +314,7 @@ class ARH5File(BaseForceVolumeFile):
         self._trace = trace
 
     async def ainitialize(self):
+        import h5py
         self._h5data = h5data = await trio.to_thread.run_sync(h5py.File, self.path, "r")
         # The notes have a very regular key-value structure, so we convert to dict for later access
         self.notes = await trs(
