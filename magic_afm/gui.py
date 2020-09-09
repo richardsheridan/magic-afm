@@ -443,8 +443,8 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         exporter_map = {
             ".txt": partial(np.savetxt, fmt='%.8g'),
             ".asc": partial(np.savetxt, fmt='%.8g'),
-            ".tsv": partial(np.savetxt, delimiter="\t", fmt='%.8g'),
-            ".csv": partial(np.savetxt, delimiter=",", fmt='%.8g'),
+            ".tsv": partial(np.savetxt, fmt='%.8g', delimiter="\t"),
+            ".csv": partial(np.savetxt, fmt='%.8g', delimiter=","),
             ".npy": np.save,
             ".npz": np.savez_compressed,
         }
@@ -464,8 +464,9 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             )
         )
 
-        if fname in ["", ()]:
-            return
+        if not fname:
+            return  # Cancelled
+
         # Save dir for next time, unless empty str (i.e., use cwd).
         if initialdir != "":
             matplotlib.rcParams["savefig.directory"] = os.path.dirname(str(fname))
