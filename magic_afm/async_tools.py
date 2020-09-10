@@ -191,6 +191,9 @@ async def to_thread_map_unordered(
     This imitates the multiprocessing.dummy.Pool.imap_unordered API, but using
     trio threads to make the behavior properly nonblocking and cancellable.
 
+    Job items can be any iterable, sync or async, finite or infinite,
+    blocking or non-blocking.
+
     Awaiting this function produces an in-memory iterable of the map results.
     Using nursery.start() on this function produces a MemoryRecieveChannel
     with no buffer to receive results as-completed."""
