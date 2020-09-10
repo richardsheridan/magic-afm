@@ -645,21 +645,48 @@ class ForceVolumeWindow:
         disp_labelframe.grid(row=0, column=0)
 
         preproc_labelframe = ttk.Labelframe(self.options_frame, text="Preprocessing")
-        self.sync_dist_sbox = ttk.Spinbox(
+        self.defl_sens_strvar = tk.StringVar(preproc_labelframe)
+        defl_sens_sbox = ttk.Spinbox(
+            preproc_labelframe,
+            from_=0,
+            to=1e3,
+            increment=0.1,
+            format="%0.1f",
+            width=6,
+            textvariable=self.defl_sens_strvar,
+        )
+        defl_sens_sbox.set(opened_fvol.invols)
+        defl_sens_sbox.grid(row=0, column=2, sticky="E")
+        defl_sens_label = ttk.Label(preproc_labelframe, text="InvOLS", justify="left")
+        defl_sens_label.grid(row=0, column=0, columnspan=2, sticky="W")
+        self.spring_const_strvar = tk.StringVar(preproc_labelframe)
+        spring_const_sbox = ttk.Spinbox(
+            preproc_labelframe,
+            from_=0,
+            to=1e3,
+            increment=0.1,
+            format="%0.1f",
+            width=6,
+            textvariable=self.spring_const_strvar,
+        )
+        spring_const_sbox.set(opened_fvol.k)
+        spring_const_sbox.grid(row=1, column=2, sticky="E")
+        spring_const_label = ttk.Label(preproc_labelframe, text="Spring Constant", justify="left")
+        spring_const_label.grid(row=1, column=0, columnspan=2, sticky="W")
+        self.sync_dist_strvar = tk.StringVar(preproc_labelframe)
+        sync_dist_sbox = ttk.Spinbox(
             preproc_labelframe,
             from_=-opened_fvol.npts,
             to=opened_fvol.npts,
             increment=1,
             format="%0.0f",
             width=6,
-            validate="all",
-            validatecommand="string is entier -strict %S",  # bignum ints
-            invalidcommand="%W set %s",
+            textvariable=self.sync_dist_strvar,
         )
-        self.sync_dist_sbox.set(opened_fvol.sync_dist)
-        self.sync_dist_sbox.grid(row=0, column=2, sticky="E")
+        sync_dist_sbox.set(opened_fvol.sync_dist)
+        sync_dist_sbox.grid(row=2, column=2, sticky="E")
         sync_dist_label = ttk.Label(preproc_labelframe, text="Sync Distance", justify="left")
-        sync_dist_label.grid(row=0, column=0, columnspan=2, sticky="W")
+        sync_dist_label.grid(row=2, column=0, columnspan=2, sticky="W")
         preproc_labelframe.grid(row=0, column=1, sticky="EW")
         preproc_labelframe.grid_columnconfigure(1, weight=1)
 
@@ -1015,8 +1042,25 @@ class ForceVolumeWindow:
             for point in self.existing_points:
                 await self.plot_curve_response(point, False)
 
+    async def defl_sens_callback(self):
+        try:
+            self.opened_fvol.invols = float(self.defl_sens_strvar.get())
+        except ValueError:
+            self.defl_sens_strvar.set(str(self.opened_fvol.invols))
+        await self.redraw_existing_points()
+
+    async def spring_const_callback(self):
+        try:
+            self.opened_fvol.k = float(self.spring_const_strvar.get())
+        except ValueError:
+            self.spring_const_strvar.set(str(self.opened_fvol.k))
+        await self.redraw_existing_points()
+
     async def sync_dist_callback(self):
-        self.opened_fvol.sync_dist = int(self.sync_dist_sbox.get())
+        try:
+            self.opened_fvol.sync_dist = int(self.sync_dist_strvar.get())
+        except ValueError:
+            self.sync_dist_strvar.set(str(self.opened_fvol.sync_dist))
         await self.redraw_existing_points()
 
     async def manipulate_callback(self):
@@ -1211,8 +1255,15 @@ class ForceVolumeWindow:
             self.calc_props_button.configure(
                 command=partial(nursery.start_soon, self.calc_prop_map_callback,)
             )
-            self.sync_dist_sbox.configure(
-                command=partial(nursery.start_soon, self.sync_dist_callback)
+
+            self.defl_sens_strvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.defl_sens_callback))
+            )
+            self.spring_const_strvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.spring_const_callback))
+            )
+            self.sync_dist_strvar.trace_add(
+                "write", impartial(partial(nursery.start_soon, self.sync_dist_callback))
             )
             self.image_name_strvar.trace_add(
                 "write", impartial(partial(nursery.start_soon, self.change_image_callback))

@@ -141,6 +141,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         self._file_image_names.add("Demo")
         self.scansize = 100
         self.k = 1
+        self.invols = 1
         self.scandown = True
 
     async def ainitialize(self):
@@ -314,6 +315,7 @@ class ARH5File(BaseForceVolumeFile):
 
     async def ainitialize(self):
         import h5py
+
         self._h5data = h5data = await trio.to_thread.run_sync(h5py.File, self.path, "r")
         # The notes have a very regular key-value structure, so we convert to dict for later access
         self.notes = await trs(
@@ -330,10 +332,11 @@ class ARH5File(BaseForceVolumeFile):
         self._images = images
         self._file_image_names = image_names
         self.shape = await trs(lambda name: images[name].shape, next(iter(image_names)))
-        self.npts = len((await self.get_force_curve(0, 0))[0])
 
         self.k = float(self.notes["SpringConstant"])
         self.scansize = float(self.notes["ScanSize"]) * NANOMETER_UNIT_CONVERSION
+        self.invols = self._invols_orig = float(self.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
+        self.npts = len((await self.get_force_curve(0, 0))[0])
 
     async def aclose(self):
         with trio.CancelScope(shield=True):
@@ -360,10 +363,16 @@ class ARH5File(BaseForceVolumeFile):
         return worker
 
     async def get_force_curve(self, r, c):
-        return await trs(self._worker.get_force_curve, r, c)
+        z, d, s = await trs(self._worker.get_force_curve, r, c)
+        if self.invols != self._invols_orig:
+            d *= self.invols / self._invols_orig
+        return z, d, s
 
     async def get_all_curves(self):
-        return await trs(self._worker.get_all_curves, make_cancel_poller())
+        z, d, s = await trs(self._worker.get_all_curves, make_cancel_poller())
+        if self.invols != self._invols_orig:
+            d *= self.invols / self._invols_orig
+        return z, d, s
 
     async def get_image(self, image_name):
         if image_name in self._calc_images:
@@ -384,6 +393,7 @@ class NanoscopeFile(BaseForceVolumeFile):
 
     async def ainitialize(self):
         import mmap
+
         self.header = header = await read_nanoscope_header(self.path)
         # \Frame direction: Down
         # \Line Direction: Retrace
@@ -428,10 +438,9 @@ class NanoscopeFile(BaseForceVolumeFile):
         self.k = float(data_header["Spring Constant"])
         self.scansize = float(scansize) * factor
 
-        soft_scale = float(header["Ciao scan list"]["@Sens. DeflSens"].split()[1])
+        self.invols = float(header["Ciao scan list"]["@Sens. DeflSens"].split()[1])
         value = data_header["@4:Z scale"]
-        hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
-        self._defl_scale = np.float32(soft_scale * hard_scale)
+        self.defl_hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
 
         await trio.sleep(0)
 
@@ -467,8 +476,9 @@ class NanoscopeFile(BaseForceVolumeFile):
         return await trs(self._sync_get_force_curve, r, c)
 
     def _sync_get_force_curve(self, r, c):
+        defl_scale = np.float32(self.invols * self.defl_hard_scale)
         s = self.npts // 2
-        d = self._defl_raw_ints[r, c] * self._defl_scale
+        d = self._defl_raw_ints[r, c] * defl_scale
         d[:s] = d[s - 1 :: -1]
 
         if self._z_raw_ints is not None:
@@ -480,7 +490,7 @@ class NanoscopeFile(BaseForceVolumeFile):
             z = self._z_scale - image[r, c]
 
             # remove blip
-            if d[0] == -32768 * self._defl_scale:
+            if d[0] == -32768 * defl_scale:
                 d[0] = d[1]
 
         d = np.roll(d, s - self.sync_dist)  # TODO roll across two adjacent indents
