@@ -58,6 +58,9 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
                 async with trio.open_nursery() as nursery:
                     nursery.start_soon(reading_stdout)
                     nursery.start_soon(reading_stderr)
+    except FileNotFoundError:
+        raise FileNotFoundError("Please acquire ARDFtoHDF5.exe and place"
+                                " it in the application's root folder.")
     except:
         with trio.CancelScope(shield=True):
             await h5file_path.unlink(missing_ok=True)
