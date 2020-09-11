@@ -838,6 +838,7 @@ class ForceVolumeWindow:
             f = np.empty((ncurves, segment_npts), np.float32)
             first = True
 
+            @async_tools.spawn_limit(async_tools.cpu_bound_limiter)
             async def resample_helper(i):
                 nonlocal first
                 if first:
@@ -852,7 +853,7 @@ class ForceVolumeWindow:
                         npts,
                         True,
                         cancellable=True,
-                        limiter=async_tools.cpu_bound_limiter,
+                        limiter=trio.CapacityLimiter(1),
                     )
                     d = await trio.to_thread.run_sync(
                         calculation.resample_dset,
@@ -860,13 +861,8 @@ class ForceVolumeWindow:
                         npts,
                         True,
                         cancellable=True,
-                        limiter=async_tools.cpu_bound_limiter,
+                        limiter=trio.CapacityLimiter(1),
                     )
-                else:
-                    # coordinate with parent task limit spawning
-                    # not 100% sure it's necessary though
-                    await async_tools.cpu_bound_limiter.acquire()
-                    async_tools.cpu_bound_limiter.release()
                 z = z[sl]
                 d = d[sl]
                 delta[i, :] = z - d
@@ -1065,6 +1061,7 @@ class ForceVolumeWindow:
 
         await self.canvas.draw_send.send(draw_fn)
 
+    @async_tools.spawn_limit(trio.CapacityLimiter(1))
     async def redraw_existing_points(self):
         def draw_fn():
             for artist in self.artists:

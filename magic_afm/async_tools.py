@@ -18,7 +18,7 @@ A Docstring
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 from contextlib import asynccontextmanager
-from functools import partial
+from functools import partial, wraps
 from concurrent.futures import ProcessPoolExecutor
 from typing import Optional
 from itertools import islice
@@ -289,3 +289,13 @@ async def asyncify_iterator(iter):
         if result is sentinel:
             return
         yield result
+
+
+def spawn_limit(limiter):
+    def actual_decorator(async_fn):
+        @wraps(async_fn)
+        async def spawn_limit_wrapper(*args, **kwargs):
+            async with limiter:
+                return await async_fn(*args, **kwargs)
+        return spawn_limit_wrapper
+    return actual_decorator
