@@ -155,6 +155,7 @@ class ForceCurveData:
     ind: Optional[np.ndarray] = None
     z_tru: Optional[np.ndarray] = None
     mindelta: Optional[np.ndarray] = None
+    sens: Optional[np.ndarray] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -898,15 +899,10 @@ class ForceVolumeWindow:
                 progress_image.changed()
                 progress_image.pchanged()
 
-            def perturb_k(delta, f):
-                f_new = f * ((1 + self.epsilon) ** 0.5)
-                delta_new = delta + (f - f_new / (1 + self.epsilon)) / self.opened_fvol.k
-                return delta_new, f_new
-
             sens = {}
             for property_map, perturbation, name in [
-                (unperturbed_prop_map, lambda *x: x, "unperturbed"),
-                (unperturbed_prop_map.copy(), perturb_k, "IndentationModulus",),
+                (unperturbed_prop_map, lambda *x: x[:2], "unperturbed"),
+                (unperturbed_prop_map.copy(), calculation.perturb_k, "IndentationModulus",),
             ]:
                 if property_map is not unperturbed_prop_map:
                     progress_array[:] = 0
@@ -917,7 +913,7 @@ class ForceVolumeWindow:
                         self.canvas.draw_send.send_nowait(draw_fn)
                     except trio.WouldBlock:
                         pass
-                delta_new, f_new, = perturbation(delta, f)
+                delta_new, f_new = perturbation(delta, f, self.epsilon, self.opened_fvol.k)
                 async with trio.open_nursery() as nursery:
                     property_aiter = await nursery.start(
                         async_tools.to_process_map_unordered,
@@ -1350,23 +1346,32 @@ def expand_colorbar(colorbar):
 def draw_data_table(data, ax):
     exp = np.log10(data.beta[0])
     prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get((-exp + 2.7) // 3, ("", 1))
+    colLabels = [
+        f"$M$ ({prefix}Pa)",
+        r"${dM}/{dk} \times {k}/{M}$",
+        "$F_{adh}$ (nN)",
+        "d (nm)",
+        "δ (nm)",
+        "d/δ",
+    ]
     table = ax.table(
         [
             [
                 "{:.2f}±{:.2f}".format(data.beta[0] * fac, data.beta_err[0] * fac,),
+                "{:.2e}".format(data.sens[0]),
                 "{:.2f}±{:.2f}".format(-data.beta[1], -data.beta_err[1]),
                 "{:.2f}".format(data.defl),
                 "{:.2f}".format(data.ind),
                 "{:.2f}".format(data.defl / data.ind),
             ],
         ],
-        loc="top",
-        colLabels=[f"$M$ ({prefix}Pa)", "$F_{adh}$ (nN)", "d (nm)", "δ (nm)", "d/δ",],
-        colWidths=[0.6 / 2, 0.6 / 2, 0.4 / 3, 0.4 / 3, 0.4 / 3],
+        loc="upper left",
+        colLabels=colLabels,
         colLoc="right",
     )
     table.auto_set_font_size(False)
     table.set_fontsize(9)
+    table.auto_set_column_width(range(len(colLabels)))
     return table
 
 
@@ -1431,12 +1436,20 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
     cancel_poller()
+    optionsdict = dataclasses.asdict(options)
     beta, beta_err, calc_fun = calculation.fitfun(
-        delta[sl], f[sl], **dataclasses.asdict(options), cancel_poller=cancel_poller,
+        delta[sl], f[sl], **optionsdict, cancel_poller=cancel_poller,
     )
     f_fit = calc_fun(delta[sl], *beta)
     d_fit = f_fit / options.k
     cancel_poller()
+
+    delta_new, f_new = calculation.perturb_k(delta, f, 0.05, options.k)
+    optionsdict["k"] = 1.05 * options.k
+    beta_perturb, _, _ = calculation.fitfun(
+        delta_new[sl], f_new[sl], **optionsdict, cancel_poller=cancel_poller,
+    )
+    sens = (beta_perturb - beta) / beta / 0.05
     if np.all(np.isfinite(beta)):
         deflection, indentation, z_true_surface, mindelta = calculation.calc_def_ind_ztru(
             f[sl], beta, **dataclasses.asdict(options)
@@ -1459,6 +1472,7 @@ def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
         ind=indentation,
         z_tru=z_true_surface,
         mindelta=mindelta,
+        sens=sens,
     )
 
 

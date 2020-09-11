@@ -664,3 +664,9 @@ def calc_properties_imap(delta_f_i_kwargs):
     else:
         properties = None
     return i, properties
+
+
+def perturb_k(delta, f, epsilon, k):
+    f_new = f * ((1 + epsilon) ** 0.5)
+    delta_new = delta + (f - f_new / (1 + epsilon)) / k
+    return delta_new, f_new
