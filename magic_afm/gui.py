@@ -780,6 +780,9 @@ class ForceVolumeWindow:
         self.artists = []
         self.existing_points = set()
 
+        # prop map stuff
+        self.epsilon = 0.05
+
     def reset_image_name_menu(self, names):
         names = list(names)
         longest = max(map(len, names))
@@ -883,14 +886,14 @@ class ForceVolumeWindow:
             pbar.smoothing_time = 0.1
 
             property_names_units = {
-                "CalcIndentationModulus": "Pa",
-                "CalcAdhesionForce": "N",
-                "CalcDeflection": "m",
-                "CalcIndentation": "m",
-                "CalcTrueHeight": "m",  # Hi z -> lo h
-                "CalcIndentationRatio": None,
+                "IndentationModulus": "Pa",
+                "AdhesionForce": "N",
+                "Deflection": "m",
+                "Indentation": "m",
+                "TrueHeight": "m",  # Hi z -> lo h
+                "IndentationRatio": None,
             }
-            property_map = np.empty(
+            unperturbed_prop_map = np.empty(
                 ncurves, dtype=np.dtype([(name, "f4") for name in property_names_units]),
             )
             progress_array = progress_image.get_array()
@@ -899,33 +902,59 @@ class ForceVolumeWindow:
                 progress_image.changed()
                 progress_image.pchanged()
 
-            async with trio.open_nursery() as nursery:
-                property_aiter = await nursery.start(
-                    async_tools.to_process_map_unordered,
-                    calculation.calc_properties_imap,
-                    zip(delta, f, range(ncurves), repeat(optionsdict)),
-                    16,  # chunksize, but sadly can't use kwarg
-                )
-                t0 = trio.current_time()
-                check_time = True
-                async for i, properties in property_aiter:
-                    if check_time and (trio.current_time() - t0 > 10):
-                        check_time = False
-                        pbar.smoothing_time = 5
-                    if properties is None:
-                        property_map[i] = np.nan
-                        color = (1, 0, 0, 0.5)
-                    else:
-                        property_map[i] = properties
-                        color = (0, 1, 0, 0.5)
+            def perturb_k(delta, f):
+                f_new = f * ((1 + self.epsilon) ** 0.5)
+                delta_new = delta + (f - f_new / (1 + self.epsilon)) / self.opened_fvol.k
+                return delta_new, f_new
 
-                    pbar.update()
-                    r, c = np.unravel_index(i, img_shape)
-                    progress_array[r, c, :] = color
+            sens = {}
+            for property_map, perturbation, name in [
+                (unperturbed_prop_map, lambda *x: x, "unperturbed"),
+                (unperturbed_prop_map.copy(), perturb_k, "IndentationModulus",),
+            ]:
+                if property_map is not unperturbed_prop_map:
+                    progress_array[:] = 0
+                    pbar.reset(total=ncurves)
+                    pbar.smoothing_time = 0.1
+                    pbar.set_description_str(f"Calculating {name} sensitivity...")
                     try:
                         self.canvas.draw_send.send_nowait(draw_fn)
                     except trio.WouldBlock:
                         pass
+                delta_new, f_new, = perturbation(delta, f)
+                async with trio.open_nursery() as nursery:
+                    property_aiter = await nursery.start(
+                        async_tools.to_process_map_unordered,
+                        calculation.calc_properties_imap,
+                        zip(delta_new, f_new, range(ncurves), repeat(optionsdict)),
+                        16,  # chunksize, but sadly can't use kwarg
+                    )
+                    t0 = trio.current_time()
+                    check_time = True
+                    async for i, properties in property_aiter:
+                        if check_time and (trio.current_time() - t0 > 10):
+                            check_time = False
+                            pbar.smoothing_time = 5
+                        if properties is None:
+                            property_map[i] = np.nan
+                            color = (1, 0, 0, 0.5)
+                        else:
+                            property_map[i] = properties
+                            color = (0, 1, 0, 0.5)
+
+                        pbar.update()
+                        r, c = np.unravel_index(i, img_shape)
+                        progress_array[r, c, :] = color
+                        try:
+                            self.canvas.draw_send.send_nowait(draw_fn)
+                        except trio.WouldBlock:
+                            pass
+                if property_map is not unperturbed_prop_map:
+                    sens[name] = (
+                        (property_map[name] - unperturbed_prop_map[name])
+                        / unperturbed_prop_map[name]
+                        / self.epsilon
+                    ).reshape(img_shape)
 
         def draw_fn():
             progress_image.remove()
@@ -942,13 +971,20 @@ class ForceVolumeWindow:
         # Actually write out results to external world
         for name in property_names_units:
             self.opened_fvol.add_image(
-                image_name=name,
+                image_name="Calc" + name,
                 units=property_names_units[name],
                 scandown=True,
                 image=property_map[name].squeeze(),
             )
-            if name not in combobox_values:
-                combobox_values.append(name)
+            if "Calc" + name not in combobox_values:
+                combobox_values.append("Calc" + name)
+        for name in sens:
+            self.opened_fvol.add_image(
+                image_name="CalcSens" + name, units=None, scandown=True, image=sens[name],
+            )
+            if "CalcSens" + name not in combobox_values:
+                combobox_values.append("CalcSens" + name)
+
         self.reset_image_name_menu(combobox_values)
 
     async def change_cmap_callback(self):
