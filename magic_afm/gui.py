@@ -1022,7 +1022,7 @@ class ForceVolumeWindow:
                 picker=True,
                 cmap=cmap,
             )
-            self.axesimage.get_array().fill_value = np.nanmedian(image_array)
+            self.axesimage.get_array().fill_value = np.nan
 
             self.colorbar = self.fig.colorbar(self.axesimage, ax=self.img_ax, use_gridspec=True,)
             self.navbar.update()  # let navbar catch new cax in fig for tooltips
