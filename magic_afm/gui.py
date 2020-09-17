@@ -9,9 +9,9 @@ import sys
 from itertools import repeat
 
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-    from magic_afm._version import __version__
+    from ._version import __version__
 else:
-    from magic_afm import make_version
+    from . import make_version
 
     __version__ = make_version.get()
 
@@ -72,8 +72,8 @@ from tqdm.gui import tqdm_tk
 from tqdm.std import TqdmExperimentalWarning
 import imageio
 
-from magic_afm import calculation, async_tools, data_readers
-from magic_afm.async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY
+from . import calculation, async_tools, data_readers
+from .async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY
 
 warnings.simplefilter("ignore", TqdmExperimentalWarning)
 
