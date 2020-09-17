@@ -56,7 +56,11 @@ async def start_global_executor():
             import psutil
 
             def nicifier(pid):
-                psutil.Process(pid).nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                try:
+                    nice = psutil.BELOW_NORMAL_PRIORITY_CLASS
+                except AttributeError:
+                    nice = 3
+                psutil.Process(pid).nice(nice)
 
             for pid in EXECUTOR._processes:
                 await trs(nicifier, pid)

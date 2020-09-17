@@ -1679,8 +1679,12 @@ def main():
     root.wm_resizable(False, False)
     root.wm_minsize(300, 20)
     root.wm_title("Magic AFM")
-    dpi = ctypes.windll.user32.GetDpiForWindow(root.winfo_id())
-    matplotlib.rcParams["figure.dpi"] = dpi
+    try:
+        dpi = ctypes.windll.user32.GetDpiForWindow(root.winfo_id())
+    except AttributeError:
+        pass
+    else:
+        matplotlib.rcParams["figure.dpi"] = dpi
     # root.wm_iconbitmap("something.ico")
     # sabotage update command so that we crash instead of deadlocking
     # breaks ttk.Combobox, maybe others
