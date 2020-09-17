@@ -1003,15 +1003,14 @@ class ForceVolumeWindow:
         self.image_stats = ImageStats.from_array(image_array)
         self.unit = self.opened_fvol.get_image_units(image_name)
 
-        if self.colorbar is not None:
-            self.colorbar.remove()
-        if self.axesimage is not None:
-            self.axesimage.remove()
-
         scansize = self.opened_fvol.scansize
         s = (scansize + scansize / len(image_array)) // 2
 
         def draw_fn():
+            if self.colorbar is not None:
+                self.colorbar.remove()
+            if self.axesimage is not None:
+                self.axesimage.remove()
             self.img_ax.set_title(image_name)
             self.img_ax.set_ylabel("Y piezo (nm)")
             self.img_ax.set_xlabel("X piezo (nm)")
