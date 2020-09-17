@@ -309,6 +309,7 @@ class ARH5File(BaseForceVolumeFile):
         "ZSensor": "m",
         "MapAdhesion": "N",
         "MapHeight": "m",
+        "Force": "N",
     }
 
     @BaseForceVolumeFile.trace.setter
