@@ -396,8 +396,10 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         self._prev_filename = ""
         super().__init__(canvas, window)
 
-    def teach_navbar_to_use_trio(self, nursery):
+    def teach_navbar_to_use_trio(self, nursery, get_image_names, get_image_by_name):
         self._parent_nursery = nursery
+        self._get_image_names = get_image_names
+        self._get_image_by_name = get_image_by_name
         self._wait_cursor_for_draw_cm = nullcontext
 
     def configure_subplots(self):
@@ -473,10 +475,10 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             matplotlib.rcParams["savefig.directory"] = os.path.dirname(str(fname))
         self._prev_filename = fname
         root, ext = os.path.splitext(fname)
-        for image_name in self.window._host.image_name_menu.cget("values"):
+        for image_name in self._get_image_names():
             if image_name.startswith("Calc"):
                 exporter = exporter_map.get(ext, imageio.imwrite)
-                image, scandown = await self.window._host.opened_fvol.get_image(image_name)
+                image, scandown = await self._get_image_by_name(image_name)
                 if not scandown:
                     image = image[::-1]
                 try:
@@ -569,7 +571,6 @@ class ForceVolumeWindow:
         self.opened_fvol = opened_fvol
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
         window.wm_title(self.opened_fvol.path.name)
-        window._host = self
 
         # Build figure
         self.fig = Figure(figsize, frameon=False)
@@ -600,27 +601,27 @@ class ForceVolumeWindow:
         image_name_labelframe.pack(fill="x")
         colormap_labelframe = ttk.Labelframe(image_opts_frame, text="Colormap")
         self.colormap_strvar = tk.StringVar(colormap_labelframe, value="viridis")
-        self.colormap_menu = ttk.Combobox(
+        colormap_menu = ttk.Combobox(
             colormap_labelframe,
             state="readonly",
             textvariable=self.colormap_strvar,
             values=COLORMAPS,
             width=max(map(len, COLORMAPS)) - 1,
         )
-        self.colormap_menu.pack(fill="x")
+        colormap_menu.pack(fill="x")
         colormap_labelframe.pack(fill="x")
         manipulate_labelframe = ttk.Labelframe(image_opts_frame, text="Manipulations")
         self.manipulate_strvar = tk.StringVar(
             manipulate_labelframe, value=next(iter(calculation.MANIPULATIONS))
         )
-        self.manipulate_menu = ttk.Combobox(
+        manipulate_menu = ttk.Combobox(
             manipulate_labelframe,
             state="readonly",
             textvariable=self.manipulate_strvar,
             values=list(calculation.MANIPULATIONS),
             # width=max(map(len, COLORMAPS)) - 1,
         )
-        self.manipulate_menu.pack(fill="x")
+        manipulate_menu.pack(fill="x")
         manipulate_labelframe.pack(fill="x")
 
         image_opts_frame.grid(row=1, column=0, rowspan=2)
@@ -1263,7 +1264,9 @@ class ForceVolumeWindow:
             self.canvas.mpl_connect(
                 "pick_event", partial(nursery.start_soon, self.mpl_pick_motion_event_callback)
             )
-            self.navbar.teach_navbar_to_use_trio(nursery)
+            self.navbar.teach_navbar_to_use_trio(
+                nursery, partial(self.image_name_menu.cget, "values"), self.opened_fvol.get_image
+            )
             self.canvas.teach_canvas_to_use_trio(nursery, self.spinner_scope)
 
             # Teach tkinter to use trio
