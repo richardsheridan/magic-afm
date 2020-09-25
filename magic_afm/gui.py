@@ -225,7 +225,7 @@ class ImageStats:
 class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
     def __init__(self, figure, master=None, resize_callback=None):
         self._resize_cancels_pending = set()
-        self.draw_send, self.draw_recv = trio.open_memory_channel(0)
+        self.draw_send, self.draw_recv = trio.open_memory_channel(float("inf"))
 
         super().__init__(figure, master, resize_callback)
 
@@ -235,10 +235,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         def null_draw_fn():
             pass
 
-        try:
-            self.draw_send.send_nowait(null_draw_fn)
-        except trio.WouldBlock:
-            pass
+        self.draw_send.send_nowait(null_draw_fn)
 
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
         inf = float("inf")
@@ -810,10 +807,7 @@ class ForceVolumeWindow:
                     pbar.reset(total=ncurves)
                     pbar.smoothing_time = 0.1
                     pbar.set_description_str(f"Calculating {name} sensitivity...")
-                    try:
-                        self.canvas.draw_send.send_nowait(draw_fn)
-                    except trio.WouldBlock:
-                        pass
+                    self.canvas.draw_send.send_nowait(draw_fn)
                 delta_new, f_new = perturbation(delta, f, self.epsilon, self.opened_fvol.k)
                 async with trio.open_nursery() as nursery:
                     property_aiter = await nursery.start(
@@ -838,10 +832,7 @@ class ForceVolumeWindow:
                         pbar.update()
                         r, c = np.unravel_index(i, img_shape)
                         progress_array[r, c, :] = color
-                        try:
-                            self.canvas.draw_send.send_nowait(draw_fn)
-                        except trio.WouldBlock:
-                            pass
+                        self.canvas.draw_send.send_nowait(draw_fn)
                 if property_map is not unperturbed_prop_map:
                     sens[name] = (
                         (property_map[name] - unperturbed_prop_map[name])
