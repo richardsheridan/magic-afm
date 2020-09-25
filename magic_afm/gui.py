@@ -58,9 +58,7 @@ import numpy as np
 import outcome
 import trio
 from matplotlib.backend_bases import MouseButton
-from matplotlib.backends._backend_tk import FigureCanvasTk, blit as tk_blit
-from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk, FigureCanvasTkAgg
 from matplotlib.contour import ContourSet
 from matplotlib.colorbar import Colorbar
 from matplotlib.figure import Figure
@@ -224,71 +222,13 @@ class ImageStats:
         return cls(*np.nanquantile(array, [0, 0.01, 0.5, 0.99, 1]).tolist())
 
 
-class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
+class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
     def __init__(self, figure, master=None, resize_callback=None):
         self._resize_cancels_pending = set()
         self.draw_send, self.draw_recv = trio.open_memory_channel(0)
 
-        #############################################
-        # Uncomment when bugfixes released upstream #
-        #############################################
-        # super().__init__(figure, master, resize_callback)
+        super().__init__(figure, master, resize_callback)
 
-        ##########################################
-        # Remove when bugfixes released upstream #
-        ##########################################
-        super(FigureCanvasTk, self).__init__(figure)
-        t1, t2, w, h = self.figure.bbox.bounds
-        w, h = int(w), int(h)
-        self._tkcanvas = tk.Canvas(
-            master=master,
-            width=w,
-            height=h,
-            borderwidth=0,
-            highlightthickness=0,
-            background="white",
-        )
-        self._tkphoto = tk.PhotoImage(master=self._tkcanvas, width=w, height=h)
-        self._tkcanvas.create_image(w // 2, h // 2, image=self._tkphoto)
-        self._resize_callback = resize_callback
-        self._tkcanvas.bind("<Configure>", self.resize)
-        self._tkcanvas.bind("<Key>", self.key_press)
-        self._tkcanvas.bind("<Motion>", self.motion_notify_event)
-        self._tkcanvas.bind("<Enter>", self.enter_notify_event)
-        self._tkcanvas.bind("<Leave>", self.leave_notify_event)
-        self._tkcanvas.bind("<KeyRelease>", self.key_release)
-        for name in "<Button-1>", "<Button-2>", "<Button-3>":
-            self._tkcanvas.bind(name, self.button_press_event)
-        for name in "<Double-Button-1>", "<Double-Button-2>", "<Double-Button-3>":
-            self._tkcanvas.bind(name, self.button_dblclick_event)
-        for name in "<ButtonRelease-1>", "<ButtonRelease-2>", "<ButtonRelease-3>":
-            self._tkcanvas.bind(name, self.button_release_event)
-
-        # Mouse wheel on Linux generates button 4/5 events
-        for name in "<Button-4>", "<Button-5>":
-            self._tkcanvas.bind(name, self.scroll_event)
-        # Mouse wheel for windows goes to the window with the focus.
-        # Since the canvas won't usually have the focus, bind the
-        # event to the window containing the canvas instead.
-        # See http://wiki.tcl.tk/3893 (mousewheel) for details
-        root = self._tkcanvas.winfo_toplevel()
-        root.bind("<MouseWheel>", self.scroll_event_windows, "+")
-
-        # Can't get destroy events by binding to _tkcanvas. Therefore, bind
-        # to the window and filter.
-        def filter_destroy(evt):
-            if evt.widget is self._tkcanvas:
-                # self._master.update_idletasks()  # this is the upstream change needed
-                self.close_event()
-
-        root.bind("<Destroy>", filter_destroy, "+")
-
-        self._master = master
-        self._tkcanvas.focus_set()
-
-        ########################################
-        # Keep when bugfixes released upstream #
-        ########################################
         self._tkcanvas.configure(background="gray94")  # surely there's a better name...
 
     def draw_idle(self):
@@ -322,8 +262,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
                         await trs(draw_fn)
                         delay_scope.deadline = deadline
                 t = trio.current_time()
-                await trs(super().draw)  # XXX: NOT self.draw!
-                self.blit()  # blit() can't be in a thread.
+                await trs(self.draw)
                 # previous delay is not great predictor of next delay
                 # for now try exponential moving average
                 delay = ((trio.current_time() - t) + delay) / 2
@@ -334,19 +273,6 @@ class AsyncFigureCanvasTkAgg(FigureCanvasAgg, FigureCanvasTk):
             # So everywhere desired, send set_tight_layout(True) in draw_fn
             # and it will be reset here.
             self.figure.set_tight_layout(False)
-
-    ##########################################
-    # Remove when bugfixes released upstream #
-    ##########################################
-    def draw(self):
-        super().draw()
-        tk_blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3))
-
-    ##########################################
-    # Remove when bugfixes released upstream #
-    ##########################################
-    def blit(self, bbox=None):
-        tk_blit(self._tkphoto, self.renderer._renderer, (0, 1, 2, 3), bbox=bbox)
 
     def resize(self, event):
         # Swallows initial resize, OK because of change_image_callback
@@ -401,32 +327,6 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         self._get_image_names = get_image_names
         self._get_image_by_name = get_image_by_name
         self._wait_cursor_for_draw_cm = nullcontext
-
-    def configure_subplots(self):
-        self._parent_nursery.start_soon(self._aconfigure_subplots)
-
-    async def _aconfigure_subplots(self):
-        window = tk.Toplevel(self.canvas.get_tk_widget().master)
-        toolfig = Figure(figsize=(6, 3))
-        toolfig.subplots_adjust(top=0.9)
-        canvas = type(self.canvas)(toolfig, master=window)
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-        async with trio.open_nursery() as nursery:
-            await nursery.start(canvas.idle_draw_task)
-
-            def spinner_start():
-                self.window.configure(cursor="watch")
-
-            def spinner_stop():
-                self.window.configure(cursor="arrow")
-
-            self.spinner_scope = await nursery.start(
-                async_tools.spinner_task, spinner_start, spinner_stop,
-            )
-            canvas.teach_canvas_to_use_trio(nursery, self.spinner_scope)
-            SubplotTool(self.canvas.figure, toolfig)
-            window.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-        window.destroy()
 
     def export_calculations(self):
         self._parent_nursery.start_soon(self._aexport_calculations)
