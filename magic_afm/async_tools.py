@@ -260,6 +260,8 @@ async def spinner_task(set_spinner, set_normal, task_status):
             try:
                 await spinner_pending_or_active.wait()
                 # Invariant: spinner_pending_or_active set while any scopes entered
+                # Invariant: pending_or_active_cscope entered while any scopes entered
+                # (the former ensures the latter)
                 yield cancel_scope
             finally:
                 assert outstanding_scopes > 0
@@ -268,7 +270,7 @@ async def spinner_task(set_spinner, set_normal, task_status):
                 # just after calling task_status.started
                 if not outstanding_scopes:
                     set_normal()
-                    # these actions must occur atomically
+                    # these actions must occur atomically to satisfy the invariant
                     pending_or_active_cscope.cancel()
                     spinner_pending_or_active = trio.Event()
                     spinner_start = trio.Event()

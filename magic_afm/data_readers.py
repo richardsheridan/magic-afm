@@ -9,9 +9,8 @@ from .async_tools import trs, make_cancel_poller
 
 
 async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
-    """Turn an ARDF path into a corresponding HDF5 path, converting the file if it doesn't exist.
+    """Turn an ARDF into a corresponding ARH5, returning the path.
 
-    Can force the conversion with the force flag if necessary (e.g. overwriting with new data).
     Requires converter executable available from Asylum Research"""
     ardf_path = trio.Path(ardf_path)
     h5file_path = ardf_path.with_suffix(".h5")

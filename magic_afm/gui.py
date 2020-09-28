@@ -65,7 +65,6 @@ from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
 from matplotlib.ticker import EngFormatter
 from matplotlib.transforms import Bbox, BboxTransform
-from matplotlib.widgets import SubplotTool
 from tqdm.gui import tqdm_tk
 from tqdm.std import TqdmExperimentalWarning
 import imageio
