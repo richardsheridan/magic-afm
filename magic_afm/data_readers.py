@@ -465,7 +465,7 @@ class NanoscopeFile(BaseForceVolumeFile):
             image *= NANOMETER_UNIT_CONVERSION
             self._height_for_z = image, scandown
             amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
-            self._z_scale = -amp * np.cos(
+            self._z_scale = amp * np.cos(
                 np.linspace(0, 2 * np.pi, npts, endpoint=False, dtype=np.float32)
             )
 
@@ -496,7 +496,7 @@ class NanoscopeFile(BaseForceVolumeFile):
             if d[0] == -32768 * defl_scale:
                 d[0] = d[1]
 
-        d = np.roll(d, s - self.sync_dist)  # TODO roll across two adjacent indents
+            d = np.roll(d, s - self.sync_dist)  # TODO roll across two adjacent indents
         return z, d, s
 
     async def get_image(self, image_name):
