@@ -24,12 +24,10 @@ from typing import Optional
 from itertools import islice
 
 import trio
-from threadpoolctl import threadpool_limits
 
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 EXECUTOR: Optional[ProcessPoolExecutor] = None
 
-internal_threadpool_limiters = threadpool_limits(1)
 cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count())
 trs = partial(trio.to_thread.run_sync, cancellable=True)
 

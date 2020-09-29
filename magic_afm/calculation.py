@@ -20,6 +20,7 @@ import enum
 from functools import partial
 
 import numpy as np
+import threadpoolctl
 from scipy.optimize import curve_fit, root_scalar
 from scipy.signal import resample
 from scipy.ndimage import median_filter, convolve1d
@@ -649,21 +650,24 @@ def calc_def_ind_ztru(f, beta, radius, k, tau, fit_mode, **kwargs):
 
 
 def calc_properties_imap(delta_f_i_kwargs):
-    delta, f, i, kwargs = delta_f_i_kwargs
-    beta, beta_err, partial_force_curve = fitfun(delta, f, **kwargs)
-    if np.all(np.isfinite(beta)):
-        (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(f, beta, **kwargs)
-        properties = (
-            beta[0] * 1e9,
-            -beta[1] / 1e9,
-            deflection / 1e9,
-            indentation / 1e9,
-            -z_true_surface / 1e9,
-            deflection / indentation,
-        )
-    else:
-        properties = None
-    return i, properties
+    with threadpoolctl.threadpool_limits(1):
+        delta, f, i, kwargs = delta_f_i_kwargs
+        beta, beta_err, partial_force_curve = fitfun(delta, f, **kwargs)
+        if np.all(np.isfinite(beta)):
+            (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(
+                f, beta, **kwargs
+            )
+            properties = (
+                beta[0] * 1e9,
+                -beta[1] / 1e9,
+                deflection / 1e9,
+                indentation / 1e9,
+                -z_true_surface / 1e9,
+                deflection / indentation,
+            )
+        else:
+            properties = None
+        return i, properties
 
 
 def perturb_k(delta, f, epsilon, k):
