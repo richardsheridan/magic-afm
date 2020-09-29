@@ -26,6 +26,14 @@ from scipy.signal import resample
 from scipy.ndimage import median_filter, convolve1d
 from numpy.linalg import lstsq
 
+import numba
+
+myjit = numba.jit(nopython=True, nogil=True)
+
+# disable jit
+# def myjit(fn):
+#     return fn
+
 EPS = float(np.finfo(np.float64).eps)
 RT_EPS = float(np.sqrt(EPS))
 
@@ -108,7 +116,8 @@ def resample_dset(X, npts, fourier):
         return np.stack([np.interp(tnew, told, x,) for x in X]).squeeze()
 
 
-def secant(func, x0, x1=None):
+@myjit
+def secant(func, args, x0, x1=None):
     """Secant method from scipy optimize but stripping np.isclose for speed
     
 Copyright (c) 2001-2002 Enthought, Inc.  2003-2019, SciPy Developers.
@@ -156,9 +165,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
         eps = RT_EPS
         p1 = x0 * (1 + eps)
         p1 += eps if p1 >= 0 else -eps
-    q0 = func(p0,)
+    q0 = func(p0, *args)
     # funcalls += 1
-    q1 = func(p1,)
+    q1 = func(p1, *args)
     # funcalls += 1
     if abs(q1) < abs(q0):
         p0, p1, q0, q1 = p1, p0, q1, q0
@@ -179,7 +188,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
             break
         p0, q0 = p1, q1
         p1 = p
-        q1 = func(p1,)
+        q1 = func(p1, *args)
         # funcalls += 1
     else:
         p = (p1 + p0) / 2.0
@@ -188,6 +197,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     return p.real
 
 
+@myjit
 def mylinspace(start, stop, num, endpoint=True):
     """np.linspace is surprisingly intensive, so trim the fat
     
@@ -234,17 +244,18 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     return y
 
 
-def schwarz_red(red_f, red_fc, stab):
+@myjit
+def schwarz_red(red_f, red_fc, stab, offset=0.0):
     """Calculate Schwarz potential indentation depth from force in reduced units.
     
     """
     # if red_f<red_fc, it is likely a small numerical error
     # this works for arrays and python scalars without weird logic
-    df = abs(red_f - red_fc)
+    df = np.abs(red_f - red_fc)
 
     # Save computations if pure DMT
     if red_fc == -2:
-        return df ** (2 / 3)
+        return df ** (2 / 3) - offset
 
     # trade a branch for a multiply. does it make sense? dunno!
     if stab:
@@ -256,7 +267,7 @@ def schwarz_red(red_f, red_fc, stab):
 
     red_delta = red_contact_radius ** 2 - 4 * (red_contact_radius * (red_fc + 2) / 3) ** (1 / 2)
 
-    return red_delta
+    return red_delta - offset
 
 
 # Exponents for LJ potential
@@ -275,8 +286,8 @@ lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))  # de
 # lj_limit_factor = 1
 
 
-@np.errstate(all="ignore")
-def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset=0):
+@myjit
+def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset=0.0):
     """Calculate a leonard-Jones force curve.
     
     Prefactor scaled such that minimum slope is at delta=1/delta_scale"""
@@ -285,7 +296,8 @@ def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset=0):
     return postfactor * force_scale * (attraction ** powrat - attraction) - force_offset
 
 
-def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset=0):
+@myjit
+def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset=0.0):
     """Gradient of lj_force.
     
     Offset is useful for root finding (reduced spring constant matching)"""
@@ -354,7 +366,8 @@ def red_extend(
     # Unfortunately Schwarz is d(f) rather than f(d) so we need to infer the largest possible force
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
-    red_f_max = secant(lambda x: schwarz_red(x, red_fc, 1) - red_d_max, x0=0, x1=red_fc)
+    args = red_fc, 1, red_d_max
+    red_f_max = secant(schwarz_red, args, x0=0, x1=red_fc)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
@@ -406,7 +419,8 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     # Unfortunately Schwarz is d(f) rather than f(d) so we need to infer the largest possible force
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
-    red_f_max = secant(lambda x: schwarz_red(x, red_fc, 1) - red_d_max, x0=red_fc, x1=0)
+    args = red_fc, 1, red_d_max
+    red_f_max = secant(schwarz_red, args, x0=red_fc, x1=0)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
@@ -546,13 +560,13 @@ def fitfun(delta, f, k, radius, tau, fit_mode, cancel_poller=lambda: None, **kwa
     fmax = f[imax]
     K_guess = (fmax - fmin) / np.sqrt(radius * (deltamax - deltamin) ** 3)
     if not np.isfinite(K_guess):
-        K_guess = 1
+        K_guess = 1.0
     p0 = [
         K_guess,
         fc_guess,
         deltamin,
         fzero,
-        1,
+        1.0,
     ]
 
     assert fit_mode
@@ -582,12 +596,12 @@ def fitfun(delta, f, k, radius, tau, fit_mode, cancel_poller=lambda: None, **kwa
             p0=p0,
             bounds=np.transpose(
                 (
-                    (0, np.inf),  # K
-                    (-np.inf, 0),  # fc
+                    (0.0, np.inf),  # K
+                    (-np.inf, 0.0),  # fc
                     # (0, 1),           # tau
                     (np.min(delta), np.max(delta)),  # delta_shift
                     (np.min(f), np.max(f)),  # force_shift
-                    (0, 100),  # lj_delta_scale
+                    (EPS, 100.0),  # lj_delta_scale
                 )
             ),
             xtol=1e-9,
