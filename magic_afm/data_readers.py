@@ -150,6 +150,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         await trio.sleep(0)
         self.shape = (64, 64)
         self.npts = 1024
+        self.s = self.npts // 2
         self.delta = (np.cos(np.linspace(0, np.pi * 2, self.npts, endpoint=False)) - 0.90) * 25
 
     async def aclose(self):
@@ -159,16 +160,16 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         await trio.sleep(0)
         gen = np.random.default_rng(seed=(r, c))
         fext = calculation.force_curve(
-            calculation.red_extend, self.delta[: self.npts // 2], 1, 10, 1, -10, 1, 0, 0, 10
+            calculation.red_extend, self.delta[: self.s], 1, 10, 1, -10, 1, 0, 0, 10
         )
         fret = calculation.force_curve(
-            calculation.red_retract, self.delta[self.npts // 2 :], 1, 10, 1, -10, 1, 0, 0, 10
+            calculation.red_retract, self.delta[self.s :], 1, 10, 1, -10, 1, 0, 0, 10
         )
         d = np.concatenate((fext, fret))
         z = self.delta + d
         d += gen.normal(scale=0.1, size=d.size)
         z += gen.normal(scale=0.01, size=z.size)
-        return z, d, self.npts // 2
+        return z, d
 
     async def get_image(self, image_name):
         await trio.sleep(0)
@@ -192,9 +193,10 @@ class ForceMapWorker:
         # this is all necessary because the arrays are not of uniform length
         # We will cut all arrays down to the length of the smallest
         self.extlens = self.segments[:, :, 0]
-        self.minext = np.min(self.extlens)
+        self.minext = self.s = np.min(self.extlens)
         self.extretlens = self.segments[:, :, 1]
         self.minret = np.min(self.extretlens - self.extlens)
+        self.npts = self.minext + self.minret
 
         # We only care about 2 channels, Defl and ZSnsr
         # Convert channels array to a map that can be used to index into ForceMap data by name
@@ -220,7 +222,7 @@ class ForceMapWorker:
         curve = self.force_curves[f"{r}:{c}"]  # XXX Read h5data
         s = self.extlens[r, c]
 
-        return (*self._shared_get_part(curve, s), self.minext)
+        return self._shared_get_part(curve, s)
 
     def get_all_curves(self, _poll_for_cancel=(lambda: None)):
         im_r, im_c, num_segments = self.segments.shape
@@ -240,19 +242,20 @@ class ForceMapWorker:
             x[r, c, :, :] = self._shared_get_part(curve, s)
         z = x[:, :, 0, :]
         d = x[:, :, 1, :]
-        s = self.minext
-        return z, d, s
+        return z, d
 
 
 class FFMSingleWorker:
     def __init__(self, raw, defl):
         self.raw = raw
         self.defl = defl
+        self.npts = raw.shape[-1]
+        self.s = self.npts // 2
 
     def get_force_curve(self, r, c):
         z = self.raw[r, c]
         d = self.defl[r, c]
-        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION, len(z) // 2
+        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
 
     def get_all_curves(self, _poll_for_cancel=(lambda: None)):
         _poll_for_cancel()
@@ -260,8 +263,7 @@ class FFMSingleWorker:
         _poll_for_cancel()
         d = self.defl[:] * NANOMETER_UNIT_CONVERSION
         _poll_for_cancel()
-        s = self.raw.shape[-1] // 2
-        return z, d, s
+        return z, d
 
 
 class FFMTraceRetraceWorker:
@@ -271,6 +273,8 @@ class FFMTraceRetraceWorker:
         self.raw_retrace = raw_retrace
         self.defl_retrace = defl_retrace
         self.trace = True
+        self.npts = raw_trace.shape[-1]
+        self.s = self.npts // 2
 
     def get_force_curve(self, r, c):
         if self.trace:
@@ -279,7 +283,7 @@ class FFMTraceRetraceWorker:
         else:
             z = self.raw_retrace[r, c]
             d = self.defl_retrace[r, c]
-        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION, len(z) // 2
+        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
 
     def get_all_curves(self, _poll_for_cancel=(lambda: None)):
         _poll_for_cancel()
@@ -292,8 +296,7 @@ class FFMTraceRetraceWorker:
             _poll_for_cancel()
             d = self.defl_retrace[:] * NANOMETER_UNIT_CONVERSION
         _poll_for_cancel()
-        s = self.raw_trace.shape[-1] // 2
-        return z, d, s
+        return z, d
 
 
 class ARH5File(BaseForceVolumeFile):
@@ -339,7 +342,7 @@ class ARH5File(BaseForceVolumeFile):
         self.k = float(self.notes["SpringConstant"])
         self.scansize = float(self.notes["ScanSize"]) * NANOMETER_UNIT_CONVERSION
         self.invols = self._invols_orig = float(self.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
-        self.npts = len((await self.get_force_curve(0, 0))[0])
+        self.npts, self.s = worker.npts, worker.s
 
     async def aclose(self):
         with trio.CancelScope(shield=True):
@@ -366,16 +369,16 @@ class ARH5File(BaseForceVolumeFile):
         return worker
 
     async def get_force_curve(self, r, c):
-        z, d, s = await trs(self._worker.get_force_curve, r, c)
+        z, d = await trs(self._worker.get_force_curve, r, c)
         if self.invols != self._invols_orig:
             d *= self.invols / self._invols_orig
-        return z, d, s
+        return z, d
 
     async def get_all_curves(self):
-        z, d, s = await trs(self._worker.get_all_curves, make_cancel_poller())
+        z, d = await trs(self._worker.get_all_curves, make_cancel_poller())
         if self.invols != self._invols_orig:
             d *= self.invols / self._invols_orig
-        return z, d, s
+        return z, d
 
     async def get_image(self, image_name):
         if image_name in self._calc_images:
@@ -417,6 +420,7 @@ class NanoscopeFile(BaseForceVolumeFile):
         )
 
         self.npts = npts = length // (bpp * r * c)
+        self.s = npts // 2
         rate, unit = header["Ciao scan list"]["PFT Freq"].split()
         assert unit.lower() == "khz"
         self.rate = float(rate)
@@ -480,8 +484,8 @@ class NanoscopeFile(BaseForceVolumeFile):
 
     def _sync_get_force_curve(self, r, c):
         defl_scale = np.float32(self.invols * self.defl_hard_scale)
-        s = self.npts // 2
         d = self._defl_raw_ints[r, c] * defl_scale
+        s = self.s
         d[:s] = d[s - 1 :: -1]
 
         if self._z_raw_ints is not None:
@@ -497,7 +501,7 @@ class NanoscopeFile(BaseForceVolumeFile):
                 d[0] = d[1]
 
             d = np.roll(d, s - self.sync_dist)  # TODO roll across two adjacent indents
-        return z, d, s
+        return z, d
 
     async def get_image(self, image_name):
         if image_name in self._calc_images:

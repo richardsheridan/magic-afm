@@ -717,8 +717,7 @@ class ForceVolumeWindow:
                 np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
             )  # transparent initial image, no need to draw
 
-            _, _, s = await self.opened_fvol.get_force_curve(0, 0)
-            npts = len(_)
+            npts, s = self.opened_fvol.npts, self.opened_fvol.s
             resample = npts > RESAMPLE_NPTS
             if resample:
                 s = s * RESAMPLE_NPTS // npts
@@ -742,8 +741,7 @@ class ForceVolumeWindow:
                 if first:
                     pbar.unpause()
                     first = False
-                r, c = np.unravel_index(i, img_shape)
-                z, d, _ = await self.opened_fvol.get_force_curve(r, c)
+                z, d = await self.opened_fvol.get_force_curve(*np.unravel_index(i, img_shape))
                 if resample:
                     z = await trio.to_thread.run_sync(
                         calculation.resample_dset,
@@ -1041,7 +1039,12 @@ class ForceVolumeWindow:
                 # Do a few long-running jobs, likely to be canceled
                 force_curve = await self.opened_fvol.get_force_curve(point.r, point.c)
                 data = await trs(
-                    calculate_force_data, *force_curve, options, async_tools.make_cancel_poller()
+                    calculate_force_data,
+                    *force_curve,
+                    self.opened_fvol.s,
+                    self.opened_fvol.npts,
+                    options,
+                    async_tools.make_cancel_poller(),
                 )
                 del force_curve  # contained in data
                 # XXX: Race condition
@@ -1306,9 +1309,8 @@ def draw_force_curve(data, plot_ax, options):
     return artists, artists[0].get_color()
 
 
-def calculate_force_data(z, d, s, options, cancel_poller=lambda: None):
+def calculate_force_data(z, d, s, npts, options, cancel_poller=lambda: None):
     cancel_poller()
-    npts = len(z)
     if npts > RESAMPLE_NPTS:
         s = s * RESAMPLE_NPTS // npts
         z = calculation.resample_dset(z, RESAMPLE_NPTS, True)
