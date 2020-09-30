@@ -8,6 +8,13 @@ from . import calculation
 from .async_tools import trs, make_cancel_poller
 
 
+def mmap_file_read_only(pathlib_path):
+    import mmap
+
+    with pathlib_path.open("rb", buffering=0) as file:
+        return mmap.mmap(file.fileno(), 0, None, mmap.ACCESS_READ)
+
+
 async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
     """Turn an ARDF into a corresponding ARH5, returning the path.
 
@@ -59,7 +66,7 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
                     nursery.start_soon(reading_stderr)
     except FileNotFoundError:
         raise FileNotFoundError(
-            "Please acquire ARDFtoHDF5.exe and place" " it in the application's root folder."
+            "Please acquire ARDFtoHDF5.exe and place it in the application's root folder."
         )
     except:
         with trio.CancelScope(shield=True):
@@ -510,9 +517,10 @@ class NanoscopeFile(BaseForceVolumeFile):
     }
 
     async def ainitialize(self):
-        import mmap
-
-        self.header = header = await read_nanoscope_header(self.path)
+        self._mm = await trio.to_thread.run_sync(mmap_file_read_only, self.path._wrapped)
+        self.header = header = await trio.to_thread.run_sync(
+            read_nanoscope_header, self.path._wrapped
+        )
         # \Frame direction: Down
         # \Line Direction: Retrace
         # \Z direction: Retract
@@ -535,14 +543,6 @@ class NanoscopeFile(BaseForceVolumeFile):
         rate, unit = header["Ciao scan list"]["PFT Freq"].split()
         assert unit.lower() == "khz"
         self.rate = float(rate)
-
-        async with await self.path.open("rb", buffering=0) as file:
-            self._mm = mm = await trio.to_thread.run_sync(
-                mmap.mmap, file.fileno(), 0, None, mmap.ACCESS_READ,
-            )
-        self._defl_raw_ints = np.ndarray(
-            shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset,
-        )
 
         scansize, units = header["Ciao scan list"]["Scan Size"].split()
         if units == "nm":
@@ -587,11 +587,11 @@ class NanoscopeFile(BaseForceVolumeFile):
         return image, scandown
 
 
-async def read_nanoscope_header(path: trio.Path):
+def read_nanoscope_header(path):
     header = {}
     section = ""
-    async with await path.open("r") as f:
-        async for line in f:
+    with path.open("r") as f:
+        for line in f:
             assert line.startswith("\\")
             line = line[1:].strip()  # strip leading slash and newline
 
