@@ -337,15 +337,15 @@ def red_extend(
     lj_f = lj_force(red_delta, lj_delta_scale, red_fc, lj_delta_offset)
     lj_f = np.atleast_1d(lj_f)  # Later parts can choke on scalars
 
+    # Try to find where LJ gradient == red_k
+    # root_scalar is marginally faster with python scalars
+    red_d_min = float(np.min(red_delta))
+    args = (lj_delta_scale, red_fc, lj_delta_offset, red_k)
+    bracket = (
+        red_d_min,
+        lj_limit_factor * lj_delta_scale + lj_delta_offset,
+    )
     try:
-        # Try to find where LJ gradient == red_k
-        # root_scalar is marginally faster with python scalars
-        red_d_min = float(np.min(red_delta))
-        args = (lj_delta_scale, red_fc, lj_delta_offset, red_k)
-        bracket = (
-            red_d_min,
-            lj_limit_factor * lj_delta_scale + lj_delta_offset,
-        )
         lj_end_pos = root_scalar(lj_gradient, args=args, bracket=bracket,).root
     except ValueError as e:
         if str(e) != "f(a) and f(b) must have different signs":
