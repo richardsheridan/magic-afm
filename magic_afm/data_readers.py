@@ -58,8 +58,9 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
                     nursery.start_soon(reading_stdout)
                     nursery.start_soon(reading_stderr)
     except FileNotFoundError:
-        raise FileNotFoundError("Please acquire ARDFtoHDF5.exe and place"
-                                " it in the application's root folder.")
+        raise FileNotFoundError(
+            "Please acquire ARDFtoHDF5.exe and place" " it in the application's root folder."
+        )
     except:
         with trio.CancelScope(shield=True):
             await h5file_path.unlink(missing_ok=True)
@@ -83,6 +84,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         self.params = {}
         self._trace = None
         self.sync_dist = 0
+        self._worker = None
 
     @property
     def trace(self):
@@ -392,6 +394,116 @@ class ARH5File(BaseForceVolumeFile):
         return self._images[image_name][:]
 
 
+class BrukerWorkerBase(metaclass=abc.ABCMeta):
+    def __init__(self, header, mm, shape, s):
+        self.header = header  # get_image
+        self.mm = mm  # get_image
+        self.shape = shape  # get_image
+        self.s = s  # get_force_curve
+        self.version = header[header["first"]]["Version"].strip()  # get_image
+
+    @abc.abstractmethod
+    def get_force_curve(self, r, c, invols, sync_dist):
+        raise NotImplementedError
+
+    def get_image(self, image_name):
+        soft_scale = self.header["Ciao scan list"]["@Sens. ZsensSens"].split()[1]
+        soft_scale = float(soft_scale)
+        h = self.header["Image"][image_name]
+
+        value = h["@2:Z scale"]
+        hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
+        scale = np.float32(hard_scale * soft_scale / NANOMETER_UNIT_CONVERSION)
+        data_length = int(h["Data length"])
+        offset = int(h["Data offset"])
+        bpp = bruker_bpp_fix(h["Bytes/pixel"], self.version)
+        assert data_length == self.shape[0] * self.shape[1] * bpp
+        scandown = h["Frame direction"] == "Down"
+        return (
+            np.ndarray(shape=self.shape, dtype=f"i{bpp}", buffer=self.mm, offset=offset,) * scale,
+            scandown,
+        )
+
+
+class FFVWorker(BrukerWorkerBase):
+    def __init__(self, header, mm, shape, s):
+        super().__init__(header, mm, shape, s)
+        r, c = shape
+        data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
+        for name in [data_name, "Height Sensor"]:
+            subheader = header["FV"][name]
+            offset = int(subheader["Data offset"])
+            bpp = bruker_bpp_fix(subheader["Bytes/pixel"], self.version)
+            length = int(subheader["Data length"])
+            npts = length // (r * c * bpp)
+            data = np.ndarray(shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset,)
+            if name == "Height Sensor":
+                self.z_ints = data
+                value = subheader["@4:Z scale"]
+                soft_scale = float(header["Ciao scan list"]["@Sens. ZsensSens"].split()[1])
+                hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
+                self.z_scale = np.float32(soft_scale * hard_scale)
+            else:
+                self.d_ints = data
+                value = subheader["@4:Z scale"]
+                self.defl_hard_scale = float(
+                    value[1 + value.find("(") : value.find(")")].split()[0]
+                )
+
+    def get_force_curve(self, r, c, invols, sync_dist):
+        s = self.s
+        defl_scale = np.float32(invols * self.defl_hard_scale)
+
+        d = self.d_ints[r, c] * defl_scale
+        d[:s] = d[s - 1 :: -1]
+
+        z = self.z_ints[r, c] * self.z_scale
+        z[:s] = z[s - 1 :: -1]
+
+        return z, np.roll(d, -sync_dist) if sync_dist else d
+
+
+class QNMWorker(BrukerWorkerBase):
+    def __init__(self, header, mm, shape, s):
+        super().__init__(header, mm, shape, s)
+        r, c = shape
+        data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
+        subheader = header["FV"][data_name]
+        bpp = bruker_bpp_fix(subheader["Bytes/pixel"], self.version)
+        length = int(subheader["Data length"])
+        offset = int(subheader["Data offset"])
+        npts = length // (r * c * bpp)
+
+        self.d_ints = np.ndarray(shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset,)
+        value = subheader["@4:Z scale"]
+        self.defl_hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
+
+        image, scandown = self.get_image("Height Sensor")
+        image *= NANOMETER_UNIT_CONVERSION
+        self.height_for_z = image, scandown
+        amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
+        self.z_basis = -amp * np.cos(
+            np.linspace(0, 2 * np.pi, npts, endpoint=False, dtype=np.float32)
+        )
+
+    def get_force_curve(self, r, c, invols, sync_dist):
+        s = self.s
+        defl_scale = np.float32(invols * self.defl_hard_scale)
+
+        d = self.d_ints[r, c] * defl_scale
+        d[:s] = d[s - 1 :: -1]
+        # remove blip
+        if d[0] == -32768 * defl_scale:
+            d[0] = d[1]
+        d = np.roll(d, s - sync_dist)  # TODO roll across two adjacent indents
+
+        # need to infer z from amp/height
+        image, scandown = self.height_for_z
+        z = self.z_basis - image[r, c]
+
+        return z, d
+
+
 class NanoscopeFile(BaseForceVolumeFile):
     _basic_units_map = {
         "Height Sensor": "m",
@@ -410,9 +522,8 @@ class NanoscopeFile(BaseForceVolumeFile):
         data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
 
         data_header = header["FV"][data_name]
-        offset = int(data_header["Data offset"])
         length = int(data_header["Data length"])
-        self._version = version = header[header["first"]]["Version"].strip()
+        version = header[header["first"]]["Version"].strip()
         bpp = bruker_bpp_fix(data_header["Bytes/pixel"], version)
         self.shape = r, c = (
             int(header["Ciao scan list"]["Samps/line"].split()[0]),
@@ -441,96 +552,39 @@ class NanoscopeFile(BaseForceVolumeFile):
         else:  # probably microns but not sure how it's spelled atm
             factor = 1000.0
 
-        self.k = float(data_header["Spring Constant"])
         self.scansize = float(scansize) * factor
 
+        self.k = float(data_header["Spring Constant"])
         self.invols = float(header["Ciao scan list"]["@Sens. DeflSens"].split()[1])
         value = data_header["@4:Z scale"]
         self.defl_hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
 
-        await trio.sleep(0)
+        self._worker, self.sync_dist = await trs(self._choose_worker, header)
 
+    def _choose_worker(self, header):
         if "Height Sensor" in header["FV"]:
-            ramp_header = header["FV"]["Height Sensor"]
-            offset = int(ramp_header["Data offset"])
-            bpp = bruker_bpp_fix(ramp_header["Bytes/pixel"], version)
-            self._z_raw_ints = np.ndarray(
-                shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset,
-            )
-
-            soft_scale = float(header["Ciao scan list"]["@Sens. ZsensSens"].split()[1])
-            value = ramp_header["@4:Z scale"]
-            hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
-            self._z_scale = np.float32(soft_scale * hard_scale)
-            self.sync_dist = 0
+            return FFVWorker(header, self._mm, self.shape, self.s), 0
         else:
-            self._z_raw_ints = None
-            image, scandown = await self.get_image("Height Sensor")
-            image *= NANOMETER_UNIT_CONVERSION
-            self._height_for_z = image, scandown
-            amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
-            self._z_scale = -amp * np.cos(
-                np.linspace(0, 2 * np.pi, npts, endpoint=False, dtype=np.float32)
+            return (
+                QNMWorker(header, self._mm, self.shape, self.s),
+                int(round(float(header["Ciao scan list"]["Sync Distance"]))),
             )
-            self.sync_dist = int(round(float(header["Ciao scan list"]["Sync Distance"])))
 
     async def aclose(self):
-        self._defl_raw_ints = None
-        self._z_raw_ints = None
+        self._worker = None
         with trio.CancelScope(shield=True):
             await trio.to_thread.run_sync(self._mm.close)
 
     async def get_force_curve(self, r, c):
-        return await trs(self._sync_get_force_curve, r, c)
-
-    def _sync_get_force_curve(self, r, c):
-        defl_scale = np.float32(self.invols * self.defl_hard_scale)
-        d = self._defl_raw_ints[r, c] * defl_scale
-        s = self.s
-        d[:s] = d[s - 1 :: -1]
-
-        if self._z_raw_ints is not None:
-            z = self._z_raw_ints[r, c] * self._z_scale
-            z[:s] = z[s - 1 :: -1]
-            if self.sync_dist:
-                d = np.roll(d, -self.sync_dist)
-        else:
-            # need to infer z from amp/height
-            image, scandown = self._height_for_z
-            z = self._z_scale - image[r, c]
-
-            # remove blip
-            if d[0] == -32768 * defl_scale:
-                d[0] = d[1]
-
-            d = np.roll(d, s - self.sync_dist)  # TODO roll across two adjacent indents
-        return z, d
+        return await trs(self._worker.get_force_curve, r, c, self.invols, self.sync_dist)
 
     async def get_image(self, image_name):
         if image_name in self._calc_images:
             await trio.sleep(0)
             image, scandown = self._calc_images[image_name]
         else:
-            image, scandown = await trs(self._sync_get_image, image_name)
+            image, scandown = await trs(self._worker.get_image, image_name)
         return image, scandown
-
-    def _sync_get_image(self, image_name):
-        soft_scale = self.header["Ciao scan list"]["@Sens. ZsensSens"].split()[1]
-        soft_scale = float(soft_scale)
-        h = self.header["Image"][image_name]
-
-        value = h["@2:Z scale"]
-        hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
-        scale = np.float32(hard_scale * soft_scale / NANOMETER_UNIT_CONVERSION)
-        data_length = int(h["Data length"])
-        offset = int(h["Data offset"])
-        bpp = bruker_bpp_fix(h["Bytes/pixel"], self._version)
-        assert data_length == self.shape[0] * self.shape[1] * bpp
-        scandown = h["Frame direction"] == "Down"
-        return (
-            np.ndarray(shape=self.shape, dtype=f"i{bpp}", buffer=self._mm, offset=offset,) * scale,
-            scandown,
-        )
 
 
 async def read_nanoscope_header(path: trio.Path):
