@@ -29,6 +29,8 @@ from numpy.linalg import lstsq
 import numba
 
 myjit = numba.jit(nopython=True, nogil=True)
+# doesn't fix ZeroDivisionError? https://github.com/numba/numba/issues/1256
+# myjit = numba.jit(nopython=True, nogil=True, error_model="python")
 
 # disable jit
 # def myjit(fn):
@@ -292,7 +294,8 @@ def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset=0.0):
     
     Prefactor scaled such that minimum slope is at delta=1/delta_scale"""
     nondim_position = (delta - delta_offset) / delta_scale
-    attraction = (prefactor * nondim_position) ** (-lilpow)
+    # workaround for nondim_position=0 so that ZeroDivisionError -> inf
+    attraction = np.divide(1, (prefactor * nondim_position) ** lilpow)
     return postfactor * force_scale * (attraction ** powrat - attraction) - force_offset
 
 
@@ -302,7 +305,8 @@ def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset=0.0)
     
     Offset is useful for root finding (reduced spring constant matching)"""
     nondim_position = (delta - delta_offset) / delta_scale
-    attraction = lilpow * prefactor ** (-lilpow) * nondim_position ** (-lilpow - 1)
+    # workaround for nondim_position=0 so that ZeroDivisionError -> inf
+    attraction = np.divide(lilpow * prefactor ** (-lilpow), nondim_position ** (lilpow + 1))
     repulsion = bigpow * prefactor ** (-bigpow) * nondim_position ** (-bigpow - 1)
     return postfactor * force_scale * (attraction - repulsion) / delta_scale - force_offset
 
