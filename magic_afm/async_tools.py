@@ -49,19 +49,18 @@ async def start_global_executor():
         EXECUTOR = ProcessPoolExecutor(cpu_bound_limiter.total_tokens)
         with trio.CancelScope(shield=True):
             # submit trash to start processes
+            # afterward submit() can be considered nonblocking
             cf_fut = await trs(EXECUTOR.submit, int)
             cf_fut.cancel()
             import psutil
 
-            def nicifier(pid):
+            # noinspection PyUnresolvedReferences,PyProtectedMember
+            for pid in EXECUTOR._processes:
                 try:
                     nice = psutil.BELOW_NORMAL_PRIORITY_CLASS
                 except AttributeError:
                     nice = 3
                 psutil.Process(pid).nice(nice)
-
-            for pid in EXECUTOR._processes:
-                await trs(nicifier, pid)
 
 
 async def to_process_run_sync(sync_fn, *args, limiter=cpu_bound_limiter):
