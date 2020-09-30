@@ -424,7 +424,6 @@ class NanoscopeFile(BaseForceVolumeFile):
         rate, unit = header["Ciao scan list"]["PFT Freq"].split()
         assert unit.lower() == "khz"
         self.rate = float(rate)
-        self.sync_dist = int(round(float(header["Ciao scan list"]["Sync Distance"])))
 
         async with await self.path.open("rb", buffering=0) as file:
             self._mm = mm = await trio.to_thread.run_sync(
@@ -463,15 +462,17 @@ class NanoscopeFile(BaseForceVolumeFile):
             value = ramp_header["@4:Z scale"]
             hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
             self._z_scale = np.float32(soft_scale * hard_scale)
+            self.sync_dist = 0
         else:
             self._z_raw_ints = None
             image, scandown = await self.get_image("Height Sensor")
             image *= NANOMETER_UNIT_CONVERSION
             self._height_for_z = image, scandown
             amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
-            self._z_scale = amp * np.cos(
+            self._z_scale = -amp * np.cos(
                 np.linspace(0, 2 * np.pi, npts, endpoint=False, dtype=np.float32)
             )
+            self.sync_dist = int(round(float(header["Ciao scan list"]["Sync Distance"])))
 
     async def aclose(self):
         self._defl_raw_ints = None
@@ -491,6 +492,8 @@ class NanoscopeFile(BaseForceVolumeFile):
         if self._z_raw_ints is not None:
             z = self._z_raw_ints[r, c] * self._z_scale
             z[:s] = z[s - 1 :: -1]
+            if self.sync_dist:
+                d = np.roll(d, -self.sync_dist)
         else:
             # need to infer z from amp/height
             image, scandown = self._height_for_z
