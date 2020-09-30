@@ -23,14 +23,6 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
     h5file_path = ardf_path.with_suffix(".h5")
 
     if pbar is None:
-        try:
-            import tqdm
-        except ImportError:
-            pass
-        else:
-            pbar = tqdm.tqdm(total=100, unit="%",)
-
-    if pbar is None:
         pipe = None
     else:
         pbar.set_description_str("Converting " + ardf_path.name)
