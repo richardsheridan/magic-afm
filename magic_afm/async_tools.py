@@ -63,7 +63,7 @@ async def start_global_executor():
                 psutil.Process(pid).nice(nice)
 
 
-async def to_process_run_sync(sync_fn, *args, limiter=cpu_bound_limiter):
+async def to_process_run_sync(sync_fn, *args, cancellable=False, limiter=cpu_bound_limiter):
     """Run sync_fn in a separate process
 
     This is a simple wrapping of concurrent.futures.ProcessPoolExecutor.submit
@@ -82,9 +82,16 @@ async def to_process_run_sync(sync_fn, *args, limiter=cpu_bound_limiter):
         cf_fut = EXECUTOR.submit(sync_fn, *args)
         try:
             cf_fut.add_done_callback(done_callback)
-            await done_event.wait()
+            with trio.CancelScope(shield=not cancellable):
+                await done_event.wait()
             return cf_fut.result(timeout=0)
         except:  # noqa: E722
+            # This only does anything when an error is thrown in
+            # add_done_callback or a trio cancel comes, but only in the very
+            # rare case that it happens before the future's job is sent to a
+            # process.
+            # Running futures cannot be cancelled, so prefer cancellable=False
+            # or beware zombie processes here.
             cf_fut.cancel()
             raise
 
@@ -109,26 +116,15 @@ def _chunk_consumer(chunk):
     return tuple(map(*chunk))
 
 
-async def to_process_map_unordered(
-    sync_fn,
-    job_items,
-    chunksize=1,
-    limiter=cpu_bound_limiter,
-    task_status=trio.TASK_STATUS_IGNORED,
+async def to_sync_runner_map_unordered(
+        sync_runner,
+        sync_fn,
+        job_items,
+        chunksize=1,
+        cancellable=True,
+        limiter=cpu_bound_limiter,
+        task_status=trio.TASK_STATUS_IGNORED,
 ):
-    """Run many job items in separate processes
-
-    This imitates the multiprocessing.Pool.imap_unordered API, but using
-    minimal threads to make the behavior properly nonblocking and cancellable.
-
-    Job items can be any iterable, sync or async, finite or infinite,
-    blocking or non-blocking.
-
-    Awaiting this function produces an in-memory iterable of the map results.
-    Using nursery.start() on this function produces a MemoryRecieveChannel
-    with no buffer to receive results as-completed."""
-    await start_global_executor()
-
     if task_status is trio.TASK_STATUS_IGNORED:
         buffer = float("inf")
     else:
@@ -151,15 +147,28 @@ async def to_process_map_unordered(
             sync_fn = _chunk_consumer
         job_items = asyncify_iterator(job_items)
 
+    async def send(item):
+        # https://gitter.im/python-trio/general?at=5f7776b9cfe2f9049a1c67f9
+        try:
+            await send_chan.send(item)
+        except trio.Cancelled:
+            if cancellable:
+                raise
+            else:
+                send_chan._state.max_buffer_size += 1
+                send_chan.send_nowait(item)
+
     async def worker(job_item):
         # Backpressure: hold limiter for entire task to avoid spawning too many workers
         async with limiter:
-            result = await to_process_run_sync(sync_fn, job_item, limiter=trio.CapacityLimiter(1))
+            result = await sync_runner(
+                sync_fn, job_item, cancellable=cancellable, limiter=trio.CapacityLimiter(1)
+            )
             if chunksize == 1:
-                await send_chan.send(result)
+                await send(result)
             else:
                 for r in result:
-                    await send_chan.send(r)
+                    await send(r)
 
     async with send_chan, trio.open_nursery() as nursery:
         async for job_item in job_items:
@@ -180,6 +189,36 @@ async def to_process_map_unordered(
         # return results
 
 
+async def to_process_map_unordered(
+    sync_fn,
+    job_items,
+    chunksize=1,
+    cancellable=True,
+    limiter=cpu_bound_limiter,
+    task_status=trio.TASK_STATUS_IGNORED,
+):
+    """Run many job items in separate processes
+
+    This imitates the multiprocessing.Pool.imap_unordered API, but using
+    trio to make the behavior properly nonblocking and cancellable.
+
+    Job items can be any iterable, sync or async, finite or infinite,
+    blocking or non-blocking.
+
+    Awaiting this function produces an in-memory iterable of the map results.
+    Using nursery.start() on this function produces a MemoryRecieveChannel
+    with no buffer to receive results as-completed."""
+    return await to_sync_runner_map_unordered(
+        to_process_run_sync,
+        sync_fn,
+        job_items,
+        chunksize=chunksize,
+        cancellable=cancellable,
+        limiter=limiter,
+        task_status=task_status,
+    )
+
+
 async def to_thread_map_unordered(
     sync_fn,
     job_items,
@@ -190,7 +229,7 @@ async def to_thread_map_unordered(
     """Run many job items in separate threads
 
     This imitates the multiprocessing.dummy.Pool.imap_unordered API, but using
-    trio threads to make the behavior properly nonblocking and cancellable.
+    trio to make the behavior properly nonblocking and cancellable.
 
     Job items can be any iterable, sync or async, finite or infinite,
     blocking or non-blocking.
@@ -198,47 +237,16 @@ async def to_thread_map_unordered(
     Awaiting this function produces an in-memory iterable of the map results.
     Using nursery.start() on this function produces a MemoryRecieveChannel
     with no buffer to receive results as-completed."""
-    if task_status is trio.TASK_STATUS_IGNORED:
-        buffer = float("inf")
-    else:
-        buffer = 0
-    send_chan, recv_chan = trio.open_memory_channel(buffer)
-    task_status.started(recv_chan)
 
-    try:
-        job_items = iter(job_items)  # Duck type any iterable
-    except TypeError as e:
-        if not str(e).endswith("object is not iterable"):
-            raise e
-        job_items = job_items.__aiter__()  # Duck type any async iterable
-    else:
-        job_items = asyncify_iterator(job_items)
-
-    async def thread_worker(job_item):
-        # Backpressure: hold limiter for entire task to avoid spawning too many workers
-        async with limiter:
-            result = await trio.to_thread.run_sync(
-                sync_fn, job_item, cancellable=cancellable, limiter=trio.CapacityLimiter(1)
-            )
-            await send_chan.send(result)
-
-    async with send_chan, trio.open_nursery() as nursery:
-        async for job_item in job_items:
-            async with limiter:
-                nursery.start_soon(thread_worker, job_item)
-
-    if task_status is trio.TASK_STATUS_IGNORED:
-        # internal details version
-        return recv_chan._state.data
-
-        # Public API version
-        # results = []
-        # try:
-        #     while True:
-        #         results.append(recv_chan.receive_nowait())
-        # except trio.EndOfChannel:
-        #     pass
-        # return results
+    return await to_sync_runner_map_unordered(
+        trio.to_thread.run_sync,
+        sync_fn,
+        job_items,
+        chunksize=1,
+        cancellable=cancellable,
+        limiter=limiter,
+        task_status=task_status,
+    )
 
 
 async def spinner_task(set_spinner, set_normal, task_status):
