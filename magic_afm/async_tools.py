@@ -310,3 +310,27 @@ def spawn_limit(limiter):
                 return await async_fn(*args, **kwargs)
         return spawn_limit_wrapper
     return actual_decorator
+
+
+async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_status):
+    """Manage a tooltip window visibility, position, and text."""
+
+    send_chan, recv_chan = trio.open_memory_channel(0)
+    cancel_scope = trio.CancelScope()  # dummy starter object
+
+    async def single_show_hide(task_status):
+        with cancel_scope:
+            task_status.started()
+            if not text:
+                return
+            await trio.sleep(show_delay)
+            show_tooltip(x, y, text)
+            await trio.sleep(hide_delay)
+        hide_tooltip()
+
+    async with trio.open_nursery() as nursery:
+        task_status.started(send_chan)
+        async for x, y, text in recv_chan:
+            cancel_scope.cancel()
+            cancel_scope = trio.CancelScope()
+            await nursery.start(single_show_hide)

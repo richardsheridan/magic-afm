@@ -70,7 +70,7 @@ from tqdm.std import TqdmExperimentalWarning
 import imageio
 
 from . import calculation, async_tools, data_readers
-from .async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY
+from .async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY, tooltip_task
 
 warnings.simplefilter("ignore", TqdmExperimentalWarning)
 
@@ -678,6 +678,49 @@ class ForceVolumeWindow:
         self.artists = []
         self.existing_points = set()
 
+        # tooltips
+        from inspect import cleandoc as c
+
+        self.img_ax_tip_text = c(
+            """Property map
+        
+            Left click: plot force curve from point
+            Shift: plot multiple curves
+            Control: plot continuously"""
+        )
+        self.colorbar_ax_tip_text = c(
+            """Colorbar
+            
+            Middle or alt-left click: toggle edit mode (default: off)
+            Left click: set color scale maximum
+            Right click: set color scale minimum
+            Control: set continuously"""
+        )
+        self.plot_ax_tip_text = c(
+            """Force Curve
+        
+            No actions yet!"""
+        )
+        self.tipwindow = tipwindow = tk.Toplevel(window)
+        tipwindow.wm_withdraw()
+        tipwindow.wm_overrideredirect(1)
+        try:
+            # For Mac OS
+            tipwindow.tk.call(
+                "::tk::unsupported::MacWindowStyle", "style", tipwindow._w, "help", "noActivates"
+            )
+        except tk.TclError:
+            pass
+        self.tipwindow_strvar = tk.StringVar(tipwindow)
+        self.tipwindow_label = tk.Label(
+            tipwindow,
+            textvariable=self.tipwindow_strvar,
+            justify="left",
+            relief="solid",
+            background="white",
+        )
+        self.tipwindow_label.pack(ipadx=2)
+
         # prop map stuff
         self.epsilon = 0.05
 
@@ -1095,19 +1138,30 @@ class ForceVolumeWindow:
     async def mpl_pick_motion_event_callback(self, event):
         mouseevent = getattr(event, "mouseevent", event)
         control_held = event.guiEvent.state & TkState.CONTROL
-        if event.name == "motion_notify_event" and not control_held:
-            return
+        shift_held = mouseevent.guiEvent.state & TkState.SHIFT
         if mouseevent.inaxes is None:
+            await self.tooltip_send_chan.send((0, 0, ""))
             return
         elif mouseevent.inaxes is self.img_ax:
+            if event.name == "motion_notify_event":
+                await self.tooltip_send_chan.send(
+                    (event.guiEvent.x_root, event.guiEvent.y_root, self.img_ax_tip_text)
+                )
+                if not control_held:
+                    return
             if mouseevent.button != MouseButton.LEFT:
                 return
             point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, self.axesimage)
-            shift_held = mouseevent.guiEvent.state & TkState.SHIFT
             if shift_held and point in self.existing_points:
                 return
             await self.plot_curve_response(point, not shift_held)
         elif mouseevent.inaxes is self.colorbar.ax:
+            if event.name == "motion_notify_event":
+                await self.tooltip_send_chan.send(
+                    (event.guiEvent.x_root, event.guiEvent.y_root, self.colorbar_ax_tip_text)
+                )
+                if not control_held:
+                    return
             if mouseevent.button == MouseButton.MIDDLE or (
                 mouseevent.guiEvent.state & TkState.ALT and mouseevent.button == MouseButton.LEFT
             ):
@@ -1132,6 +1186,11 @@ class ForceVolumeWindow:
                 self.colorbar.solids.set_clim(vmin, vmax)
 
             await self.canvas.draw_send.send(draw_fn)
+        elif mouseevent.inaxes is self.plot_ax:
+            if event.name == "motion_notify_event":
+                await self.tooltip_send_chan.send(
+                    (event.guiEvent.x_root, event.guiEvent.y_root, self.plot_ax_tip_text)
+                )
 
     async def window_task(self):
         nursery: trio.Nursery
@@ -1147,6 +1206,21 @@ class ForceVolumeWindow:
 
             self.spinner_scope = await nursery.start(
                 async_tools.spinner_task, spinner_start, spinner_stop,
+            )
+
+            def show_tooltip(x, y, text):
+                self.tipwindow_strvar.set(text)
+                # req -> calculated sync but geometry manager changes unknown
+                w = self.tipwindow_label.winfo_reqwidth() + 4  # match with ipadx setting
+                h = self.tipwindow_label.winfo_reqheight()
+                self.tipwindow.wm_geometry(f"+{x - w}+{y - h}")
+                self.tipwindow.wm_deiconify()
+
+            def hide_tooltip():
+                self.tipwindow.wm_withdraw()
+
+            self.tooltip_send_chan = await nursery.start(
+                tooltip_task, show_tooltip, hide_tooltip, 1, 2
             )
 
             # Teach MPL to use trio
