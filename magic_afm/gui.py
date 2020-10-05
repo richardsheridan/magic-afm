@@ -70,7 +70,7 @@ from tqdm.std import TqdmExperimentalWarning
 import imageio
 
 from . import calculation, async_tools, data_readers
-from .async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY, tooltip_task
+from .async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY, tooltip_task, TOOLTIP_CANCEL
 
 warnings.simplefilter("ignore", TqdmExperimentalWarning)
 
@@ -1140,7 +1140,7 @@ class ForceVolumeWindow:
         control_held = event.guiEvent.state & TkState.CONTROL
         shift_held = mouseevent.guiEvent.state & TkState.SHIFT
         if mouseevent.inaxes is None:
-            await self.tooltip_send_chan.send((0, 0, ""))
+            await self.tooltip_send_chan.send(TOOLTIP_CANCEL)
             return
         elif mouseevent.inaxes is self.img_ax:
             if event.name == "motion_notify_event":
@@ -1227,6 +1227,12 @@ class ForceVolumeWindow:
             self.canvas.mpl_connect(
                 "motion_notify_event",
                 partial(nursery.start_soon, self.mpl_pick_motion_event_callback),
+            )
+            self.canvas.mpl_connect(
+                "figure_leave_event",
+                impartial(
+                    partial(nursery.start_soon, self.tooltip_send_chan.send, TOOLTIP_CANCEL)
+                ),
             )
             self.canvas.mpl_connect(
                 "pick_event", partial(nursery.start_soon, self.mpl_pick_motion_event_callback)

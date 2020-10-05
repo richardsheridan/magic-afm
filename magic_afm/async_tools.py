@@ -25,6 +25,8 @@ from itertools import islice
 
 import trio
 
+
+TOOLTIP_CANCEL = None, None, None
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 EXECUTOR: Optional[ProcessPoolExecutor] = None
 
@@ -117,13 +119,13 @@ def _chunk_consumer(chunk):
 
 
 async def to_sync_runner_map_unordered(
-        sync_runner,
-        sync_fn,
-        job_items,
-        chunksize=1,
-        cancellable=True,
-        limiter=cpu_bound_limiter,
-        task_status=trio.TASK_STATUS_IGNORED,
+    sync_runner,
+    sync_fn,
+    job_items,
+    chunksize=1,
+    cancellable=True,
+    limiter=cpu_bound_limiter,
+    task_status=trio.TASK_STATUS_IGNORED,
 ):
     if task_status is trio.TASK_STATUS_IGNORED:
         buffer = float("inf")
@@ -308,7 +310,9 @@ def spawn_limit(limiter):
         async def spawn_limit_wrapper(*args, **kwargs):
             async with limiter:
                 return await async_fn(*args, **kwargs)
+
         return spawn_limit_wrapper
+
     return actual_decorator
 
 
@@ -321,7 +325,7 @@ async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_
     async def single_show_hide(task_status):
         with cancel_scope:
             task_status.started()
-            if not text:
+            if text is None:
                 return
             await trio.sleep(show_delay)
             show_tooltip(x, y, text)
