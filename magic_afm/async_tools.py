@@ -51,9 +51,14 @@ async def start_global_executor():
         EXECUTOR = ProcessPoolExecutor(cpu_bound_limiter.total_tokens)
         with trio.CancelScope(shield=True):
             # submit trash to start processes
-            # afterward submit() can be considered nonblocking
-            cf_fut = await trs(EXECUTOR.submit, int)
-            cf_fut.cancel()
+            # afterward EXECUTOR.submit() can be considered nonblocking
+            # from cpython 3.9 need to make sure to start all processes GH19453
+            await to_thread_map_unordered(
+                partial(EXECUTOR.submit, int),
+                range(cpu_bound_limiter.total_tokens),
+                limiter=trio.CapacityLimiter(cpu_bound_limiter.total_tokens),
+            )
+            assert len(EXECUTOR._processes) == cpu_bound_limiter.total_tokens
             import psutil
 
             # noinspection PyUnresolvedReferences,PyProtectedMember
