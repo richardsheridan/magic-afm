@@ -551,27 +551,31 @@ class FitMode(enum.IntEnum):
     RETRACT = enum.auto()
 
 
-@np.errstate(all="ignore")
-def fitfun(delta, f, k, radius, tau, fit_mode, cancel_poller=lambda: None, **kwargs):
-    # Very course estimate of force curve parameters for initial guess
-    imin = np.argmin(f)  # TODO: better way to choose this for low adhesion
-    fmin = f[imin]
+def rapid_forcecurve_estimate(delta, force, radius):
+    """Very course estimate of force curve parameters for fit initial guess"""
+
+    fzero = np.median(force)
+
+    imin = np.argmin(force)  # TODO: better way to choose this for low adhesion
     deltamin = delta[imin]
-    fzero = np.median(f)
+
+    fmin = force[imin]
     fc_guess = fmin - fzero
+
     imax = np.argmax(delta)
     deltamax = delta[imax]
-    fmax = f[imax]
+    fmax = force[imax]
     K_guess = (fmax - fmin) / np.sqrt(radius * (deltamax - deltamin) ** 3)
     if not np.isfinite(K_guess):
         K_guess = 1.0
-    p0 = [
-        K_guess,
-        fc_guess,
-        deltamin,
-        fzero,
-        1.0,
-    ]
+
+    return K_guess, fc_guess, deltamin, fzero, 1.0
+
+
+@np.errstate(all="ignore")
+def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=lambda: None, p0=None, **kwargs):
+    if p0 is None:
+        p0 = rapid_forcecurve_estimate(delta, force, radius)
 
     assert fit_mode
     if fit_mode == FitMode.EXTEND:
@@ -596,7 +600,7 @@ def fitfun(delta, f, k, radius, tau, fit_mode, cancel_poller=lambda: None, **kwa
         beta, cov = curve_fit(
             partial_force_curve,
             delta,
-            f,
+            force,
             p0=p0,
             bounds=np.transpose(
                 (
@@ -604,7 +608,7 @@ def fitfun(delta, f, k, radius, tau, fit_mode, cancel_poller=lambda: None, **kwa
                     (-np.inf, 0.0),  # fc
                     # (0, 1),           # tau
                     (np.min(delta), np.max(delta)),  # delta_shift
-                    (np.min(f), np.max(f)),  # force_shift
+                    (np.min(force), np.max(force)),  # force_shift
                     (EPS, 100.0),  # lj_delta_scale
                 )
             ),
@@ -623,7 +627,7 @@ def fitfun(delta, f, k, radius, tau, fit_mode, cancel_poller=lambda: None, **kwa
     return beta, np.sqrt(np.diag(cov)), partial_force_curve
 
 
-def calc_def_ind_ztru(f, beta, radius, k, tau, fit_mode, **kwargs):
+def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters.
     
     """
@@ -632,14 +636,14 @@ def calc_def_ind_ztru(f, beta, radius, k, tau, fit_mode, **kwargs):
     assert fit_mode
     if fit_mode == FitMode.EXTEND:
         red_curve = red_extend
-        sl = slice(-len(f) // 25, None)
+        sl = slice(-len(force) // 25, None)
     elif fit_mode == FitMode.RETRACT:
         red_curve = red_retract
-        sl = slice(len(f) // 25)
+        sl = slice(len(force) // 25)
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
-    maxforce = f[sl].mean()
+    maxforce = force[sl].mean()
     maxdelta = delta_curve(
         schwarz_wrap, maxforce, k, radius, K, fc, tau, delta_shift, force_shift, lj_delta_scale,
     )
@@ -680,17 +684,17 @@ PROPERTY_UNITS_DICT = {
 
 def calc_properties_imap(delta_f_i_kwargs):
     with threadpoolctl.threadpool_limits(1):
-        delta, f, i, kwargs = delta_f_i_kwargs
-        beta, beta_err, partial_force_curve = fitfun(delta, f, **kwargs)
+        delta, force, i, kwargs = delta_f_i_kwargs
+        beta, beta_err, partial_force_curve = fitfun(delta, force, **kwargs)
         if np.any(np.isnan(beta)):
             return i, None
         ind_mod = beta[0]
         adh_force = beta[1]
-        (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(f, beta, **kwargs)
+        (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(force, beta, **kwargs)
         kwargs = kwargs.copy()
         k = kwargs.pop("k")
         eps = 1e-3
-        beta_perturb, *_ = fitfun(*perturb_k(delta, f, eps, k), **kwargs)
+        beta_perturb, *_ = fitfun(*perturb_k(delta, force, eps, k), p0=beta, **kwargs)
         ind_mod_perturb = beta_perturb[0]
         ind_mod_sens_k = (ind_mod_perturb - ind_mod) / ind_mod / eps
         properties = (
