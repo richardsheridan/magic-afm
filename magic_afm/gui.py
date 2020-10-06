@@ -819,17 +819,8 @@ class ForceVolumeWindow:
             pbar.avg_time = None
             pbar.reset(total=ncurves)
             pbar.smoothing_time = 0.1
-
-            property_names_units = {
-                "IndentationModulus": "Pa",
-                "AdhesionForce": "N",
-                "Deflection": "m",
-                "Indentation": "m",
-                "TrueHeight": "m",  # Hi z -> lo h
-                "IndentationRatio": None,
-            }
-            unperturbed_prop_map = np.empty(
-                ncurves, dtype=np.dtype([(name, "f4") for name in property_names_units]),
+            property_map = np.empty(
+                ncurves, dtype=np.dtype([(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]),
             )
             progress_array = progress_image.get_array()
 
@@ -837,48 +828,30 @@ class ForceVolumeWindow:
                 progress_image.changed()
                 progress_image.pchanged()
 
-            sens = {}
-            for property_map, perturbation, name in [
-                (unperturbed_prop_map, lambda *x: x[:2], "unperturbed"),
-                (unperturbed_prop_map.copy(), calculation.perturb_k, "IndentationModulus",),
-            ]:
-                if property_map is not unperturbed_prop_map:
-                    progress_array[:] = 0
-                    pbar.reset(total=ncurves)
-                    pbar.smoothing_time = 0.1
-                    pbar.set_description_str(f"Calculating {name} sensitivity...")
-                    self.canvas.draw_send.send_nowait(draw_fn)
-                delta_new, f_new = perturbation(delta, f, self.epsilon, self.opened_fvol.k)
-                async with trio.open_nursery() as nursery:
-                    property_aiter = await nursery.start(
-                        async_tools.to_process_map_unordered,
-                        calculation.calc_properties_imap,
-                        zip(delta_new, f_new, range(ncurves), repeat(optionsdict)),
-                        16,  # chunksize, but sadly can't use kwarg
-                    )
-                    t0 = trio.current_time()
-                    check_time = True
-                    async for i, properties in property_aiter:
-                        if check_time and (trio.current_time() - t0 > 10):
-                            check_time = False
-                            pbar.smoothing_time = 5
-                        if properties is None:
-                            property_map[i] = np.nan
-                            color = (1, 0, 0, 0.5)
-                        else:
-                            property_map[i] = properties
-                            color = (0, 1, 0, 0.5)
+            async with trio.open_nursery() as nursery:
+                property_aiter = await nursery.start(
+                    async_tools.to_process_map_unordered,
+                    calculation.calc_properties_imap,
+                    zip(delta, f, range(ncurves), repeat(optionsdict)),
+                    16,  # chunksize, but sadly can't use kwarg
+                )
+                t0 = trio.current_time()
+                check_time = True
+                async for i, properties in property_aiter:
+                    if check_time and (trio.current_time() - t0 > 10):
+                        check_time = False
+                        pbar.smoothing_time = 5
+                    if properties is None:
+                        property_map[i] = np.nan
+                        color = (1, 0, 0, 0.5)
+                    else:
+                        property_map[i] = properties
+                        color = (0, 1, 0, 0.5)
 
-                        pbar.update()
-                        r, c = np.unravel_index(i, img_shape)
-                        progress_array[r, c, :] = color
-                        self.canvas.draw_send.send_nowait(draw_fn)
-                if property_map is not unperturbed_prop_map:
-                    sens[name] = (
-                        (property_map[name] - unperturbed_prop_map[name])
-                        / unperturbed_prop_map[name]
-                        / self.epsilon
-                    ).reshape(img_shape)
+                    pbar.update()
+                    r, c = np.unravel_index(i, img_shape)
+                    progress_array[r, c, :] = color
+                    self.canvas.draw_send.send_nowait(draw_fn)
 
         def draw_fn():
             progress_image.remove()
@@ -893,21 +866,15 @@ class ForceVolumeWindow:
         property_map = property_map.reshape((*img_shape, -1,))
 
         # Actually write out results to external world
-        for name in property_names_units:
+        for name in calculation.PROPERTY_UNITS_DICT:
             self.opened_fvol.add_image(
                 image_name="Calc" + name,
-                units=property_names_units[name],
+                units=calculation.PROPERTY_UNITS_DICT[name],
                 scandown=True,
                 image=property_map[name].squeeze(),
             )
             if "Calc" + name not in combobox_values:
                 combobox_values.append("Calc" + name)
-        for name in sens:
-            self.opened_fvol.add_image(
-                image_name="CalcSens" + name, units=None, scandown=True, image=sens[name],
-            )
-            if "CalcSens" + name not in combobox_values:
-                combobox_values.append("CalcSens" + name)
 
         self.reset_image_name_menu(combobox_values)
 
@@ -1418,12 +1385,13 @@ def calculate_force_data(z, d, s, npts, options, cancel_poller=lambda: None):
     d_fit = f_fit / options.k
     cancel_poller()
 
-    delta_new, f_new = calculation.perturb_k(delta, f, 0.05, options.k)
-    optionsdict["k"] = 1.05 * options.k
+    eps = 1e-3
+    delta_new, f_new, k_new = calculation.perturb_k(delta, f, eps, options.k)
+    optionsdict.pop("k")
     beta_perturb, _, _ = calculation.fitfun(
-        delta_new[sl], f_new[sl], **optionsdict, cancel_poller=cancel_poller,
+        delta_new[sl], f_new[sl], k_new, **optionsdict, cancel_poller=cancel_poller,
     )
-    sens = (beta_perturb - beta) / beta / 0.05
+    sens = (beta_perturb - beta) / beta / eps
     if np.all(np.isfinite(beta)):
         deflection, indentation, z_true_surface, mindelta = calculation.calc_def_ind_ztru(
             f[sl], beta, **dataclasses.asdict(options)
