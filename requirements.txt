@@ -3,7 +3,7 @@ imageio==2.9.0
 matplotlib @ git+https://github.com/richardsheridan/matplotlib/@ef900b659b88feac6c8788739561394d19b6ff39
 numba==0.51.2
 psutil==5.7.2
-pyinstaller @ git+https://github.com/bwoodsend/pyinstaller@9ffdec5542349673a6c6dc02126c9a0d962d0a21
+pyinstaller @ git+https://github.com/bwoodsend/pyinstaller@7e6d5b8c483d20586e7e6e951f1060660445d3b2
 scipy==1.5.0
 threadpoolctl==2.1.0
 tqdm @ git+https://github.com/richardsheridan/tqdm/@3caa265562afc68e8ea9e2355502a85cb5084a54
