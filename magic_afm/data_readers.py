@@ -151,7 +151,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         await trio.sleep(0)
         self.shape = (64, 64)
         self.npts = 1024
-        self.s = self.npts // 2
+        self.split = self.npts // 2
         self.delta = (np.cos(np.linspace(0, np.pi * 2, self.npts, endpoint=False)) - 0.90) * 25
 
     async def aclose(self):
@@ -161,10 +161,10 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         await trio.sleep(0)
         gen = np.random.default_rng(seed=(r, c))
         fext = calculation.force_curve(
-            calculation.red_extend, self.delta[: self.s], 1, 10, 1, -10, 1, 0, 0, 10
+            calculation.red_extend, self.delta[: self.split], 1, 10, 1, -10, 1, 0, 0, 10
         )
         fret = calculation.force_curve(
-            calculation.red_retract, self.delta[self.s :], 1, 10, 1, -10, 1, 0, 0, 10
+            calculation.red_retract, self.delta[self.split:], 1, 10, 1, -10, 1, 0, 0, 10
         )
         d = np.concatenate((fext, fret))
         z = self.delta + d
@@ -194,7 +194,7 @@ class ForceMapWorker:
         # this is all necessary because the arrays are not of uniform length
         # We will cut all arrays down to the length of the smallest
         self.extlens = self.segments[:, :, 0]
-        self.minext = self.s = np.min(self.extlens)
+        self.minext = self.split = np.min(self.extlens)
         self.extretlens = self.segments[:, :, 1]
         self.minret = np.min(self.extretlens - self.extlens)
         self.npts = self.minext + self.minret
@@ -221,9 +221,9 @@ class ForceMapWorker:
         # Because of the nonuniform arrays, each indent gets its own dataset
         # indexed by 'row:column' e.g. '1:1'.
         curve = self.force_curves[f"{r}:{c}"]  # XXX Read h5data
-        s = self.extlens[r, c]
+        split = self.extlens[r, c]
 
-        return self._shared_get_part(curve, s)
+        return self._shared_get_part(curve, split)
 
     def get_all_curves(self, _poll_for_cancel=(lambda: None)):
         im_r, im_c, num_segments = self.segments.shape
@@ -238,9 +238,9 @@ class ForceMapWorker:
             # manually, but the string munging is easier for me to think about
             r, c = index.split(":")
             r, c = int(r), int(c)
-            s = self.extlens[r, c]
+            split = self.extlens[r, c]
 
-            x[r, c, :, :] = self._shared_get_part(curve, s)
+            x[r, c, :, :] = self._shared_get_part(curve, split)
         z = x[:, :, 0, :]
         d = x[:, :, 1, :]
         return z, d
@@ -251,7 +251,7 @@ class FFMSingleWorker:
         self.raw = raw
         self.defl = defl
         self.npts = raw.shape[-1]
-        self.s = self.npts // 2
+        self.split = self.npts // 2
 
     def get_force_curve(self, r, c):
         z = self.raw[r, c]
@@ -275,7 +275,7 @@ class FFMTraceRetraceWorker:
         self.defl_retrace = defl_retrace
         self.trace = True
         self.npts = raw_trace.shape[-1]
-        self.s = self.npts // 2
+        self.split = self.npts // 2
 
     def get_force_curve(self, r, c):
         if self.trace:
@@ -343,7 +343,7 @@ class ARH5File(BaseForceVolumeFile):
         self.k = float(self.notes["SpringConstant"])
         self.scansize = float(self.notes["ScanSize"]) * NANOMETER_UNIT_CONVERSION
         self.invols = self._invols_orig = float(self.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
-        self.npts, self.s = worker.npts, worker.s
+        self.npts, self.split = worker.npts, worker.split
 
     async def aclose(self):
         with trio.CancelScope(shield=True):
@@ -398,7 +398,7 @@ class BrukerWorkerBase(metaclass=abc.ABCMeta):
         self.header = header  # get_image
         self.mm = mm  # get_image
         self.shape = shape  # get_image
-        self.s = s  # get_force_curve
+        self.split = s  # get_force_curve
         self.version = header[header["first"]]["Version"].strip()  # get_image
 
     @abc.abstractmethod
@@ -531,7 +531,7 @@ class NanoscopeFile(BaseForceVolumeFile):
         )
 
         self.npts = npts = length // (bpp * r * c)
-        self.s = npts // 2
+        self.split = npts // 2
         rate, unit = header["Ciao scan list"]["PFT Freq"].split()
         assert unit.lower() == "khz"
         self.rate = float(rate)

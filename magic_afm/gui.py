@@ -138,7 +138,7 @@ class ForceCurveOptions:
 class ForceCurveData:
     z: np.ndarray
     d: np.ndarray
-    s: np.ndarray
+    split: np.ndarray
     f: np.ndarray
     delta: np.ndarray
     # everything else set only if fit
@@ -721,9 +721,6 @@ class ForceVolumeWindow:
         )
         self.tipwindow_label.pack(ipadx=2)
 
-        # prop map stuff
-        self.epsilon = 0.05
-
     def reset_image_name_menu(self, names):
         names = list(names)
         longest = max(map(len, names))
@@ -760,7 +757,7 @@ class ForceVolumeWindow:
                 np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
             )  # transparent initial image, no need to draw
 
-            npts, s = self.opened_fvol.npts, self.opened_fvol.s
+            npts, s = self.opened_fvol.npts, self.opened_fvol.split
             resample = npts > RESAMPLE_NPTS
             if resample:
                 s = s * RESAMPLE_NPTS // npts
@@ -1051,7 +1048,7 @@ class ForceVolumeWindow:
                 data = await trs(
                     calculate_force_data,
                     *force_curve,
-                    self.opened_fvol.s,
+                    self.opened_fvol.split,
                     self.opened_fvol.npts,
                     options,
                     async_tools.make_cancel_poller(),
@@ -1322,8 +1319,8 @@ def draw_force_curve(data, plot_ax, options):
     if options.disp_kind == DispKind.zd:
         plot_ax.set_xlabel("Z piezo (nm)")
         plot_ax.set_ylabel("Cantilever deflection (nm)")
-        artists.extend(plot_ax.plot(data.z[: data.s], data.d[: data.s]))
-        artists.extend(plot_ax.plot(data.z[data.s :], data.d[data.s :]))
+        artists.extend(plot_ax.plot(data.z[: data.split], data.d[: data.split]))
+        artists.extend(plot_ax.plot(data.z[data.split:], data.d[data.split:]))
         if options.fit_mode:
             artists.extend(plot_ax.plot(data.z[data.sl], data.d_fit, "--"))
             artists.append(plot_ax.axvline(data.z_tru, ls=":", c=artists[0].get_color()))
@@ -1334,8 +1331,8 @@ def draw_force_curve(data, plot_ax, options):
             delta = data.delta - data.beta[2]
             f = data.f - data.beta[3]
             f_fit = data.f_fit - data.beta[3]
-            artists.extend(plot_ax.plot(delta[: data.s], f[: data.s]))
-            artists.extend(plot_ax.plot(delta[data.s :], f[data.s :]))
+            artists.extend(plot_ax.plot(delta[: data.split], f[: data.split]))
+            artists.extend(plot_ax.plot(delta[data.split:], f[data.split:]))
             artists.extend(plot_ax.plot(delta[data.sl], f_fit, "--"))
             mopts = dict(
                 marker="X", markersize=8, linestyle="", markeredgecolor="k", markerfacecolor="k",
@@ -1349,17 +1346,17 @@ def draw_force_curve(data, plot_ax, options):
             )
             artists.extend(plot_ax.plot(data.mindelta - data.beta[2], data.beta[1], **mopts,))
         else:
-            artists.extend(plot_ax.plot(data.delta[: data.s], data.f[: data.s]))
-            artists.extend(plot_ax.plot(data.delta[data.s :], data.f[data.s :]))
+            artists.extend(plot_ax.plot(data.delta[: data.split], data.f[: data.split]))
+            artists.extend(plot_ax.plot(data.delta[data.split:], data.f[data.split:]))
     else:
         raise ValueError("Unknown DispKind: ", data.disp_kind)
     return artists, artists[0].get_color()
 
 
-def calculate_force_data(z, d, s, npts, options, cancel_poller=lambda: None):
+def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None):
     cancel_poller()
     if npts > RESAMPLE_NPTS:
-        s = s * RESAMPLE_NPTS // npts
+        split = split * RESAMPLE_NPTS // npts
         z = calculation.resample_dset(z, RESAMPLE_NPTS, True)
         d = calculation.resample_dset(d, RESAMPLE_NPTS, True)
     # Transform data to model units
@@ -1367,12 +1364,12 @@ def calculate_force_data(z, d, s, npts, options, cancel_poller=lambda: None):
     delta = z - d
 
     if not options.fit_mode:
-        return ForceCurveData(s=s, z=z, d=d, f=f, delta=delta,)
+        return ForceCurveData(split=split, z=z, d=d, f=f, delta=delta, )
 
     if options.fit_mode == calculation.FitMode.EXTEND:
-        sl = slice(s)
+        sl = slice(split)
     elif options.fit_mode == calculation.FitMode.RETRACT:
-        sl = slice(s, None)
+        sl = slice(split, None)
     else:
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
@@ -1399,9 +1396,9 @@ def calculate_force_data(z, d, s, npts, options, cancel_poller=lambda: None):
     else:
         deflection, indentation, z_true_surface, mindelta = np.nan, np.nan, np.nan, np.nan
     return ForceCurveData(
-        s=s,
         z=z,
         d=d,
+        split=split,
         f=f,
         delta=delta,
         sl=sl,
