@@ -552,7 +552,7 @@ class FitMode(enum.IntEnum):
 
 
 def rapid_forcecurve_estimate(delta, force, radius):
-    """Very course estimate of force curve parameters for fit initial guess"""
+    """Very coarse estimate of force curve parameters for fit initial guess"""
 
     fzero = np.median(force)
 

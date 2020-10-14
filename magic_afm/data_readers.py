@@ -164,7 +164,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
             calculation.red_extend, self.delta[: self.split], 1, 10, 1, -10, 1, 0, 0, 10
         )
         fret = calculation.force_curve(
-            calculation.red_retract, self.delta[self.split:], 1, 10, 1, -10, 1, 0, 0, 10
+            calculation.red_retract, self.delta[self.split :], 1, 10, 1, -10, 1, 0, 0, 10
         )
         d = np.concatenate((fext, fret))
         z = self.delta + d
@@ -450,7 +450,7 @@ class FFVWorker(BrukerWorkerBase):
                 )
 
     def get_force_curve(self, r, c, invols, sync_dist):
-        s = self.s
+        s = self.split
         defl_scale = np.float32(invols * self.defl_hard_scale)
 
         d = self.d_ints[r, c] * defl_scale
@@ -486,7 +486,7 @@ class QNMWorker(BrukerWorkerBase):
         )
 
     def get_force_curve(self, r, c, invols, sync_dist):
-        s = self.s
+        s = self.split
         defl_scale = np.float32(invols * self.defl_hard_scale)
 
         d = self.d_ints[r, c] * defl_scale
@@ -555,10 +555,10 @@ class NanoscopeFile(BaseForceVolumeFile):
 
     def _choose_worker(self, header):
         if "Height Sensor" in header["FV"]:
-            return FFVWorker(header, self._mm, self.shape, self.s), 0
+            return FFVWorker(header, self._mm, self.shape, self.split), 0
         else:
             return (
-                QNMWorker(header, self._mm, self.shape, self.s),
+                QNMWorker(header, self._mm, self.shape, self.split),
                 int(round(float(header["Ciao scan list"]["Sync Distance"]))),
             )
 
