@@ -510,9 +510,19 @@ class NanoscopeFile(BaseForceVolumeFile):
 
     async def ainitialize(self):
         self._mm = await trio.to_thread.run_sync(mmap_file_read_only, self.path._wrapped)
-        self.header = header = await trio.to_thread.run_sync(
-            read_nanoscope_header, self.path._wrapped
+
+        # End of header is demarcated by a SUB byte (26 = 0x1A)
+        # Longest header so far was 80 kB, stop there to avoid searching gigabytes before fail
+        header_end_pos = await trs(self._mm.find, b"\x1A", 0, 80960)
+        if header_end_pos < 0:
+            raise ValueError("No stop byte found, are you sure this is a Nanoscope file?")
+        self.header = header = parse_nanoscope_header(
+            self._mm[:header_end_pos]  # will be cached from find call
+            .decode("windows-1252")
+            .splitlines()
         )
+
+        # Header items that I should be reading someday
         # \Frame direction: Down
         # \Line Direction: Retrace
         # \Z direction: Retract
@@ -579,39 +589,43 @@ class NanoscopeFile(BaseForceVolumeFile):
         return image, scandown
 
 
-def read_nanoscope_header(path):
+def parse_nanoscope_header(header_lines):
+    """Convert header from a Nanoscope file to a convenient nested dict
+
+    header_lines can be an opened file object or a list of strings or anything
+    that iterates the header line-by-line."""
+
     header = {}
     section = ""
-    with path.open("r") as f:
-        for line in f:
-            assert line.startswith("\\")
-            line = line[1:].strip()  # strip leading slash and newline
+    for line in header_lines:
+        assert line.startswith("\\")
+        line = line[1:].strip()  # strip leading slash and newline
 
-            if line.startswith("*"):
-                if line.startswith("*File list end"):
-                    break  # THIS IS THE **NORMAL** WAY TO END THE FOR LOOP
-                if section == line[1:]:
-                    if header[section] is current:
-                        header[section] = [current]
-                    current = {}
-                    header[section].append(current)
-                else:
-                    section = line[1:]
-                    if not header:
-                        header["first"] = section
-                    current = {}
-                    header[section] = current
-                continue
+        if line.startswith("*"):
+            if line.startswith("*File list end"):
+                break  # THIS IS THE **NORMAL** WAY TO END THE FOR LOOP
+            if section == line[1:]:
+                if header[section] is current:
+                    header[section] = [current]
+                current = {}
+                header[section].append(current)
+            else:
+                section = line[1:]
+                if not header:
+                    header["first"] = section
+                current = {}
+                header[section] = current
+            continue
 
-            key, value = line.split(":", maxsplit=1)
-            # Colon special case for "groups"
-            if key.startswith("@") and key[1].isdigit() and len(key) == 2:
-                key2, value = value.split(":", maxsplit=1)
-                key = key + ":" + key2
+        key, value = line.split(":", maxsplit=1)
+        # Colon special case for "groups"
+        if key.startswith("@") and key[1].isdigit() and len(key) == 2:
+            key2, value = value.split(":", maxsplit=1)
+            key = key + ":" + key2
 
-            current[key] = value.strip()
-        else:
-            raise ValueError("File ended too soon")
+        current[key] = value.strip()
+    else:
+        raise ValueError("File ended too soon")
     if (not header) or ("" in header):
         raise ValueError("File is empty or not a Bruker data file")
 
