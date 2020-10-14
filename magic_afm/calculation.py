@@ -17,6 +17,7 @@ A Docstring
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import enum
+import traceback
 from functools import partial
 
 import numpy as np
@@ -619,7 +620,9 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=lambda: None, p
             jac="2-point",
         )
     except Exception as e:
-        print(str(e))
+        traceback.print_exception(
+            type(e), e, e.__traceback__,
+        )
         print(p0)
         beta = np.full_like(p0, np.nan)
         cov = np.diag(beta)
