@@ -22,7 +22,7 @@ from functools import partial
 
 import numpy as np
 import threadpoolctl
-from scipy.optimize import curve_fit, root_scalar
+from scipy.optimize import curve_fit
 from scipy.signal import resample
 from scipy.ndimage import median_filter, convolve1d
 from numpy.linalg import lstsq
@@ -201,6 +201,118 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 @myjit
+def brentq(func, args, xa, xb):
+    """Transliterated from SciPy Zeros/brentq.c
+
+Copyright (c) 2001-2002 Enthought, Inc.  2003-2019, SciPy Developers.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above
+   copyright notice, this list of conditions and the following
+   disclaimer in the documentation and/or other materials provided
+   with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived
+   from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+"""
+    xtol = RT_EPS
+    maxiter = 50
+    xpre = xa
+    xcur = xb
+
+    fpre = func(xpre, *args)
+    # funcalls += 1
+    if fpre == 0:
+        return xpre
+
+    fcur = func(xcur, *args)
+    # funcalls += 1
+    if fcur == 0:
+        return xcur
+
+    if fpre * fcur > 0:
+        raise ValueError("f(a) and f(b) must have different signs")
+
+    for i in range(maxiter):
+        if fpre * fcur < 0:
+            # always true on first iteration
+            # don't worry about NameErrors
+            xblk = xpre
+            fblk = fpre
+            spre = scur = xcur - xpre
+
+        if np.fabs(fblk) < np.fabs(fcur):
+            xpre = xcur
+            xcur = xblk
+            xblk = xpre
+
+            fpre = fcur
+            fcur = fblk
+            fblk = fpre
+
+        # delta = (xtol + rtol*fabs(xcur))/2;
+        sbis = (xblk - xcur) / 2
+        if fcur == 0 or np.fabs(sbis) < xtol:
+            return xcur
+
+        if np.fabs(spre) > xtol and np.fabs(fcur) < np.fabs(fpre):
+            if xpre == xblk:
+                # interpolate
+                stry = -fcur * (xcur - xpre) / (fcur - fpre)
+            else:
+                # extrapolate
+                dpre = (fpre - fcur) / (xpre - xcur)
+                dblk = (fblk - fcur) / (xblk - xcur)
+                stry = -fcur * (fblk * dblk - fpre * dpre) / (dblk * dpre * (fblk - fpre))
+
+            if 2 * np.fabs(stry) < min(np.fabs(spre), 3 * np.fabs(sbis) - xtol):
+                # good short step
+                spre = scur
+                scur = stry
+            else:
+                # bisect
+                spre = sbis
+                scur = sbis
+        else:
+            # bisect
+            spre = sbis
+            scur = sbis
+
+        xpre = xcur
+        fpre = fcur
+        if np.fabs(scur) > xtol:
+            xcur += scur
+        else:
+            xcur += xtol if sbis > 0 else -xtol
+
+        fcur = func(xcur, *args)
+        # funcalls += 1
+
+    return xcur
+
+
+@myjit
 def mylinspace(start, stop, num, endpoint=True):
     """np.linspace is surprisingly intensive, so trim the fat
     
@@ -312,6 +424,11 @@ def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset=0.0)
     return postfactor * force_scale * (attraction - repulsion) / delta_scale - force_offset
 
 
+@myjit
+def interp_with_offset(x, xp, fp, offset):
+    return np.interp(x, xp, fp) - offset
+
+
 def red_extend(
     red_delta, red_fc, red_k, lj_delta_scale,
 ):
@@ -343,7 +460,7 @@ def red_extend(
     lj_f = np.atleast_1d(lj_f)  # Later parts can choke on scalars
 
     # Try to find where LJ gradient == red_k
-    # root_scalar is marginally faster with python scalars
+    # brentq is marginally faster with python scalars without jit
     red_d_min = float(np.min(red_delta))
     args = (lj_delta_scale, red_fc, lj_delta_offset, red_k)
     bracket = (
@@ -351,7 +468,7 @@ def red_extend(
         lj_limit_factor * lj_delta_scale + lj_delta_offset,
     )
     try:
-        lj_end_pos = root_scalar(lj_gradient, args=args, bracket=bracket,).root
+        lj_end_pos = brentq(lj_gradient, args, *bracket,)
     except ValueError as e:
         if str(e) != "f(a) and f(b) must have different signs":
             raise
@@ -372,7 +489,7 @@ def red_extend(
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
     args = red_fc, 1, red_d_max
-    red_f_max = secant(schwarz_red, args, x0=0, x1=red_fc)
+    red_f_max = secant(schwarz_red, args, x0=0.0, x1=red_fc)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
@@ -425,7 +542,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
     args = red_fc, 1, red_d_max
-    red_f_max = secant(schwarz_red, args, x0=red_fc, x1=0)
+    red_f_max = secant(schwarz_red, args, x0=red_fc, x1=0.0)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
@@ -440,13 +557,11 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
         # Find slope == red_k between vertical and horizontal parts of unstable branch
         f0 = mylinspace((7 * red_fc + 8) / 3, red_fc, 100, endpoint=False)
         d0 = schwarz_red(f0, red_fc, 0)
-        # TODO: analytical gradient of schwarz
+        # TODO: analytical gradient of schwarz unstable branch
         df0dd0 = np.gradient(f0, d0)
 
         try:
-            s_end_pos = root_scalar(
-                lambda x: np.interp(x, d0, df0dd0) - red_k, bracket=(d0[0], d0[-1])
-            ).root
+            s_end_pos = brentq(interp_with_offset, (d0, df0dd0, red_k), d0[0], d0[-1])
             s_end_force = np.interp(s_end_pos, d0, f0)
         except ValueError as e:
             # The named error happens when the bracket is quite small i.e. red_fc ~2
@@ -693,7 +808,9 @@ def calc_properties_imap(delta_f_i_kwargs):
             return i, None
         ind_mod = beta[0]
         adh_force = beta[1]
-        (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(force, beta, **kwargs)
+        (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(
+            force, beta, **kwargs
+        )
         kwargs = kwargs.copy()
         k = kwargs.pop("k")
         eps = 1e-3
