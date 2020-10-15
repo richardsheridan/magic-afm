@@ -37,6 +37,7 @@ myjit = numba.jit(nopython=True, nogil=True)
 # def myjit(fn):
 #     return fn
 
+
 EPS = float(np.finfo(np.float64).eps)
 RT_EPS = float(np.sqrt(EPS))
 
@@ -693,6 +694,18 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=lambda: None, p
     if p0 is None:
         p0 = rapid_forcecurve_estimate(delta, force, radius)
 
+    bounds = np.transpose(
+        (
+            (0.0, np.inf),  # K
+            (-np.inf, 0.0),  # fc
+            # (0, 1),           # tau
+            (np.min(delta), np.max(delta)),  # delta_shift
+            (np.min(force), np.max(force)),  # force_shift
+            (EPS, 100.0),  # lj_delta_scale
+        )
+    )
+    p0 = np.clip(p0, *bounds)
+
     assert fit_mode
     if fit_mode == FitMode.EXTEND:
         red_curve = red_extend
@@ -718,16 +731,7 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=lambda: None, p
             delta,
             force,
             p0=p0,
-            bounds=np.transpose(
-                (
-                    (0.0, np.inf),  # K
-                    (-np.inf, 0.0),  # fc
-                    # (0, 1),           # tau
-                    (np.min(delta), np.max(delta)),  # delta_shift
-                    (np.min(force), np.max(force)),  # force_shift
-                    (EPS, 100.0),  # lj_delta_scale
-                )
-            ),
+            bounds=bounds,
             xtol=1e-9,
             ftol=1e-8,
             method="trf",
