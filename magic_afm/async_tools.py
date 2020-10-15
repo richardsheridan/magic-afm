@@ -278,10 +278,9 @@ async def spinner_task(set_spinner, set_normal, task_status):
             finally:
                 assert outstanding_scopes > 0
                 outstanding_scopes -= 1
-                # Invariant: if zero, task state is equivalent to initial state
+                # Invariant: if zero, event states are equivalent to initial state
                 # just after calling task_status.started
                 if not outstanding_scopes:
-                    set_normal()
                     # these actions must occur atomically to satisfy the invariant
                     pending_or_active_cscope.cancel()
                     spinner_pending_or_active = trio.Event()
@@ -297,6 +296,13 @@ async def spinner_task(set_spinner, set_normal, task_status):
             await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY * 5)
             set_spinner()
             await trio.sleep_forever()
+
+        # Allow a short delay after a final scope exits before resetting
+        await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+        # Another spinner_scope may have opened during this time.
+        # If so, don't change the cursor to avoid blinking unnecessarily
+        if not spinner_start.is_set():
+            set_normal()
 
 
 async def asyncify_iterator(iter):
