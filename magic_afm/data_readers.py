@@ -1,5 +1,7 @@
 import abc
+import dataclasses
 from subprocess import PIPE, STARTF_USESHOWWINDOW, STARTUPINFO
+from typing import Set
 
 import numpy as np
 import trio
@@ -71,6 +73,16 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
     return h5file_path
 
 
+@dataclasses.dataclass
+class ForceVolumeParams:
+    image_names: Set[str]
+    k: float
+    invols: float
+    npts: int
+    split: int
+    sync_dist: int
+
+
 class BaseForceVolumeFile(metaclass=abc.ABCMeta):
 
     _basic_units_map = {}
@@ -80,10 +92,13 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         self._units_map = self._basic_units_map.copy()
         self._calc_images = {}
         self._file_image_names = set()
-        self.params = {}
         self._trace = None
-        self.sync_dist = 0
         self._worker = None
+        self.k = None
+        self.invols = None
+        self.npts = None
+        self.split = None
+        self.sync_dist = 0
 
     @property
     def trace(self):
@@ -135,6 +150,16 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     async def get_image(self, image_name):
         raise NotImplementedError
+
+    def parameters(self):
+        return ForceVolumeParams(
+            k=self.k,
+            invols=self.invols,
+            image_names=self._file_image_names,
+            npts=self.npts,
+            split=self.split,
+            sync_dist=self.sync_dist,
+        )
 
 
 class DemoForceVolumeFile(BaseForceVolumeFile):

@@ -307,9 +307,13 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
         await self.draw_send.send(draw_fn)
 
-    def teach_canvas_to_use_trio(self, nursery, spinner_scope):
+    def teach_canvas_to_use_trio(self, nursery, spinner_scope, async_motion_pick_fn):
         self._tkcanvas.bind("<Configure>", partial(nursery.start_soon, self.aresize))
         self.spinner_scope = spinner_scope
+        self.mpl_connect(
+            "motion_notify_event", partial(nursery.start_soon, async_motion_pick_fn),
+        )
+        self.mpl_connect("pick_event", partial(nursery.start_soon, async_motion_pick_fn))
 
 
 class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
@@ -460,16 +464,14 @@ def impartial(fn):
     return impartial_wrapper
 
 
-class ForceVolumeWindow:
-    default_figsize = (9, 2.75)
-
-    def __init__(self, root, opened_fvol, figsize=default_figsize, **kwargs):
-        self.opened_fvol = opened_fvol
+class ForceVolumeTkDisplay:
+    def __init__(self, root, name, initial_values: data_readers.ForceVolumeParams, **kwargs):
+        self._nursery = None
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
-        window.wm_title(self.opened_fvol.path.name)
+        window.wm_title(name)
 
         # Build figure
-        self.fig = Figure(figsize, frameon=False)
+        self.fig = Figure((9, 2.75), frameon=False)
         self.canvas = AsyncFigureCanvasTkAgg(self.fig, window)
         self.navbar = AsyncNavigationToolbar2Tk(self.canvas, window)
         self.img_ax, self.plot_ax = img_ax, plot_ax = self.fig.subplots(
@@ -494,6 +496,7 @@ class ForceVolumeWindow:
             image_name_labelframe, width=12, state="readonly", textvariable=self.image_name_strvar,
         )
         self.image_name_menu.pack(fill="x")
+        self.reset_image_name_menu(initial_values.image_names)
         image_name_labelframe.pack(fill="x")
         colormap_labelframe = ttk.Labelframe(image_opts_frame, text="Colormap")
         self.colormap_strvar = tk.StringVar(colormap_labelframe, value="viridis")
@@ -515,7 +518,6 @@ class ForceVolumeWindow:
             state="readonly",
             textvariable=self.manipulate_strvar,
             values=list(calculation.MANIPULATIONS),
-            # width=max(map(len, COLORMAPS)) - 1,
         )
         manipulate_menu.pack(fill="x")
         manipulate_labelframe.pack(fill="x")
@@ -524,6 +526,7 @@ class ForceVolumeWindow:
 
         disp_labelframe = ttk.Labelframe(self.options_frame, text="Force curve display")
         self.disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
+        self.disp_kind_intvar.trace_add("write", self.change_disp_kind_callback)
         disp_zd_button = ttk.Radiobutton(
             disp_labelframe,
             text="d vs. z",
@@ -544,6 +547,7 @@ class ForceVolumeWindow:
 
         preproc_labelframe = ttk.Labelframe(self.options_frame, text="Preprocessing")
         self.defl_sens_strvar = tk.StringVar(preproc_labelframe)
+        self.defl_sens_strvar.trace_add("write", self.defl_sens_callback)
         defl_sens_sbox = ttk.Spinbox(
             preproc_labelframe,
             from_=0,
@@ -553,11 +557,12 @@ class ForceVolumeWindow:
             width=6,
             textvariable=self.defl_sens_strvar,
         )
-        defl_sens_sbox.set(opened_fvol.invols)
+        defl_sens_sbox.set(initial_values.invols)
         defl_sens_sbox.grid(row=0, column=2, sticky="E")
         defl_sens_label = ttk.Label(preproc_labelframe, text="InvOLS", justify="left")
         defl_sens_label.grid(row=0, column=0, columnspan=2, sticky="W")
         self.spring_const_strvar = tk.StringVar(preproc_labelframe)
+        self.spring_const_strvar.trace_add("write", self.spring_const_callback)
         spring_const_sbox = ttk.Spinbox(
             preproc_labelframe,
             from_=0,
@@ -567,21 +572,22 @@ class ForceVolumeWindow:
             width=6,
             textvariable=self.spring_const_strvar,
         )
-        spring_const_sbox.set(opened_fvol.k)
+        spring_const_sbox.set(initial_values.k)
         spring_const_sbox.grid(row=1, column=2, sticky="E")
         spring_const_label = ttk.Label(preproc_labelframe, text="Spring Constant", justify="left")
         spring_const_label.grid(row=1, column=0, columnspan=2, sticky="W")
         self.sync_dist_strvar = tk.StringVar(preproc_labelframe)
+        self.sync_dist_strvar.trace_add("write", self.sync_dist_callback)
         sync_dist_sbox = ttk.Spinbox(
             preproc_labelframe,
-            from_=-opened_fvol.npts,
-            to=opened_fvol.npts,
+            from_=-initial_values.npts,
+            to=initial_values.npts,
             increment=1,
             format="%0.0f",
             width=6,
             textvariable=self.sync_dist_strvar,
         )
-        sync_dist_sbox.set(opened_fvol.sync_dist)
+        sync_dist_sbox.set(initial_values.sync_dist)
         sync_dist_sbox.grid(row=2, column=2, sticky="E")
         sync_dist_label = ttk.Label(preproc_labelframe, text="Sync Distance", justify="left")
         sync_dist_label.grid(row=2, column=0, columnspan=2, sticky="W")
@@ -590,6 +596,7 @@ class ForceVolumeWindow:
 
         fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
         self.fit_intvar = tk.IntVar(fit_labelframe, value=calculation.FitMode.SKIP.value)
+        self.fit_intvar.trace_add("write", self.change_fit_kind_callback)
         fit_skip_button = ttk.Radiobutton(
             fit_labelframe,
             text="Skip",
@@ -666,18 +673,6 @@ class ForceVolumeWindow:
         size_grip.grid(row=1, sticky="es")
         size_grip.lift()
 
-        # Finalize pure ARDFWindow stuff
-        self.reset_image_name_menu(self.opened_fvol.image_names)
-
-        # change_image_callback stuff
-        self.colorbar: Optional[Colorbar] = None
-        self.axesimage: Optional[AxesImage] = None
-
-        # plot_curve_event_response stuff
-        self.cancels_pending = set()
-        self.artists = []
-        self.existing_points = set()
-
         # tooltips
         from inspect import cleandoc as c
 
@@ -721,26 +716,124 @@ class ForceVolumeWindow:
         )
         self.tipwindow_label.pack(ipadx=2)
 
+    def destroy(self):
+        self.options_frame.destroy()
+        self.tkwindow.withdraw()  # weird navbar hiccup on close
+        self.tkwindow.destroy()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.destroy()
+
+    def get_options(self):
+        return ForceCurveOptions(
+            fit_mode=self.fit_intvar.get(),
+            disp_kind=self.disp_kind_intvar.get(),
+            k=float(self.spring_const_strvar.get()),
+            radius=float(self.fit_radius_sbox.get()),
+            tau=float(self.fit_tau_sbox.get()),
+        )
+
+    def spinner_start(self):
+        self.tkwindow.configure(cursor="watch")
+        self.options_frame.configure(cursor="watch")
+
+    def spinner_stop(self):
+        self.tkwindow.configure(cursor="arrow")
+        self.options_frame.configure(cursor="arrow")
+
+    def show_tooltip(self, x, y, text):
+        self.tipwindow_strvar.set(text)
+        # req -> calculated sync but geometry manager changes unknown
+        w = self.tipwindow_label.winfo_reqwidth() + 4  # match with ipadx setting
+        h = self.tipwindow_label.winfo_reqheight()
+        self.tipwindow.wm_geometry(f"+{x - w}+{y - h}")
+        self.tipwindow.wm_deiconify()
+
+    def hide_tooltip(self):
+        self.tipwindow.wm_withdraw()
+
     def reset_image_name_menu(self, names):
         names = list(names)
         longest = max(map(len, names))
         self.image_name_menu.configure(values=names, width=min(longest - 1, 20))
 
-    async def calc_prop_map_callback(self):
-        optionsdict = dict(
-            fit_mode=self.fit_intvar.get(),
-            disp_kind=self.disp_kind_intvar.get(),
-            k=self.opened_fvol.k,
-            radius=float(self.fit_radius_sbox.get()),
-            tau=float(self.fit_tau_sbox.get()),
-        )
-        options = ForceCurveOptions(**optionsdict)
-        img_shape = self.opened_fvol.shape
+    async def teach_display_to_use_trio(self, nursery, redraw_existing_points):
+        self._nursery = nursery
+        self.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+        self._redraw_existing_points = redraw_existing_points
+
+    async def _redraw_tight(self):
+        await self._redraw_existing_points()
+
+        def draw_fn():
+            # noinspection PyTypeChecker
+            self.fig.set_tight_layout(True)
+
+        await self.canvas.draw_send.send(draw_fn)
+
+    def defl_sens_callback(self, *args, _prev_invols=[1.0]):
+        try:
+            _prev_invols[0] = float(self.defl_sens_strvar.get())
+        except ValueError:
+            self.defl_sens_strvar.set(str(_prev_invols[0]))
+        else:
+            if self._nursery is not None:
+                self._nursery.start_soon(self._redraw_existing_points)
+
+    def spring_const_callback(self, *args, _prev_k=[1.0]):
+        try:
+            _prev_k[0] = float(self.spring_const_strvar.get())
+        except ValueError:
+            self.spring_const_strvar.set(str(_prev_k[0]))
+        else:
+            if self._nursery is not None:
+                self._nursery.start_soon(self._redraw_existing_points)
+
+    def sync_dist_callback(self, *args, _prev_dist=[0]):
+        try:
+            _prev_dist[0] = int(self.sync_dist_strvar.get())
+        except ValueError:
+            self.sync_dist_strvar.set(str(_prev_dist[0]))
+        else:
+            if self._nursery is not None:
+                self._nursery.start_soon(self._redraw_existing_points)
+
+    def change_fit_kind_callback(self, *args):
+        self.calc_props_button.configure(state="normal" if self.fit_intvar.get() else "disabled")
+
+        if self._nursery is not None:
+            self._nursery.start_soon(self._redraw_tight)
+
+    def change_disp_kind_callback(self, *args):
+        if self._nursery is not None:
+            self._nursery.start_soon(self._redraw_tight)
+
+
+async def force_volume_task(display, opened_fvol):
+    # plot_curve_event_response
+    plot_curve_cancels_pending = set()
+    artists = []
+    existing_points = set()
+
+    # set in change_image_callback
+    colorbar: Optional[Colorbar] = None
+    axesimage: Optional[AxesImage] = None
+    scandown: Optional[bool] = None
+    image_stats: Optional[ImageStats] = None
+    unit: Optional[str] = None
+
+    async def calc_prop_map_callback():
+        options = display.get_options()
+        optionsdict = dataclasses.asdict(options)
+        img_shape = opened_fvol.shape
         ncurves = img_shape[0] * img_shape[1]
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
 
-        async with self.spinner_scope() as cancel_scope:
+        async with spinner_scope() as cancel_scope:
             # assign pbar and progress_image ASAP in case of cancel
             pbar = tqdm_tk(
                 total=ncurves,
@@ -748,26 +841,26 @@ class ForceVolumeWindow:
                 smoothing_time=2,
                 mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 2,
                 unit=" curves",
-                tk_parent=self.tkwindow,
+                tk_parent=display.tkwindow,
                 grab=False,
                 leave=False,
                 cancel_callback=cancel_scope.cancel,
             )
-            progress_image: matplotlib.image.AxesImage = self.img_ax.imshow(
-                np.zeros(img_shape + (4,), dtype="f4"), extent=self.axesimage.get_extent()
+            progress_image: matplotlib.image.AxesImage = display.img_ax.imshow(
+                np.zeros(img_shape + (4,), dtype="f4"), extent=axesimage.get_extent()
             )  # transparent initial image, no need to draw
 
-            npts, s = self.opened_fvol.npts, self.opened_fvol.split
+            npts, split = opened_fvol.npts, opened_fvol.split
             resample = npts > RESAMPLE_NPTS
             if resample:
-                s = s * RESAMPLE_NPTS // npts
+                split = split * RESAMPLE_NPTS // npts
                 npts = RESAMPLE_NPTS
             if options.fit_mode == calculation.FitMode.EXTEND:
-                sl = slice(s)
-                segment_npts = s
+                sl = slice(split)
+                segment_npts = split
             elif options.fit_mode == calculation.FitMode.RETRACT:
-                sl = slice(s, None)
-                segment_npts = npts - s
+                sl = slice(split, None)
+                segment_npts = npts - split
             else:
                 raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
@@ -781,7 +874,7 @@ class ForceVolumeWindow:
                 if first:
                     pbar.unpause()
                     first = False
-                z, d = await self.opened_fvol.get_force_curve(*np.unravel_index(i, img_shape))
+                z, d = await opened_fvol.get_force_curve(*np.unravel_index(i, img_shape))
                 if resample:
                     z = await trio.to_thread.run_sync(
                         calculation.resample_dset,
@@ -848,23 +941,23 @@ class ForceVolumeWindow:
                     pbar.update()
                     r, c = np.unravel_index(i, img_shape)
                     progress_array[r, c, :] = color
-                    self.canvas.draw_send.send_nowait(draw_fn)
+                    display.canvas.draw_send.send_nowait(draw_fn)
 
         def draw_fn():
             progress_image.remove()
 
-        await self.canvas.draw_send.send(draw_fn)
+        await display.canvas.draw_send.send(draw_fn)
         pbar.close()
 
         if cancel_scope.cancelled_caught:
             return
 
-        combobox_values = list(self.image_name_menu.cget("values"))
+        combobox_values = list(display.image_name_menu.cget("values"))
         property_map = property_map.reshape((*img_shape, -1,))
 
         # Actually write out results to external world
         for name in calculation.PROPERTY_UNITS_DICT:
-            self.opened_fvol.add_image(
+            opened_fvol.add_image(
                 image_name="Calc" + name,
                 units=calculation.PROPERTY_UNITS_DICT[name],
                 scandown=True,
@@ -873,183 +966,141 @@ class ForceVolumeWindow:
             if "Calc" + name not in combobox_values:
                 combobox_values.append("Calc" + name)
 
-        self.reset_image_name_menu(combobox_values)
+        display.reset_image_name_menu(combobox_values)
 
-    async def change_cmap_callback(self):
-        colormap_name = self.colormap_strvar.get()
+    async def change_cmap_callback():
+        colormap_name = display.colormap_strvar.get()
         # save old clim
-        clim = self.axesimage.get_clim()
+        clim = axesimage.get_clim()
 
         def draw_fn():
             # prevent cbar from getting expanded
-            self.axesimage.set_clim(self.image_stats.min, self.image_stats.max)
+            axesimage.set_clim(image_stats.min, image_stats.max)
             # actually change cmap
-            self.axesimage.set_cmap(colormap_name)
+            axesimage.set_cmap(colormap_name)
             # reset everything
-            customize_colorbar(self.colorbar, *clim, unit=self.unit)
-            if self.colorbar.frozen:
-                expand_colorbar(self.colorbar)
+            customize_colorbar(colorbar, *clim, unit=unit)
+            if colorbar.frozen:
+                expand_colorbar(colorbar)
 
-        await self.canvas.draw_send.send(draw_fn)
+        await display.canvas.draw_send.send(draw_fn)
 
-    async def change_image_callback(self):
-        image_name = self.image_name_strvar.get()
-        cmap = self.colormap_strvar.get()
-        image_array, self.scandown = await self.opened_fvol.get_image(image_name)
-        self.image_stats = ImageStats.from_array(image_array)
-        self.unit = self.opened_fvol.get_image_units(image_name)
+    async def change_image_callback():
+        nonlocal scandown, image_stats, unit
+        image_name = display.image_name_strvar.get()
+        cmap = display.colormap_strvar.get()
+        image_array, scandown = await opened_fvol.get_image(image_name)
+        image_stats = ImageStats.from_array(image_array)
+        unit = opened_fvol.get_image_units(image_name)
 
-        scansize = self.opened_fvol.scansize
+        scansize = opened_fvol.scansize
         s = (scansize + scansize / len(image_array)) // 2
 
         def draw_fn():
-            if self.colorbar is not None:
-                self.colorbar.remove()
-            if self.axesimage is not None:
-                self.axesimage.remove()
-            self.img_ax.set_title(image_name)
-            self.img_ax.set_ylabel("Y piezo (nm)")
-            self.img_ax.set_xlabel("X piezo (nm)")
+            nonlocal axesimage, colorbar
+            if colorbar is not None:
+                colorbar.remove()
+            if axesimage is not None:
+                axesimage.remove()
+            display.img_ax.set_title(image_name)
+            display.img_ax.set_ylabel("Y piezo (nm)")
+            display.img_ax.set_xlabel("X piezo (nm)")
 
-            self.axesimage = self.img_ax.imshow(
+            axesimage = display.img_ax.imshow(
                 image_array,
-                origin="lower" if self.scandown else "upper",
+                origin="lower" if scandown else "upper",
                 extent=(-s, s, -s, s,),
                 picker=True,
                 cmap=cmap,
             )
-            self.axesimage.get_array().fill_value = np.nan
+            axesimage.get_array().fill_value = np.nan
 
-            self.colorbar = self.fig.colorbar(self.axesimage, ax=self.img_ax, use_gridspec=True,)
-            self.navbar.update()  # let navbar catch new cax in fig for tooltips
-            customize_colorbar(self.colorbar, self.image_stats.q01, self.image_stats.q99, self.unit)
+            colorbar = display.fig.colorbar(axesimage, ax=display.img_ax, use_gridspec=True,)
+            display.navbar.update()  # let navbar catch new cax in fig for tooltips
+            customize_colorbar(colorbar, image_stats.q01, image_stats.q99, unit)
 
             # start frozen
-            self.colorbar.frozen = True
-            expand_colorbar(self.colorbar)
+            colorbar.frozen = True
+            expand_colorbar(colorbar)
 
             # noinspection PyTypeChecker
-            self.fig.set_tight_layout(True)
+            display.fig.set_tight_layout(True)
 
-        await self.canvas.draw_send.send(draw_fn)
-
-    async def change_fit_callback(self):
-        self.calc_props_button.configure(state="normal" if self.fit_intvar.get() else "disabled")
-        await self.redraw_existing_points()
-
-        def draw_fn():
-            # noinspection PyTypeChecker
-            self.fig.set_tight_layout(True)
-
-        await self.canvas.draw_send.send(draw_fn)
-
-    async def change_disp_kind_callback(self):
-        await self.redraw_existing_points()
-
-        def draw_fn():
-            # noinspection PyTypeChecker
-            self.fig.set_tight_layout(True)
-
-        await self.canvas.draw_send.send(draw_fn)
+        await display.canvas.draw_send.send(draw_fn)
 
     @async_tools.spawn_limit(trio.CapacityLimiter(1))
-    async def redraw_existing_points(self):
+    async def redraw_existing_points():
         def draw_fn():
-            for artist in self.artists:
+            for artist in artists:
                 artist.remove()
-            self.plot_ax.relim()
-            self.plot_ax.set_prop_cycle(None)
-            self.artists.clear()
+            display.plot_ax.relim()
+            display.plot_ax.set_prop_cycle(None)
+            artists.clear()
 
-        await self.canvas.draw_send.send(draw_fn)
-        async with self.spinner_scope():
-            for point in self.existing_points:
-                await self.plot_curve_response(point, False)
+        await display.canvas.draw_send.send(draw_fn)
+        async with spinner_scope():
+            for point in existing_points:
+                await plot_curve_response(point, False)
 
-    async def defl_sens_callback(self):
-        try:
-            self.opened_fvol.invols = float(self.defl_sens_strvar.get())
-        except ValueError:
-            self.defl_sens_strvar.set(str(self.opened_fvol.invols))
-        await self.redraw_existing_points()
-
-    async def spring_const_callback(self):
-        try:
-            self.opened_fvol.k = float(self.spring_const_strvar.get())
-        except ValueError:
-            self.spring_const_strvar.set(str(self.opened_fvol.k))
-        await self.redraw_existing_points()
-
-    async def sync_dist_callback(self):
-        try:
-            self.opened_fvol.sync_dist = int(self.sync_dist_strvar.get())
-        except ValueError:
-            self.sync_dist_strvar.set(str(self.opened_fvol.sync_dist))
-        await self.redraw_existing_points()
-
-    async def manipulate_callback(self):
-        manip_name = self.manipulate_strvar.get()
-        current_name = self.image_name_strvar.get()
-        current_names = list(self.image_name_menu.cget("values"))
+    async def manipulate_callback():
+        manip_name = display.manipulate_strvar.get()
+        current_name = display.image_name_strvar.get()
+        current_names = list(display.image_name_menu.cget("values"))
         name = "Calc" + manip_name + current_name
-        if name not in self.opened_fvol.image_names:
+        if name not in opened_fvol.image_names:
             manip_fn = calculation.MANIPULATIONS[manip_name]
-            manip_img = await trs(manip_fn, self.axesimage.get_array())
-            self.opened_fvol.add_image(
-                name, self.unit, self.scandown, manip_img,
+            async with spinner_scope():
+                manip_img = await trs(manip_fn, axesimage.get_array())
+            opened_fvol.add_image(
+                name, unit, scandown, manip_img,
             )
             if name not in current_names:
                 current_names.append(name)
-            self.reset_image_name_menu(current_names)
-        self.image_name_menu.set(name)
+            display.reset_image_name_menu(current_names)
+        display.image_name_menu.set(name)
 
-    async def colorbar_state_response(self):
-        if self.colorbar.frozen:
-            self.colorbar.frozen = False
-            clim = self.axesimage.get_clim()
+    async def colorbar_state_response():
+        if colorbar.frozen:
+            colorbar.frozen = False
+            clim = axesimage.get_clim()
 
             def draw_fn():
                 # make full range colorbar especially solids
-                self.axesimage.set_clim(self.image_stats.min, self.image_stats.max)
+                axesimage.set_clim(image_stats.min, image_stats.max)
                 # reset customizations
-                customize_colorbar(self.colorbar, *clim)
+                customize_colorbar(colorbar, *clim)
 
         else:
-            self.colorbar.frozen = True
+            colorbar.frozen = True
 
             def draw_fn():
-                expand_colorbar(self.colorbar)
+                expand_colorbar(colorbar)
 
-        await self.canvas.draw_send.send(draw_fn)
+        await display.canvas.draw_send.send(draw_fn)
 
-    async def plot_curve_response(self, point: ImagePoint, clear_previous):
-        self.existing_points.add(point)  # should be before 1st checkpoint
-        self.plot_ax.set_autoscale_on(
-            True
-        )  # XXX: only needed on first plot. Maybe later make optional?
-        options = ForceCurveOptions(
-            fit_mode=self.fit_intvar.get(),
-            disp_kind=self.disp_kind_intvar.get(),
-            k=self.opened_fvol.k,
-            radius=float(self.fit_radius_sbox.get()),
-            tau=float(self.fit_tau_sbox.get()),
-        )
+    async def plot_curve_response(point: ImagePoint, clear_previous):
+        existing_points.add(point)  # should be before 1st checkpoint
+
+        # XXX: only needed on first plot. Maybe later make optional?
+        display.plot_ax.set_autoscale_on(True)
+
+        options = display.get_options()
         if clear_previous:
-            for cancel_scope in self.cancels_pending:
+            for cancel_scope in plot_curve_cancels_pending:
                 cancel_scope.cancel()
-            self.cancels_pending.clear()
-        async with self.spinner_scope():
+            plot_curve_cancels_pending.clear()
+        async with spinner_scope():
             with trio.CancelScope() as cancel_scope:
-                self.cancels_pending.add(cancel_scope)
+                plot_curve_cancels_pending.add(cancel_scope)
 
                 # Calculation phase
                 # Do a few long-running jobs, likely to be canceled
-                force_curve = await self.opened_fvol.get_force_curve(point.r, point.c)
+                force_curve = await opened_fvol.get_force_curve(point.r, point.c)
                 data = await trs(
                     calculate_force_data,
                     *force_curve,
-                    self.opened_fvol.split,
-                    self.opened_fvol.npts,
+                    opened_fvol.split,
+                    opened_fvol.npts,
                     options,
                     async_tools.make_cancel_poller(),
                 )
@@ -1059,31 +1110,31 @@ class ForceVolumeWindow:
                 # checkpoint make sure to raise Cancelled if it just happened
                 # await trio.sleep(0)
 
-            self.cancels_pending.discard(cancel_scope)
+            plot_curve_cancels_pending.discard(cancel_scope)
 
             if cancel_scope.cancelled_caught:
-                self.existing_points.discard(point)
+                existing_points.discard(point)
                 return
 
             def draw_fn():
                 # Clearing Phase
                 # Clear previous artists and reset plots (faster than .clear()?)
                 if clear_previous:
-                    for artist in self.artists:
+                    for artist in artists:
                         artist.remove()
-                    self.artists.clear()
-                    self.existing_points.clear()
+                    artists.clear()
+                    existing_points.clear()
 
-                    self.existing_points.add(point)
-                    self.plot_ax.relim()
-                    self.plot_ax.set_prop_cycle(None)
+                    existing_points.add(point)
+                    display.plot_ax.relim()
+                    display.plot_ax.set_prop_cycle(None)
 
                 # Drawing Phase
                 # Based options choose plots and collect artists for deletion
-                new_artists, color = draw_force_curve(data, self.plot_ax, options)
-                self.artists.extend(new_artists)
-                self.artists.extend(
-                    self.img_ax.plot(
+                new_artists, color = draw_force_curve(data, display.plot_ax, options)
+                artists.extend(new_artists)
+                artists.extend(
+                    display.img_ax.plot(
                         point.x,
                         point.y,
                         marker="X",
@@ -1094,50 +1145,50 @@ class ForceVolumeWindow:
                     )
                 )
                 if options.fit_mode:
-                    table = draw_data_table(data, self.plot_ax,)
-                    self.artists.append(table)
+                    table = draw_data_table(data, display.plot_ax,)
+                    artists.append(table)
 
-            await self.canvas.draw_send.send(draw_fn)
+            await display.canvas.draw_send.send(draw_fn)
 
-    async def mpl_pick_motion_event_callback(self, event):
+    async def mpl_pick_motion_event_callback(event):
         mouseevent = getattr(event, "mouseevent", event)
         control_held = event.guiEvent.state & TkState.CONTROL
         shift_held = mouseevent.guiEvent.state & TkState.SHIFT
         if mouseevent.inaxes is None:
-            await self.tooltip_send_chan.send(TOOLTIP_CANCEL)
+            await tooltip_send_chan.send(TOOLTIP_CANCEL)
             return
-        elif mouseevent.inaxes is self.img_ax:
+        elif mouseevent.inaxes is display.img_ax:
             if event.name == "motion_notify_event":
-                await self.tooltip_send_chan.send(
-                    (event.guiEvent.x_root, event.guiEvent.y_root, self.img_ax_tip_text)
+                await tooltip_send_chan.send(
+                    (event.guiEvent.x_root, event.guiEvent.y_root, display.img_ax_tip_text)
                 )
                 if not control_held:
                     return
             if mouseevent.button != MouseButton.LEFT:
                 return
-            point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, self.axesimage)
-            if shift_held and point in self.existing_points:
+            point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, axesimage)
+            if shift_held and point in existing_points:
                 return
-            await self.plot_curve_response(point, not shift_held)
-        elif mouseevent.inaxes is self.colorbar.ax:
+            await plot_curve_response(point, not shift_held)
+        elif mouseevent.inaxes is colorbar.ax:
             if event.name == "motion_notify_event":
-                await self.tooltip_send_chan.send(
-                    (event.guiEvent.x_root, event.guiEvent.y_root, self.colorbar_ax_tip_text)
+                await tooltip_send_chan.send(
+                    (event.guiEvent.x_root, event.guiEvent.y_root, display.colorbar_ax_tip_text)
                 )
                 if not control_held:
                     return
             if mouseevent.button == MouseButton.MIDDLE or (
                 mouseevent.guiEvent.state & TkState.ALT and mouseevent.button == MouseButton.LEFT
             ):
-                await self.colorbar_state_response()
+                await colorbar_state_response()
                 return
-            if self.colorbar.frozen:
+            if colorbar.frozen:
                 return
             if mouseevent.button == MouseButton.LEFT:
-                vmin = self.colorbar.norm.vmin
+                vmin = colorbar.norm.vmin
                 vmax = max(mouseevent.ydata, vmin)
             elif mouseevent.button == MouseButton.RIGHT:
-                vmax = self.colorbar.norm.vmax
+                vmax = colorbar.norm.vmax
                 vmin = min(mouseevent.ydata, vmax)
             else:
                 # discard all others
@@ -1145,114 +1196,74 @@ class ForceVolumeWindow:
 
             # fallthrough for left and right clicks
             def draw_fn():
-                self.colorbar.norm.vmin = vmin
-                self.colorbar.norm.vmax = vmax
-                self.colorbar.solids.set_clim(vmin, vmax)
+                colorbar.norm.vmin = vmin
+                colorbar.norm.vmax = vmax
+                colorbar.solids.set_clim(vmin, vmax)
 
-            await self.canvas.draw_send.send(draw_fn)
-        elif mouseevent.inaxes is self.plot_ax:
+            await display.canvas.draw_send.send(draw_fn)
+        elif mouseevent.inaxes is display.plot_ax:
             if event.name == "motion_notify_event":
-                await self.tooltip_send_chan.send(
-                    (event.guiEvent.x_root, event.guiEvent.y_root, self.plot_ax_tip_text)
+                await tooltip_send_chan.send(
+                    (event.guiEvent.x_root, event.guiEvent.y_root, display.plot_ax_tip_text)
                 )
 
-    async def window_task(self):
-        nursery: trio.Nursery
-        async with trio.open_nursery() as nursery:
+    nursery: trio.Nursery
+    async with trio.open_nursery() as nursery:
 
-            def spinner_start():
-                self.tkwindow.configure(cursor="watch")
-                self.options_frame.configure(cursor="watch")
+        spinner_scope = await nursery.start(
+            async_tools.spinner_task, display.spinner_start, display.spinner_stop,
+        )
 
-            def spinner_stop():
-                self.tkwindow.configure(cursor="arrow")
-                self.options_frame.configure(cursor="arrow")
+        tooltip_send_chan = await nursery.start(
+            tooltip_task, display.show_tooltip, display.hide_tooltip, 1, 2
+        )
 
-            self.spinner_scope = await nursery.start(
-                async_tools.spinner_task, spinner_start, spinner_stop,
-            )
+        # Teach MPL to use trio
+        display.navbar.teach_navbar_to_use_trio(
+            nursery=nursery,
+            get_image_names=partial(display.image_name_menu.cget, "values"),
+            get_image_by_name=opened_fvol.get_image,
+        )
+        display.canvas.teach_canvas_to_use_trio(
+            nursery=nursery,
+            spinner_scope=spinner_scope,
+            async_motion_pick_fn=mpl_pick_motion_event_callback,
+        )
+        # XXX: This is a hacky bugfix, maybe find some way to get this logic into ^^^
+        display.canvas.mpl_connect(
+            "figure_leave_event",
+            impartial(partial(nursery.start_soon, tooltip_send_chan.send, TOOLTIP_CANCEL)),
+        )
 
-            def show_tooltip(x, y, text):
-                self.tipwindow_strvar.set(text)
-                # req -> calculated sync but geometry manager changes unknown
-                w = self.tipwindow_label.winfo_reqwidth() + 4  # match with ipadx setting
-                h = self.tipwindow_label.winfo_reqheight()
-                self.tipwindow.wm_geometry(f"+{x - w}+{y - h}")
-                self.tipwindow.wm_deiconify()
+        # Teach tkinter to use trio
+        await display.teach_display_to_use_trio(nursery, redraw_existing_points)
+        display.calc_props_button.configure(
+            command=partial(nursery.start_soon, calc_prop_map_callback,)
+        )
+        display.colormap_strvar.trace_add(
+            "write", impartial(partial(nursery.start_soon, change_cmap_callback))
+        )
+        display.manipulate_strvar.trace_add(
+            "write", impartial(partial(nursery.start_soon, manipulate_callback))
+        )
+        display.image_name_strvar.trace_add(
+            "write", impartial(partial(nursery.start_soon, change_image_callback))
+        )
 
-            def hide_tooltip():
-                self.tipwindow.wm_withdraw()
-
-            self.tooltip_send_chan = await nursery.start(
-                tooltip_task, show_tooltip, hide_tooltip, 1, 2
-            )
-
-            # Teach MPL to use trio
-            self.canvas.mpl_connect(
-                "motion_notify_event",
-                partial(nursery.start_soon, self.mpl_pick_motion_event_callback),
-            )
-            self.canvas.mpl_connect(
-                "figure_leave_event",
-                impartial(
-                    partial(nursery.start_soon, self.tooltip_send_chan.send, TOOLTIP_CANCEL)
-                ),
-            )
-            self.canvas.mpl_connect(
-                "pick_event", partial(nursery.start_soon, self.mpl_pick_motion_event_callback)
-            )
-            self.navbar.teach_navbar_to_use_trio(
-                nursery, partial(self.image_name_menu.cget, "values"), self.opened_fvol.get_image
-            )
-            self.canvas.teach_canvas_to_use_trio(nursery, self.spinner_scope)
-
-            # Teach tkinter to use trio
-            self.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-            self.colormap_strvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.change_cmap_callback))
-            )
-            self.manipulate_strvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.manipulate_callback))
-            )
-            self.fit_intvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.change_fit_callback))
-            )
-            self.disp_kind_intvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.change_disp_kind_callback))
-            )
-            self.calc_props_button.configure(
-                command=partial(nursery.start_soon, self.calc_prop_map_callback,)
-            )
-
-            self.defl_sens_strvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.defl_sens_callback))
-            )
-            self.spring_const_strvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.spring_const_callback))
-            )
-            self.sync_dist_strvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.sync_dist_callback))
-            )
-            self.image_name_strvar.trace_add(
-                "write", impartial(partial(nursery.start_soon, self.change_image_callback))
-            )
-
-            # Finalize initial window state
-            await nursery.start(self.canvas.idle_draw_task)
-            # This causes the initial plotting of figures after next checkpoint
-            # StringVar.set() won't be effective to plot unless it happens after the
-            # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
-            # due to resize, but let's not rely on that!
-            for name in ("MapHeight", "ZSensorTrace", "Demo", "Height Sensor"):
-                if name in self.opened_fvol.image_names:
-                    self.image_name_strvar.set(name)
-                    break
-            await trio.sleep_forever()
-
-        # Close phase
-        self.options_frame.destroy()
-        self.tkwindow.withdraw()  # weird navbar hiccup on close
-        self.tkwindow.destroy()
+        for initial_image in ("MapHeight", "ZSensorTrace", "Demo", "Height Sensor"):
+            if initial_image in opened_fvol.image_names:
+                break
+        else:
+            initial_image = None
+        # Finalize initial window state
+        await nursery.start(display.canvas.idle_draw_task)
+        # This causes the initial plotting of figures after next checkpoint
+        # StringVar.set() won't be effective to plot unless it happens after the
+        # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
+        # due to resize, but let's not rely on that!
+        if initial_image is not None:
+            display.image_name_strvar.set(initial_image)
+        await trio.sleep_forever()
 
 
 def customize_colorbar(colorbar, vmin=None, vmax=None, unit=None):
@@ -1320,7 +1331,7 @@ def draw_force_curve(data, plot_ax, options):
         plot_ax.set_xlabel("Z piezo (nm)")
         plot_ax.set_ylabel("Cantilever deflection (nm)")
         artists.extend(plot_ax.plot(data.z[: data.split], data.d[: data.split]))
-        artists.extend(plot_ax.plot(data.z[data.split:], data.d[data.split:]))
+        artists.extend(plot_ax.plot(data.z[data.split :], data.d[data.split :]))
         if options.fit_mode:
             artists.extend(plot_ax.plot(data.z[data.sl], data.d_fit, "--"))
             artists.append(plot_ax.axvline(data.z_tru, ls=":", c=artists[0].get_color()))
@@ -1332,7 +1343,7 @@ def draw_force_curve(data, plot_ax, options):
             f = data.f - data.beta[3]
             f_fit = data.f_fit - data.beta[3]
             artists.extend(plot_ax.plot(delta[: data.split], f[: data.split]))
-            artists.extend(plot_ax.plot(delta[data.split:], f[data.split:]))
+            artists.extend(plot_ax.plot(delta[data.split :], f[data.split :]))
             artists.extend(plot_ax.plot(delta[data.sl], f_fit, "--"))
             mopts = dict(
                 marker="X", markersize=8, linestyle="", markeredgecolor="k", markerfacecolor="k",
@@ -1347,7 +1358,7 @@ def draw_force_curve(data, plot_ax, options):
             artists.extend(plot_ax.plot(data.mindelta - data.beta[2], data.beta[1], **mopts,))
         else:
             artists.extend(plot_ax.plot(data.delta[: data.split], data.f[: data.split]))
-            artists.extend(plot_ax.plot(data.delta[data.split:], data.f[data.split:]))
+            artists.extend(plot_ax.plot(data.delta[data.split :], data.f[data.split :]))
     else:
         raise ValueError("Unknown DispKind: ", data.disp_kind)
     return artists, artists[0].get_color()
@@ -1364,7 +1375,7 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
     delta = z - d
 
     if not options.fit_mode:
-        return ForceCurveData(split=split, z=z, d=d, f=f, delta=delta, )
+        return ForceCurveData(split=split, z=z, d=d, f=f, delta=delta,)
 
     if options.fit_mode == calculation.FitMode.EXTEND:
         sl = slice(split)
@@ -1453,14 +1464,14 @@ async def open_task(root):
             return
 
     async with data_readers.SUFFIX_FVFILE_MAP[path.suffix](path) as opened_fv:
-        window = await trs(ForceVolumeWindow, root, opened_fv)
-        await window.window_task()
+        with ForceVolumeTkDisplay(root, path.name, opened_fv.parameters()) as display:
+            await force_volume_task(display, opened_fv)
 
 
 async def demo_task(root):
-    async with data_readers.DemoForceVolumeFile("Demo") as opened_arh5:
-        window = await trs(ForceVolumeWindow, root, opened_arh5)
-        await window.window_task()
+    async with data_readers.DemoForceVolumeFile("Demo") as opened_fv:
+        with ForceVolumeTkDisplay(root, "Demo", opened_fv.parameters()) as display:
+            await force_volume_task(display, opened_fv)
 
 
 async def about_task(root):
