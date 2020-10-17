@@ -329,6 +329,8 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         self._wait_cursor_for_draw_cm = nullcontext
 
     def export_calculations(self):
+        # This method is bound early in init so can't use the usual trick of swapping
+        # the callback function during the teaching step
         self._parent_nursery.start_soon(self._aexport_calculations)
 
     async def _aexport_calculations(self):
@@ -772,7 +774,6 @@ class ForceVolumeTkDisplay:
     async def teach_display_to_use_trio(
         self,
         nursery,
-        initial_image,
         redraw_existing_points,
         redraw_existing_points_tight,
         calc_prop_map_callback,
@@ -793,18 +794,10 @@ class ForceVolumeTkDisplay:
         self.image_name_strvar.trace_add(
             "write", impartial(partial(nursery.start_soon, change_image_callback))
         )
-        self.replot = redraw_existing_points
-        self.replot_tight = redraw_existing_points_tight
+        self.replot = partial(nursery.start_soon, redraw_existing_points)
+        self.replot_tight = partial(nursery.start_soon, redraw_existing_points_tight)
 
         await nursery.start(self.canvas.idle_draw_task)
-        # This causes the initial plotting of figures after next checkpoint
-        # StringVar.set() won't be effective to plot unless it happens after the
-        # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
-        # due to resize, but let's not rely on that!
-        if initial_image is None:
-            self.canvas.draw_idle()
-        else:
-            self.image_name_strvar.set(initial_image)
 
     def defl_sens_callback(self, *args):
         try:
@@ -1275,7 +1268,6 @@ async def force_volume_task(display, opened_fvol):
 
         await display.teach_display_to_use_trio(
             nursery,
-            opened_fvol.initial_image_name,
             redraw_existing_points,
             redraw_existing_points_tight,
             calc_prop_map_callback,
@@ -1283,7 +1275,8 @@ async def force_volume_task(display, opened_fvol):
             manipulate_callback,
             change_image_callback,
         )
-        await trio.sleep_forever()
+        # This causes the initial plotting of figures after next checkpoint
+        display.image_name_strvar.set(opened_fvol.initial_image_name)
 
 
 def customize_colorbar(colorbar, vmin=None, vmax=None, unit=None):
