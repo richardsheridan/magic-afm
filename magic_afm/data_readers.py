@@ -86,6 +86,7 @@ class ForceVolumeParams:
 class BaseForceVolumeFile(metaclass=abc.ABCMeta):
 
     _basic_units_map = {}
+    _default_heightmap_names = ()
 
     def __init__(self, path):
         self.path = path
@@ -107,6 +108,25 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
     @property
     def image_names(self):
         return self._calc_images.keys() | self._file_image_names
+
+    @property
+    def initial_image_name(self):
+        for name in self._default_heightmap_names:
+            if name in self._file_image_names:
+                return name
+        else:
+            return None
+
+    @property
+    def parameters(self):
+        return ForceVolumeParams(
+            k=self.k,
+            invols=self.invols,
+            image_names=self._file_image_names,
+            npts=self.npts,
+            split=self.split,
+            sync_dist=self.sync_dist,
+        )
 
     @abc.abstractmethod
     def ainitialize(self):
@@ -151,22 +171,13 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
     async def get_image(self, image_name):
         raise NotImplementedError
 
-    def parameters(self):
-        return ForceVolumeParams(
-            k=self.k,
-            invols=self.invols,
-            image_names=self._file_image_names,
-            npts=self.npts,
-            split=self.split,
-            sync_dist=self.sync_dist,
-        )
-
 
 class DemoForceVolumeFile(BaseForceVolumeFile):
     def __init__(self, path):
         path = trio.Path(path)
         super().__init__(path)
         self._file_image_names.add("Demo")
+        self._default_heightmap_names = ("Demo",)
         self.scansize = 100
         self.k = 1
         self.invols = 1
@@ -339,6 +350,7 @@ class ARH5File(BaseForceVolumeFile):
         "MapHeight": "m",
         "Force": "N",
     }
+    _default_heightmap_names = ("MapHeight", "ZSensorTrace", "ZSensorRetrace")
 
     @BaseForceVolumeFile.trace.setter
     def trace(self, trace):
@@ -532,6 +544,7 @@ class NanoscopeFile(BaseForceVolumeFile):
     _basic_units_map = {
         "Height Sensor": "m",
     }
+    _default_heightmap_names = ("Height Sensor",)
 
     async def ainitialize(self):
         self._mm = await trio.to_thread.run_sync(mmap_file_read_only, self.path._wrapped)

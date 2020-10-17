@@ -467,6 +467,9 @@ def impartial(fn):
 class ForceVolumeTkDisplay:
     def __init__(self, root, name, initial_values: data_readers.ForceVolumeParams, **kwargs):
         self._nursery = None
+        self._prev_defl_sens = 1.0
+        self._prev_k = 1.0
+        self._prev_sync_dist = 0
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
         window.wm_title(name)
 
@@ -760,56 +763,83 @@ class ForceVolumeTkDisplay:
         longest = max(map(len, names))
         self.image_name_menu.configure(values=names, width=min(longest - 1, 20))
 
-    async def teach_display_to_use_trio(self, nursery, redraw_existing_points):
-        self._nursery = nursery
+    def replot(self):
+        pass
+
+    def replot_tight(self):
+        pass
+
+    async def teach_display_to_use_trio(
+        self,
+        nursery,
+        initial_image,
+        redraw_existing_points,
+        redraw_existing_points_tight,
+        calc_prop_map_callback,
+        change_cmap_callback,
+        manipulate_callback,
+        change_image_callback,
+    ):
         self.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-        self._redraw_existing_points = redraw_existing_points
+        self.calc_props_button.configure(
+            command=partial(nursery.start_soon, calc_prop_map_callback,)
+        )
+        self.colormap_strvar.trace_add(
+            "write", impartial(partial(nursery.start_soon, change_cmap_callback))
+        )
+        self.manipulate_strvar.trace_add(
+            "write", impartial(partial(nursery.start_soon, manipulate_callback))
+        )
+        self.image_name_strvar.trace_add(
+            "write", impartial(partial(nursery.start_soon, change_image_callback))
+        )
+        self.replot = redraw_existing_points
+        self.replot_tight = redraw_existing_points_tight
 
-    async def _redraw_tight(self):
-        await self._redraw_existing_points()
-
-        def draw_fn():
-            # noinspection PyTypeChecker
-            self.fig.set_tight_layout(True)
-
-        await self.canvas.draw_send.send(draw_fn)
-
-    def defl_sens_callback(self, *args, _prev_invols=[1.0]):
-        try:
-            _prev_invols[0] = float(self.defl_sens_strvar.get())
-        except ValueError:
-            self.defl_sens_strvar.set(str(_prev_invols[0]))
+        await nursery.start(self.canvas.idle_draw_task)
+        # This causes the initial plotting of figures after next checkpoint
+        # StringVar.set() won't be effective to plot unless it happens after the
+        # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
+        # due to resize, but let's not rely on that!
+        if initial_image is None:
+            self.canvas.draw_idle()
         else:
-            if self._nursery is not None:
-                self._nursery.start_soon(self._redraw_existing_points)
+            self.image_name_strvar.set(initial_image)
 
-    def spring_const_callback(self, *args, _prev_k=[1.0]):
+    def defl_sens_callback(self, *args):
         try:
-            _prev_k[0] = float(self.spring_const_strvar.get())
+            self._prev_defl_sens = float(self.defl_sens_strvar.get())
         except ValueError:
-            self.spring_const_strvar.set(str(_prev_k[0]))
+            self.defl_sens_strvar.set(str(self._prev_defl_sens))
         else:
-            if self._nursery is not None:
-                self._nursery.start_soon(self._redraw_existing_points)
+            self.replot()
 
-    def sync_dist_callback(self, *args, _prev_dist=[0]):
+    def spring_const_callback(self, *args):
         try:
-            _prev_dist[0] = int(self.sync_dist_strvar.get())
+            self._prev_k = float(self.spring_const_strvar.get())
         except ValueError:
-            self.sync_dist_strvar.set(str(_prev_dist[0]))
+            self.spring_const_strvar.set(str(self._prev_k))
         else:
-            if self._nursery is not None:
-                self._nursery.start_soon(self._redraw_existing_points)
+            self.replot()
+
+    def sync_dist_callback(self, *args):
+        try:
+            self._prev_sync_dist = int(self.sync_dist_strvar.get())
+        except ValueError:
+            self.sync_dist_strvar.set(str(self._prev_sync_dist))
+        else:
+            self.replot()
 
     def change_fit_kind_callback(self, *args):
-        self.calc_props_button.configure(state="normal" if self.fit_intvar.get() else "disabled")
-
-        if self._nursery is not None:
-            self._nursery.start_soon(self._redraw_tight)
+        if self.fit_intvar.get():
+            state = "normal"
+        else:
+            state = "disabled"
+        self.calc_props_button.configure(state=state)
+        self.replot_tight()
 
     def change_disp_kind_callback(self, *args):
-        if self._nursery is not None:
-            self._nursery.start_soon(self._redraw_tight)
+        self.replot_tight()
 
 
 async def force_volume_task(display, opened_fvol):
@@ -1042,6 +1072,15 @@ async def force_volume_task(display, opened_fvol):
             for point in existing_points:
                 await plot_curve_response(point, False)
 
+    async def redraw_existing_points_tight():
+        await redraw_existing_points()
+
+        def draw_fn():
+            # noinspection PyTypeChecker
+            display.fig.set_tight_layout(True)
+
+        await display.canvas.draw_send.send(draw_fn)
+
     async def manipulate_callback():
         manip_name = display.manipulate_strvar.get()
         current_name = display.image_name_strvar.get()
@@ -1218,7 +1257,6 @@ async def force_volume_task(display, opened_fvol):
             tooltip_task, display.show_tooltip, display.hide_tooltip, 1, 2
         )
 
-        # Teach MPL to use trio
         display.navbar.teach_navbar_to_use_trio(
             nursery=nursery,
             get_image_names=partial(display.image_name_menu.cget, "values"),
@@ -1235,34 +1273,16 @@ async def force_volume_task(display, opened_fvol):
             impartial(partial(nursery.start_soon, tooltip_send_chan.send, TOOLTIP_CANCEL)),
         )
 
-        # Teach tkinter to use trio
-        await display.teach_display_to_use_trio(nursery, redraw_existing_points)
-        display.calc_props_button.configure(
-            command=partial(nursery.start_soon, calc_prop_map_callback,)
+        await display.teach_display_to_use_trio(
+            nursery,
+            opened_fvol.initial_image_name,
+            redraw_existing_points,
+            redraw_existing_points_tight,
+            calc_prop_map_callback,
+            change_cmap_callback,
+            manipulate_callback,
+            change_image_callback,
         )
-        display.colormap_strvar.trace_add(
-            "write", impartial(partial(nursery.start_soon, change_cmap_callback))
-        )
-        display.manipulate_strvar.trace_add(
-            "write", impartial(partial(nursery.start_soon, manipulate_callback))
-        )
-        display.image_name_strvar.trace_add(
-            "write", impartial(partial(nursery.start_soon, change_image_callback))
-        )
-
-        for initial_image in ("MapHeight", "ZSensorTrace", "Demo", "Height Sensor"):
-            if initial_image in opened_fvol.image_names:
-                break
-        else:
-            initial_image = None
-        # Finalize initial window state
-        await nursery.start(display.canvas.idle_draw_task)
-        # This causes the initial plotting of figures after next checkpoint
-        # StringVar.set() won't be effective to plot unless it happens after the
-        # trace_add AND start(idle_draw_task). accidentally, the plot will be drawn later
-        # due to resize, but let's not rely on that!
-        if initial_image is not None:
-            display.image_name_strvar.set(initial_image)
         await trio.sleep_forever()
 
 
@@ -1464,13 +1484,13 @@ async def open_task(root):
             return
 
     async with data_readers.SUFFIX_FVFILE_MAP[path.suffix](path) as opened_fv:
-        with ForceVolumeTkDisplay(root, path.name, opened_fv.parameters()) as display:
+        with ForceVolumeTkDisplay(root, path.name, opened_fv.parameters) as display:
             await force_volume_task(display, opened_fv)
 
 
 async def demo_task(root):
     async with data_readers.DemoForceVolumeFile("Demo") as opened_fv:
-        with ForceVolumeTkDisplay(root, "Demo", opened_fv.parameters()) as display:
+        with ForceVolumeTkDisplay(root, "Demo", opened_fv.parameters) as display:
             await force_volume_task(display, opened_fv)
 
 
