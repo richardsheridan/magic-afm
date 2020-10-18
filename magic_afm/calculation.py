@@ -51,7 +51,7 @@ def gauss3x3(img):
 
 def flatten(img):
     img = np.ma.getdata(img)
-    a = np.vander(img[0], 2)
+    a = np.vander(np.arange(img.shape[1]), 2)
     b = img.T
     keep = ~np.logical_or.reduce(~np.isfinite(b), axis=1)
     try:
