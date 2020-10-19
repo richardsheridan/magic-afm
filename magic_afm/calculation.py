@@ -27,21 +27,37 @@ from scipy.signal import resample
 from scipy.ndimage import median_filter, convolve1d
 from numpy.linalg import lstsq
 
-import numba
+try:
+    from numba import jit as myjit
+except ImportError:
 
-myjit = numba.jit(nopython=True, nogil=True)
-# doesn't fix ZeroDivisionError? https://github.com/numba/numba/issues/1256
-# myjit = numba.jit(nopython=True, nogil=True, error_model="python")
+    def myjit(fn):
+        return fn
 
-# disable jit
-# def myjit(fn):
-#     return fn
+
+else:
+    myjit = myjit(nopython=True, nogil=True)
+    # can't cache because weakrefs aren't pickleable? https://github.com/numba/numba/issues/6251
+    # myjit = myjit(nopython=True, nogil=True, cache=True)
+    # doesn't fix ZeroDivisionError? https://github.com/numba/numba/issues/1256
+    # myjit = myjit(nopython=True, nogil=True, error_model="python")
 
 
 EPS = float(np.finfo(np.float64).eps)
 RT_EPS = float(np.sqrt(EPS))
 
 gkern = np.array([0.25, 0.5, 0.25], dtype=np.float32)
+
+
+PROPERTY_UNITS_DICT = {
+    "IndentationModulus": "Pa",
+    "AdhesionForce": "N",
+    "Deflection": "m",
+    "Indentation": "m",
+    "TrueHeight": "m",  # Hi z -> lo h
+    "IndentationRatio": None,
+    "SensIndMod_k": None,
+}
 
 
 def gauss3x3(img):
@@ -167,6 +183,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     return p.real
 
 
+# noinspection PyUnboundLocalVariable
 @myjit
 def brentq(func, args, xa, xb):
     """Transliterated from SciPy Zeros/brentq.c
@@ -222,7 +239,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     for i in range(maxiter):
         if fpre * fcur < 0:
             # always true on first iteration
-            # don't worry about NameErrors
+            # don't worry about potential NameErrors
             xblk = xpre
             fblk = fpre
             spre = scur = xcur - xpre
@@ -346,35 +363,41 @@ def schwarz_red(red_f, red_fc, stable, offset):
     return red_delta - offset
 
 
+@myjit
+def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale):
+    """So that schwarz can be directly jammed into delta_curve"""
+    return schwarz_red(red_force, red_fc, 1.0, 0.0)
+
+
 # Exponents for LJ potential
 bigpow = 9
 lilpow = 3
 powrat = bigpow / lilpow
 
-### minimum value at delta=1
-prefactor = (powrat) ** (1 / (bigpow - lilpow))
+# algebraically solved LJ parameters such that the minimum value is at delta=1
+prefactor = powrat ** (1 / (bigpow - lilpow))
 postfactor = 1 / (prefactor ** (-bigpow) - prefactor ** (-lilpow))  # such that lj(1)=1
 lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))  # delta of minimum slope
 
 
 @myjit
-def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset=0.0):
+def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset):
     """Calculate a leonard-Jones force curve.
     
     Prefactor scaled such that minimum slope is at delta=1/delta_scale"""
     nondim_position = (delta - delta_offset) / delta_scale
-    # workaround for nondim_position=0 so that ZeroDivisionError -> inf
+    # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
     attraction = np.divide(1, (prefactor * nondim_position) ** lilpow)
     return postfactor * force_scale * (attraction ** powrat - attraction) - force_offset
 
 
 @myjit
-def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset=0.0):
+def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
     """Gradient of lj_force.
     
     Offset is useful for root finding (reduced spring constant matching)"""
     nondim_position = (delta - delta_offset) / delta_scale
-    # workaround for nondim_position=0 so that ZeroDivisionError -> inf
+    # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
     attraction = np.divide(lilpow * prefactor ** (-lilpow), nondim_position ** (lilpow + 1))
     repulsion = bigpow * prefactor ** (-bigpow) * nondim_position ** (-bigpow - 1)
     return postfactor * force_scale * (attraction - repulsion) / delta_scale - force_offset
@@ -385,9 +408,7 @@ def interp_with_offset(x, xp, fp, offset):
     return np.interp(x, xp, fp) - offset
 
 
-def red_extend(
-    red_delta, red_fc, red_k, lj_delta_scale,
-):
+def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
     """Calculate, in reduced units, an extent Schwarz curve with long range LJ potential and snap-off physics.
     
     MUCH LESS TESTED THAN RED_RETRACT
@@ -529,14 +550,12 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     return np.minimum(s_f, lj_f)
 
 
-def force_curve(
-    red_curve, delta, k, radius, K, fc, tau, delta_shift, force_shift, lj_delta_scale,
-):
+def force_curve(red_curve, delta, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale):
     """Calculate a force curve from indentation data."""
     # Catch crazy inputs early
     assert k > 0, k
     assert radius > 0, radius
-    assert K > 0, K
+    assert M > 0, M
     assert fc < 0, fc
     assert 0 <= tau <= 1, tau
     assert lj_delta_scale > 0, lj_delta_scale
@@ -545,10 +564,10 @@ def force_curve(
     # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
     red_fc = (tau - 4) / 2
     ref_force = fc / red_fc
-    ref_radius = (ref_force * radius / K) ** (1 / 3)
+    ref_radius = (ref_force * radius / M) ** (1 / 3)
     ref_delta = ref_radius * ref_radius / radius
     red_delta = (delta - delta_shift) / ref_delta
-    red_k = k / (ref_force) * (ref_delta)
+    red_k = k / ref_force * ref_delta
     lj_delta_scale = lj_delta_scale / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
@@ -558,14 +577,12 @@ def force_curve(
     return (red_force * ref_force) + force_shift
 
 
-def delta_curve(
-    red_curve, force, k, radius, K, fc, tau, delta_shift, force_shift, lj_delta_scale,
-):
+def delta_curve(red_curve, force, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale):
     """Convenience function for inverse of force_curve, i.e. force->delta"""
     # Catch crazy inputs early
     assert k > 0, k
     assert radius > 0, radius
-    assert K > 0, K
+    assert M > 0, M
     assert fc < 0, fc
     assert 0 <= tau <= 1, tau
     assert lj_delta_scale > 0, lj_delta_scale
@@ -575,9 +592,9 @@ def delta_curve(
     red_fc = (tau - 4) / 2
     ref_force = fc / red_fc
     red_force = (force - force_shift) / ref_force
-    ref_radius = (ref_force * radius / K) ** (1 / 3)
+    ref_radius = (ref_force * radius / M) ** (1 / 3)
     ref_delta = ref_radius * ref_radius / radius
-    red_k = k / (ref_force) * (ref_delta)
+    red_k = k / ref_force * ref_delta
     lj_delta_scale = lj_delta_scale / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
@@ -585,12 +602,6 @@ def delta_curve(
 
     # Rescale to dimensioned units
     return (red_delta * ref_delta) + delta_shift
-
-
-@myjit
-def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale):
-    """So that schwarz can be directly jammed into delta_curve"""
-    return schwarz_red(red_force, red_fc, 1.0, 0.0)
 
 
 @enum.unique
@@ -614,11 +625,11 @@ def rapid_forcecurve_estimate(delta, force, radius):
     imax = np.argmax(delta)
     deltamax = delta[imax]
     fmax = force[imax]
-    K_guess = (fmax - fmin) / np.sqrt(radius * (deltamax - deltamin) ** 3)
-    if not np.isfinite(K_guess):
-        K_guess = 1.0
+    M_guess = (fmax - fmin) / np.sqrt(radius * (deltamax - deltamin) ** 3)
+    if not np.isfinite(M_guess):
+        M_guess = 1.0
 
-    return K_guess, fc_guess, deltamin, fzero, 1.0
+    return M_guess, fc_guess, deltamin, fzero, 1.0
 
 
 @np.errstate(all="ignore")
@@ -628,7 +639,7 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=lambda: None, p
 
     bounds = np.transpose(
         (
-            (0.0, np.inf),  # K
+            (0.0, np.inf),  # M
             (-np.inf, 0.0),  # fc
             # (0, 1),           # tau
             (np.min(delta), np.max(delta)),  # delta_shift
@@ -647,14 +658,14 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=lambda: None, p
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
     def partial_force_curve(
-        delta, K, fc, delta_shift, force_shift, lj_delta_scale,
+        delta, M, fc, delta_shift, force_shift, lj_delta_scale,
     ):
         cancel_poller()
-        if np.any(np.isnan((K, fc, delta_shift, force_shift, lj_delta_scale,))):
+        if np.any(np.isnan((M, fc, delta_shift, force_shift, lj_delta_scale,))):
             print("Fit likely failed: NaNs in params")
             return np.full_like(delta, np.nan)
         return force_curve(
-            red_curve, delta, k, radius, K, fc, tau, delta_shift, force_shift, lj_delta_scale,
+            red_curve, delta, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale,
         )
 
     try:
@@ -685,7 +696,7 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters.
     
     """
-    K, fc, delta_shift, force_shift, lj_delta_scale, *_ = beta
+    M, fc, delta_shift, force_shift, lj_delta_scale, *_ = beta
 
     assert fit_mode
     if fit_mode == FitMode.EXTEND:
@@ -699,14 +710,14 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
 
     maxforce = force[sl].mean()
     maxdelta = delta_curve(
-        schwarz_wrap, maxforce, k, radius, K, fc, tau, delta_shift, force_shift, lj_delta_scale,
+        schwarz_wrap, maxforce, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale,
     )
     mindelta = delta_curve(
         schwarz_wrap,
         fc + force_shift,
         k,
         radius,
-        K,
+        M,
         fc,
         tau,
         delta_shift,
@@ -715,7 +726,7 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
     )
     zeroindforce = float(
         force_curve(
-            red_curve, delta_shift, k, radius, K, fc, tau, delta_shift, force_shift, lj_delta_scale,
+            red_curve, delta_shift, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale,
         )
     )
 
@@ -725,15 +736,11 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
     return deflection, indentation, z_true_surface, mindelta
 
 
-PROPERTY_UNITS_DICT = {
-    "IndentationModulus": "Pa",
-    "AdhesionForce": "N",
-    "Deflection": "m",
-    "Indentation": "m",
-    "TrueHeight": "m",  # Hi z -> lo h
-    "IndentationRatio": None,
-    "SensIndMod_k": None,
-}
+def perturb_k(delta, f, epsilon, k):
+    k_new = (1 + epsilon) * k
+    f_new = f * ((1 + epsilon) ** 0.5)
+    delta_new = delta + (f - f_new / (1 + epsilon)) / k
+    return delta_new, f_new, k_new
 
 
 def calc_properties_imap(delta_f_i_kwargs):
@@ -763,10 +770,3 @@ def calc_properties_imap(delta_f_i_kwargs):
             ind_mod_sens_k,
         )
         return i, properties
-
-
-def perturb_k(delta, f, epsilon, k):
-    k_new = (1 + epsilon) * k
-    f_new = f * ((1 + epsilon) ** 0.5)
-    delta_new = delta + (f - f_new / (1 + epsilon)) / k
-    return delta_new, f_new, k_new
