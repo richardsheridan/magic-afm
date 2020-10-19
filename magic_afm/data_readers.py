@@ -627,6 +627,7 @@ class NanoscopeFile(BaseForceVolumeFile):
         return image, scandown
 
 
+# noinspection PyUnboundLocalVariable
 def parse_nanoscope_header(header_lines):
     """Convert header from a Nanoscope file to a convenient nested dict
 
