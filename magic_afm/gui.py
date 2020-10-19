@@ -130,6 +130,8 @@ class ForceCurveOptions:
     fit_mode: calculation.FitMode
     disp_kind: DispKind
     k: float
+    defl_sens: float
+    sync_dist: int
     radius: float
     tau: float
 
@@ -562,7 +564,7 @@ class ForceVolumeTkDisplay:
             width=6,
             textvariable=self.defl_sens_strvar,
         )
-        defl_sens_sbox.set(initial_values.invols)
+        defl_sens_sbox.set(initial_values.defl_sens)
         defl_sens_sbox.grid(row=0, column=2, sticky="E")
         defl_sens_label = ttk.Label(preproc_labelframe, text="InvOLS", justify="left")
         defl_sens_label.grid(row=0, column=0, columnspan=2, sticky="W")
@@ -732,13 +734,16 @@ class ForceVolumeTkDisplay:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.destroy()
 
-    def get_options(self):
+    @property
+    def options(self):
         return ForceCurveOptions(
             fit_mode=self.fit_intvar.get(),
             disp_kind=self.disp_kind_intvar.get(),
             k=float(self.spring_const_strvar.get()),
+            defl_sens=float(self.defl_sens_strvar.get()),
             radius=float(self.fit_radius_sbox.get()),
             tau=float(self.fit_tau_sbox.get()),
+            sync_dist=int(self.sync_dist_strvar.get()),
         )
 
     def spinner_start(self):
@@ -849,7 +854,7 @@ async def force_volume_task(display, opened_fvol):
     unit: Optional[str] = None
 
     async def calc_prop_map_callback():
-        options = display.get_options()
+        options = display.options
         optionsdict = dataclasses.asdict(options)
         img_shape = opened_fvol.shape
         ncurves = img_shape[0] * img_shape[1]
@@ -1116,7 +1121,6 @@ async def force_volume_task(display, opened_fvol):
         # XXX: only needed on first plot. Maybe later make optional?
         display.plot_ax.set_autoscale_on(True)
 
-        options = display.get_options()
         if clear_previous:
             for cancel_scope in plot_curve_cancels_pending:
                 cancel_scope.cancel()
@@ -1127,6 +1131,9 @@ async def force_volume_task(display, opened_fvol):
 
                 # Calculation phase
                 # Do a few long-running jobs, likely to be canceled
+                options = display.options
+                opened_fvol.sync_dist = options.sync_dist
+                opened_fvol.defl_sens = options.defl_sens
                 force_curve = await opened_fvol.get_force_curve(point.r, point.c)
                 data = await trs(
                     calculate_force_data,

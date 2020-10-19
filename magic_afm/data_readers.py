@@ -77,7 +77,7 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
 class ForceVolumeParams:
     image_names: Set[str]
     k: float
-    invols: float
+    defl_sens: float
     npts: int
     split: int
     sync_dist: int
@@ -96,7 +96,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         self._trace = None
         self._worker = None
         self.k = None
-        self.invols = None
+        self.defl_sens = None
         self.npts = None
         self.split = None
         self.sync_dist = 0
@@ -121,7 +121,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
     def parameters(self):
         return ForceVolumeParams(
             k=self.k,
-            invols=self.invols,
+            defl_sens=self.defl_sens,
             image_names=self._file_image_names,
             npts=self.npts,
             split=self.split,
@@ -180,7 +180,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         self._default_heightmap_names = ("Demo",)
         self.scansize = 100
         self.k = 1
-        self.invols = 1
+        self.defl_sens = 1
         self.scandown = True
 
     async def ainitialize(self):
@@ -379,7 +379,7 @@ class ARH5File(BaseForceVolumeFile):
 
         self.k = float(self.notes["SpringConstant"])
         self.scansize = float(self.notes["ScanSize"]) * NANOMETER_UNIT_CONVERSION
-        self.invols = self._invols_orig = float(self.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
+        self.defl_sens = self._defl_sens_orig = float(self.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
         self.npts, self.split = worker.npts, worker.split
 
     async def aclose(self):
@@ -408,14 +408,14 @@ class ARH5File(BaseForceVolumeFile):
 
     async def get_force_curve(self, r, c):
         z, d = await trs(self._worker.get_force_curve, r, c)
-        if self.invols != self._invols_orig:
-            d *= self.invols / self._invols_orig
+        if self.defl_sens != self._defl_sens_orig:
+            d *= self.defl_sens / self._defl_sens_orig
         return z, d
 
     async def get_all_curves(self):
         z, d = await trs(self._worker.get_all_curves, make_cancel_poller())
-        if self.invols != self._invols_orig:
-            d *= self.invols / self._invols_orig
+        if self.defl_sens != self._defl_sens_orig:
+            d *= self.defl_sens / self._defl_sens_orig
         return z, d
 
     async def get_image(self, image_name):
@@ -439,7 +439,7 @@ class BrukerWorkerBase(metaclass=abc.ABCMeta):
         self.version = header[header["first"]]["Version"].strip()  # get_image
 
     @abc.abstractmethod
-    def get_force_curve(self, r, c, invols, sync_dist):
+    def get_force_curve(self, r, c, defl_sens, sync_dist):
         raise NotImplementedError
 
     def get_image(self, image_name):
@@ -486,9 +486,9 @@ class FFVWorker(BrukerWorkerBase):
                     value[1 + value.find("(") : value.find(")")].split()[0]
                 )
 
-    def get_force_curve(self, r, c, invols, sync_dist):
+    def get_force_curve(self, r, c, defl_sens, sync_dist):
         s = self.split
-        defl_scale = np.float32(invols * self.defl_hard_scale)
+        defl_scale = np.float32(defl_sens * self.defl_hard_scale)
 
         d = self.d_ints[r, c] * defl_scale
         d[:s] = d[s - 1 :: -1]
@@ -522,9 +522,9 @@ class QNMWorker(BrukerWorkerBase):
             np.linspace(0, 2 * np.pi, npts, endpoint=False, dtype=np.float32)
         )
 
-    def get_force_curve(self, r, c, invols, sync_dist):
+    def get_force_curve(self, r, c, defl_sens, sync_dist):
         s = self.split
-        defl_scale = np.float32(invols * self.defl_hard_scale)
+        defl_scale = np.float32(defl_sens * self.defl_hard_scale)
 
         d = self.d_ints[r, c] * defl_scale
         d[:s] = d[s - 1 :: -1]
@@ -595,7 +595,7 @@ class NanoscopeFile(BaseForceVolumeFile):
         self.scansize = float(scansize) * factor
 
         self.k = float(data_header["Spring Constant"])
-        self.invols = float(header["Ciao scan list"]["@Sens. DeflSens"].split()[1])
+        self.defl_sens = float(header["Ciao scan list"]["@Sens. DeflSens"].split()[1])
         value = data_header["@4:Z scale"]
         self.defl_hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
 
@@ -616,7 +616,7 @@ class NanoscopeFile(BaseForceVolumeFile):
             await trio.to_thread.run_sync(self._mm.close)
 
     async def get_force_curve(self, r, c):
-        return await trs(self._worker.get_force_curve, r, c, self.invols, self.sync_dist)
+        return await trs(self._worker.get_force_curve, r, c, self.defl_sens, self.sync_dist)
 
     async def get_image(self, image_name):
         if image_name in self._calc_images:
