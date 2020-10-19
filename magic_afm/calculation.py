@@ -97,7 +97,7 @@ def resample_dset(X, npts, fourier):
 
 
 @myjit
-def secant(func, args, x0, x1=None):
+def secant(func, args, x0, x1):
     """Secant method from scipy optimize but stripping np.isclose for speed
     
 Copyright (c) 2001-2002 Enthought, Inc.  2003-2019, SciPy Developers.
@@ -276,7 +276,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 @myjit
-def mylinspace(start, stop, num, endpoint=True):
+def mylinspace(start, stop, num, endpoint):
     """np.linspace is surprisingly intensive, so trim the fat
     
 Copyright (c) 2005-2020, NumPy Developers.
@@ -323,7 +323,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 @myjit
-def schwarz_red(red_f, red_fc, stable, offset=0.0):
+def schwarz_red(red_f, red_fc, stable, offset):
     """Calculate Schwarz potential indentation depth from force in reduced units.
 
     Stable indicates whether to calculate the stable or unstable branch of the solution.
@@ -405,12 +405,12 @@ def red_extend(
     """
 
     # The indentation at the critical force must be calculated directly, no shortcuts
-    red_deltac = schwarz_red(red_fc, red_fc, 1)
+    red_deltac = schwarz_red(red_fc, red_fc, 1.0, 0.0)
 
     # lj_force() outputs a curve with minimum at (lj_delta_scale,lj_force_scale)
     # offset needed to put minimum at red_deltac
     lj_delta_offset = red_deltac - lj_delta_scale
-    lj_f = lj_force(red_delta, lj_delta_scale, red_fc, lj_delta_offset)
+    lj_f = lj_force(red_delta, lj_delta_scale, red_fc, lj_delta_offset, 0.0)
     lj_f = np.atleast_1d(lj_f)  # Later parts can choke on scalars
 
     # Try to find where LJ gradient == red_k
@@ -432,7 +432,7 @@ def red_extend(
         else:
             lj_end_pos = lj_delta_scale + lj_delta_offset
 
-    lj_end_force = lj_force(lj_end_pos, lj_delta_scale, red_fc, lj_delta_offset)
+    lj_end_force = lj_force(lj_end_pos, lj_delta_scale, red_fc, lj_delta_offset, 0.0)
 
     # Overwrite after end position with tangent line
     lj_f[red_delta >= lj_end_pos] = (
@@ -442,13 +442,13 @@ def red_extend(
     # Unfortunately Schwarz is d(f) rather than f(d) so we need to infer the largest possible force
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
-    args = red_fc, 1, red_d_max
+    args = red_fc, 1.0, red_d_max
     red_f_max = secant(schwarz_red, args, x0=0.0, x1=red_fc)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
-    f = mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100)
-    d = schwarz_red(f, red_fc, 1)
+    f = mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100, True)
+    d = schwarz_red(f, red_fc, 1.0, 0.0)
 
     s_f = np.interp(red_delta, d, f, left=np.NINF)
 
@@ -473,12 +473,12 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     not_DMT = not red_fc == -2
 
     # The indentation at the critical force must be calculated directly, no shortcuts
-    red_deltac = schwarz_red(red_fc, red_fc, 1)
+    red_deltac = schwarz_red(red_fc, red_fc, 1.0, 0.0)
 
     # lj_force() outputs a curve with minimum at (lj_delta_scale,lj_force_scale)
     # offset needed to put minimum at red_deltac
     lj_delta_offset = red_deltac - lj_delta_scale
-    lj_f = lj_force(red_delta, lj_delta_scale, red_fc, lj_delta_offset)
+    lj_f = lj_force(red_delta, lj_delta_scale, red_fc, lj_delta_offset, 0.0)
     lj_f = np.atleast_1d(lj_f)  # Later parts can choke on scalars
 
     # make points definitely lose in minimum function if in the contact/stable branch
@@ -487,13 +487,13 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     # Unfortunately Schwarz is d(f) rather than f(d) so we need to infer the largest possible force
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
-    args = red_fc, 1, red_d_max
+    args = red_fc, 1.0, red_d_max
     red_f_max = secant(schwarz_red, args, x0=red_fc, x1=0.0)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
-    f = mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100)
-    d = schwarz_red(f, red_fc, 1)
+    f = mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100, False)
+    d = schwarz_red(f, red_fc, 1.0, 0.0)
 
     # Use this endpoint in DMT case or if there is a problem with the slope finding
     s_end_pos = 0
@@ -587,14 +587,10 @@ def delta_curve(
     return (red_delta * ref_delta) + delta_shift
 
 
-def schwarz_wrap(
-    red_force, red_fc, red_k, lj_delta_scale,
-):
+@myjit
+def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale):
     """So that schwarz can be directly jammed into delta_curve"""
-    a = schwarz_red(red_force, red_fc, 1)
-    # if np.isnan(a):
-    #     raise ValueError('nans abound', red_force, red_fc)
-    return a
+    return schwarz_red(red_force, red_fc, 1.0, 0.0)
 
 
 @enum.unique
