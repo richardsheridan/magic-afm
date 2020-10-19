@@ -323,25 +323,23 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 @myjit
-def schwarz_red(red_f, red_fc, stab, offset=0.0):
+def schwarz_red(red_f, red_fc, stable, offset=0.0):
     """Calculate Schwarz potential indentation depth from force in reduced units.
-    
+
+    Stable indicates whether to calculate the stable or unstable branch of the solution.
+    1 -> stable, -1 -> unstable
+
+    Offset is useful for root finding routines to solve for a specific value of delta.
     """
     # if red_f<red_fc, it is likely a small numerical error
-    # this works for arrays and python scalars without weird logic
+    # this fixes the issue for arrays and python scalars without weird logic
     df = np.abs(red_f - red_fc)
 
     # Save computations if pure DMT
     if red_fc == -2:
         return df ** (2 / 3) - offset
 
-    # trade a branch for a multiply. does it make sense? dunno!
-    if stab:
-        red_contact_radius = (((3 * red_fc + 6) ** (1 / 2) + (df) ** (1 / 2))) ** (2 / 3)
-    else:
-        red_contact_radius = (((3 * red_fc + 6) ** (1 / 2) - (df) ** (1 / 2))) ** (2 / 3)
-
-    # red_contact_radius = (((3*red_fc+6)**(1/2)+stab*(df)**(1/2)))**(2/3) # stab in {1,-1}
+    red_contact_radius = ((3 * red_fc + 6) ** (1 / 2) + stable * df ** (1 / 2)) ** (2 / 3)
 
     red_delta = red_contact_radius ** 2 - 4 * (red_contact_radius * (red_fc + 2) / 3) ** (1 / 2)
 
@@ -504,7 +502,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     if not_DMT:
         # Find slope == red_k between vertical and horizontal parts of unstable branch
         f0 = mylinspace((7 * red_fc + 8) / 3, red_fc, 100, endpoint=False)
-        d0 = schwarz_red(f0, red_fc, 0)
+        d0 = schwarz_red(f0, red_fc, -1.0, 0.0)
         # TODO: analytical gradient of schwarz unstable branch
         df0dd0 = np.gradient(f0, d0)
 
