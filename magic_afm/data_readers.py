@@ -10,10 +10,10 @@ from . import calculation
 from .async_tools import trs, make_cancel_poller
 
 
-def mmap_file_read_only(pathlib_path):
+def mmap_path_read_only(str_path):
     import mmap
 
-    with pathlib_path.open("rb", buffering=0) as file:
+    with open(str_path, "rb", buffering=0) as file:
         return mmap.mmap(file.fileno(), 0, None, mmap.ACCESS_READ)
 
 
@@ -547,7 +547,7 @@ class NanoscopeFile(BaseForceVolumeFile):
     _default_heightmap_names = ("Height Sensor",)
 
     async def ainitialize(self):
-        self._mm = await trio.to_thread.run_sync(mmap_file_read_only, self.path._wrapped)
+        self._mm = await trio.to_thread.run_sync(mmap_path_read_only, str(self.path))
 
         # End of header is demarcated by a SUB byte (26 = 0x1A)
         # Longest header so far was 80 kB, stop there to avoid searching gigabytes before fail
