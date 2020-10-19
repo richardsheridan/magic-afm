@@ -988,7 +988,7 @@ async def force_volume_task(display, opened_fvol):
             opened_fvol.add_image(
                 image_name="Calc" + name,
                 units=calculation.PROPERTY_UNITS_DICT[name],
-                scandown=True,
+                scandown=scandown,
                 image=property_map[name].squeeze(),
             )
             if "Calc" + name not in combobox_values:
