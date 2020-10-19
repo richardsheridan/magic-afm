@@ -85,30 +85,6 @@ MANIPULATIONS = dict(
 )
 
 
-def parse_notes(notes, disp=True):
-    """Extract k, force_setpoint, z_rate, fs values from notes dict values"""
-    if int(notes["ForceMapImage"]):
-        k = float(notes["SpringConstant"])
-        force_setpoint = float(notes["TriggerPoint"]) * 1e9
-        z_rate = float(notes["ForceScanRate"])
-        fs = float(notes["NumPtsPerSec"])
-    elif int(notes["FastMapImage"]):
-        k = float(notes["SpringConstant"])
-        force_setpoint = float(notes["FastMapSetpointNewtons"]) * 1e9
-        z_rate = float(notes["FastMapZRate"])
-        fs = float(notes["NumPtsPerSec"])
-    else:
-        raise ValueError("Cannot identify data type: Neither ForceMap nor Fastmap")
-
-    if disp:
-        print(notes["ImageNote"])
-        print("k =", k, "N/m")
-        print("F =", force_setpoint, "nN")
-        print("rate =", z_rate, "Hz")
-        print("SamplingFreq fs =", fs, "Hz")
-    return k, force_setpoint, z_rate, fs
-
-
 def resample_dset(X, npts, fourier):
     """Consistent API for resampling force curves with Fourier or interpolation"""
     X = np.atleast_2d(X)
@@ -159,8 +135,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     p0 = x0 * 1.0
     tol = RT_EPS
     maxiter = 50
-    # rtol=0.0
-    # funcalls = 0
     if x1 is not None:
         if x1 == x0:
             raise ValueError("x1 and x0 must be different")
@@ -170,16 +144,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
         p1 = x0 * (1 + eps)
         p1 += eps if p1 >= 0 else -eps
     q0 = func(p0, *args)
-    # funcalls += 1
     q1 = func(p1, *args)
-    # funcalls += 1
     if abs(q1) < abs(q0):
         p0, p1, q0, q1 = p1, p0, q1, q0
     for itr in range(maxiter):
         if q1 == q0:
-            #             if p1 != p0:
-            #                 msg = "Tolerance of %s reached." % (p1 - p0)
-            #                 print(msg, itr)
             p = (p1 + p0) / 2.0
             break
         else:
@@ -187,16 +156,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
                 p = (-q0 / q1 * p1 + p0) / (1 - q0 / q1)
             else:
                 p = (-q1 / q0 * p0 + p1) / (1 - q1 / q0)
-        #         print(itr,p)
-        if abs(p - p1) <= tol:  # + rtol*abs(p):
+        if abs(p - p1) <= tol:
             break
         p0, q0 = p1, q1
         p1 = p
         q1 = func(p1, *args)
-        # funcalls += 1
     else:
         p = (p1 + p0) / 2.0
-    #         print("Maximum iterations reached")
 
     return p.real
 
@@ -243,12 +209,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     xcur = xb
 
     fpre = func(xpre, *args)
-    # funcalls += 1
     if fpre == 0:
         return xpre
 
     fcur = func(xcur, *args)
-    # funcalls += 1
     if fcur == 0:
         return xcur
 
@@ -272,7 +236,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
             fcur = fblk
             fblk = fpre
 
-        # delta = (xtol + rtol*fabs(xcur))/2;
         sbis = (xblk - xcur) / 2
         if fcur == 0 or np.fabs(sbis) < xtol:
             return xcur
@@ -308,7 +271,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
             xcur += xtol if sbis > 0 else -xtol
 
         fcur = func(xcur, *args)
-        # funcalls += 1
 
     return xcur
 
@@ -397,11 +359,6 @@ postfactor = 1 / (prefactor ** (-bigpow) - prefactor ** (-lilpow))  # such that 
 lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))  # delta of minimum slope
 
 
-### minimum slope at delta=1 (most negative->steepest)
-# prefactor= (powrat*(bigpow+1)/(lilpow+1))**(1/(bigpow-lilpow))
-# lj_limit_factor = 1
-
-
 @myjit
 def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset=0.0):
     """Calculate a leonard-Jones force curve.
@@ -448,8 +405,6 @@ def red_extend(
     Or in pithy math form we want
     maximum(NINF⌢S, LJ⌢snap)
     """
-    # We can take a shortcut if precisely DMT physics since the unstable branch vanishes
-    #     not_DMT = not red_fc==-2
 
     # The indentation at the critical force must be calculated directly, no shortcuts
     red_deltac = schwarz_red(red_fc, red_fc, 1)
@@ -497,13 +452,6 @@ def red_extend(
     f = mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100)
     d = schwarz_red(f, red_fc, 1)
 
-    # NOTE: only use stable branch for snap in, duh
-    #     if not_DMT:
-    #         f0 = mylinspace((7*red_fc+8)/3,red_fc,100,endpoint=False)
-    #         d0 = schwarz_red(f0,red_fc,0)
-    #         f = np.concatenate((f0,f))
-    #         d = np.concatenate((d0,d))
-
     s_f = np.interp(red_delta, d, f, left=np.NINF)
 
     return np.maximum(s_f, lj_f)
@@ -536,8 +484,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     lj_f = np.atleast_1d(lj_f)  # Later parts can choke on scalars
 
     # make points definitely lose in minimum function if in the contact/stable branch
-    #     lj_f[red_delta>=lj_limit_factor*lj_delta_scale+lj_delta_offset] = np.inf # use if LJ based on minimum slope
-    lj_f[red_delta >= red_deltac] = np.inf  # use if LJ based on minimum value
+    lj_f[red_delta >= red_deltac] = np.inf
 
     # Unfortunately Schwarz is d(f) rather than f(d) so we need to infer the largest possible force
     red_d_max = np.max(red_delta)
@@ -580,9 +527,6 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     s_f[red_delta <= s_end_pos] = (
         red_delta[red_delta <= s_end_pos] - s_end_pos
     ) * red_k + s_end_force
-    # alternative: solve for lj_force(x) = (x-s_end_pos)*red_k+s_end_force (rightmost soln)
-
-    #     lj_f[red_delta>=s_end_pos] = np.inf # XXX: Why did you put this here?
 
     return np.minimum(s_f, lj_f)
 
@@ -600,11 +544,8 @@ def force_curve(
     assert lj_delta_scale > 0, lj_delta_scale
 
     # Calculate reduced/dimensionless values of inputs
-    #     ref_force = gamma*np.pi*radius
-    #     red_fc = fc/ref_force
-    red_fc = (
-        tau - 4
-    ) / 2  # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
+    # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
+    red_fc = (tau - 4) / 2
     ref_force = fc / red_fc
     ref_radius = (ref_force * radius / K) ** (1 / 3)
     ref_delta = ref_radius * ref_radius / radius
@@ -632,11 +573,8 @@ def delta_curve(
     assert lj_delta_scale > 0, lj_delta_scale
 
     # Calculate reduced/dimensionless values of inputs
-    #     ref_force = gamma*np.pi*radius
-    #     red_fc = fc/ref_force
-    red_fc = (
-        tau - 4
-    ) / 2  # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
+    # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
+    red_fc = (tau - 4) / 2
     ref_force = fc / red_fc
     red_force = (force - force_shift) / ref_force
     ref_radius = (ref_force * radius / K) ** (1 / 3)
