@@ -19,9 +19,11 @@ A Docstring
 import os
 from contextlib import asynccontextmanager
 from functools import partial, wraps
-from multiprocessing.pool import Pool
-from itertools import islice
+from multiprocessing import Process, Lock, SimpleQueue, Semaphore
+from itertools import islice, count
 
+import outcome
+import psutil
 import trio
 
 TOOLTIP_CANCEL = None, None, None
@@ -31,84 +33,110 @@ cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count())
 trs = partial(trio.to_thread.run_sync, cancellable=True)
 
 
-def make_cancel_poller():
-    """Uses internal undocumented bits so probably super fragile"""
-    _cancel_status = trio.lowlevel.current_task()._cancel_status
+# How long a process will idle waiting for new work before gives up and exits.
+# This should be longer than a thread timeout proportionately to startup time.
+IDLE_TIMEOUT = 60 * 10
+IDLE_PROC_CACHE = []
+proc_counter = count()
+# This semaphore counts total worker procs
+PROC_SEMAPHORE = Semaphore(0)
 
-    def poll_for_cancel(*args, **kwargs):
-        if _cancel_status.effectively_cancelled:
-            raise trio.Cancelled._create()
-
-    return poll_for_cancel
-
-
-IDLE_PROCS = {}
-ALL_PROCS = {}
+try:
+    PROC_NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
+except AttributeError:
+    PROC_NICE = 3
 
 
-@asynccontextmanager
-async def get_subpool():
-    subpool: Pool
-    try:
-        subpool, _ = IDLE_PROCS.popitem()
-    except KeyError:
-        subpool = await trio.to_thread.run_sync(Pool, 1)
-        ALL_PROCS[subpool] = trio.current_time()
-        import psutil
+class WorkerProc:
+    def __init__(self):
+        self._worker_lock = Lock()
+        self._worker_lock.acquire()
+        # TODO: awaitable Queue or Channel, with improved pickle
+        self._work_queue = SimpleQueue()
+        self._proc = Process(
+            target=self._work,
+            args=(self._worker_lock, self._work_queue, PROC_SEMAPHORE),
+            name=f"WorkerProc-{next(proc_counter)}",
+        )
+        self._proc.start()
 
+    @staticmethod
+    def _work(lock: Lock, queue: SimpleQueue, semaphore: Semaphore):
+        semaphore.release()
+        psutil.Process().nice(PROC_NICE)
+        while lock.acquire(timeout=IDLE_TIMEOUT):
+            # We got a job
+            fn, args = queue.get()
+            result = outcome.capture(fn, *args)
+            # Tell the cache that we're done and available for a job
+            # Unlike the thread cache, it's impossible to deliver the
+            # result from the worker process. So shove it onto the queue
+            # and hope the receiver delivers the result and marks us idle
+            queue.put(result)
+
+            del fn
+            del args
+            del result
+        # Timeout acquiring lock, so we can probably exit.
+        # Unlike thread cache, the race condition of someone trying to
+        # assign a job as we quit must be checked by the assigning task.
+        semaphore.acquire(timeout=0.0)
+
+    # noinspection PyUnresolvedReferences,PyProtectedMember
+    async def run_sync(self, sync_fn, *args):
+        # TODO: avoid thread
         try:
-            nice = psutil.BELOW_NORMAL_PRIORITY_CLASS
-        except AttributeError:
-            nice = 3
-        psutil.Process(subpool._pool[0].pid).nice(nice)
+            self._worker_lock.release()
+            await trio.to_thread.run_sync(self._work_queue.put, (sync_fn, args), cancellable=True)
 
-    try:
-        yield subpool
-    finally:
-        if subpool._state == "RUN":
-            IDLE_PROCS[subpool] = None
-        else:
-            del ALL_PROCS[subpool]
-            subpool.join()
+            result = await trio.to_thread.run_sync(self._work_queue.get, cancellable=True)
+            return result.unwrap()
+        except trio.Cancelled:
+            # Cancellation leaves the process in deadlocked state so
+            # there is no choice but to kill
+            self._proc.kill()
+            self._proc.join()
+            # These should raise errors in any abandoned threads
+            self._work_queue._reader.close()
+            self._work_queue._writer.close()
+            PROC_SEMAPHORE.acquire()
+
+    def is_alive(self):
+        return self._proc.is_alive()
 
 
-async def to_process_run_sync(
-    sync_fn, *args, cancellable=False, kill_after_cancel=-1.0, limiter=cpu_bound_limiter
-):
+async def to_process_run_sync(sync_fn, *args, cancellable=False, limiter=cpu_bound_limiter):
     """Run sync_fn in a separate process
 
-    This is a wrapping of multiprocessing.pool.Pool.apply_async
-    that follows the API of trio.to_thread.run_sync.
+    This is a wrapping of multiprocessing.Process that follows the API of
+    trio.to_thread.run_sync. The intended use of this function is limited:
 
-    Runaway procs can be killed with kill_after_cancel supplied in seconds to wait
-    for the result before terminating the child process. Negative values never kill.
+    - Circumvent the GIL for CPU-bound functions
+    - Make blocking APIs or infinite loops truly cancellable through SIGKILL/TerminateProcess
 
-    If submitting many sync_fn calls a slightly more efficient method may be
+    Anything else that works is gravy, normal multiprocessing caveats apply.
+
+    If submitting many sync_fn calls, a slightly more efficient method may be
     to_process_map_unordered."""
-    done_event = trio.Event()
-    trio_token = trio.lowlevel.current_trio_token()
-
-    def done_callback(result_or_error):
-        trio_token.run_sync_soon(done_event.set)
 
     async with limiter:
-        subpool: Pool
-        async with get_subpool() as subpool:
-            apply_result = subpool.apply_async(
-                sync_fn, args, callback=done_callback, error_callback=done_callback
-            )
-            try:
-                with trio.CancelScope(shield=not cancellable):
-                    await done_event.wait()
-                return apply_result.get(timeout=0.0)
-            except trio.Cancelled:
-                if kill_after_cancel >= 0.0:
-                    with trio.move_on_after(kill_after_cancel) as cscope:
-                        cscope.shield = True
-                        await done_event.wait()
-                    if cscope.cancelled_caught:
-                        subpool.terminate()
-                raise
+        proc: WorkerProc
+        try:
+            while True:
+                proc = IDLE_PROC_CACHE.pop()
+                # Under normal circumstances workers are waiting on lock.acquire
+                # for a new job, but if they time out, they die immediately.
+                if proc.is_alive():
+                    break
+        except IndexError:
+            proc = await trio.to_thread.run_sync(WorkerProc)
+
+        try:
+            with trio.CancelScope(shield=not cancellable):
+                return await proc.run_sync(sync_fn, *args)
+        finally:
+            if proc.is_alive():
+                IDLE_PROC_CACHE.append(proc)
 
 
 def _chunk_producer(fn, job_items, chunksize):
@@ -136,7 +164,7 @@ async def to_sync_runner_map_unordered(
     sync_fn,
     job_items,
     chunksize=1,
-    cancellable=True,
+    cancellable=False,
     limiter=cpu_bound_limiter,
     task_status=trio.TASK_STATUS_IGNORED,
 ):
@@ -208,7 +236,7 @@ async def to_process_map_unordered(
     sync_fn,
     job_items,
     chunksize=1,
-    cancellable=True,
+    cancellable=False,
     limiter=cpu_bound_limiter,
     task_status=trio.TASK_STATUS_IGNORED,
 ):
@@ -237,7 +265,7 @@ async def to_process_map_unordered(
 async def to_thread_map_unordered(
     sync_fn,
     job_items,
-    cancellable=True,
+    cancellable=False,
     limiter=cpu_bound_limiter,
     task_status=trio.TASK_STATUS_IGNORED,
 ):
@@ -357,3 +385,14 @@ async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_
             cancel_scope.cancel()
             cancel_scope = trio.CancelScope()
             await nursery.start(single_show_hide)
+
+
+def make_cancel_poller():
+    """Uses internal undocumented bits so probably super fragile"""
+    _cancel_status = trio.lowlevel.current_task()._cancel_status
+
+    def poll_for_cancel(*args, **kwargs):
+        if _cancel_status.effectively_cancelled:
+            raise trio.Cancelled._create()
+
+    return poll_for_cancel

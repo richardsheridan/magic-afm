@@ -1559,8 +1559,8 @@ async def about_task(root):
                 + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
             )
             process.set(
-                f"Worker Processes: {len(async_tools.ALL_PROCS)}"
-                f" with {len(async_tools.IDLE_PROCS)} idle"
+                f"Worker Processes: {async_tools.PROC_SEMAPHORE.get_value()}"
+                f" with {sum(proc.is_alive() for proc in async_tools.IDLE_PROC_CACHE)} idle"
             )
             await trio.sleep_until(t + interval / 1000)
 
@@ -1636,10 +1636,6 @@ async def main_task(root):
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
         await trio.sleep_forever()  # needed if nursery never starts a long running child
-    for subpool in async_tools.ALL_PROCS:
-        subpool.close()
-    for subpool in async_tools.ALL_PROCS:
-        subpool.join()
 
 
 def main():
