@@ -566,7 +566,7 @@ class ForceVolumeTkDisplay:
         )
         defl_sens_sbox.set(initial_values.defl_sens)
         defl_sens_sbox.grid(row=0, column=2, sticky="E")
-        defl_sens_label = ttk.Label(preproc_labelframe, text="InvOLS", justify="left")
+        defl_sens_label = ttk.Label(preproc_labelframe, text="Deflection Sens.", justify="left")
         defl_sens_label.grid(row=0, column=0, columnspan=2, sticky="W")
         self.spring_const_strvar = tk.StringVar(preproc_labelframe)
         self.spring_const_strvar.trace_add("write", self.spring_const_callback)
@@ -1602,7 +1602,7 @@ async def main_task(root):
         open_callback = partial(nursery.start_soon, open_task, root)
         demo_callback = partial(nursery.start_soon, demo_task, root)
         about_callback = partial(nursery.start_soon, about_task, root)
-        help_action = partial(open_with_os_default, "help_page.html")
+        help_action = partial(open_with_os_default, "README.rst")
 
         # calls root.destroy by default
         root.protocol("WM_DELETE_WINDOW", quit_callback)

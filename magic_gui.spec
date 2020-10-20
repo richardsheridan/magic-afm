@@ -5,7 +5,7 @@ block_cipher = None
 
 a = Analysis(['magic_gui.py'],
              binaries=[],
-             datas=[('ARDFtoHDF5.exe','.'),('help_page.html','.')],
+             datas=[('ARDFtoHDF5.exe','.'),('README.rst','.')],
              hiddenimports=[],
              hookspath=[],
              runtime_hooks=[],
