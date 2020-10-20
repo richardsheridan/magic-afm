@@ -1558,12 +1558,10 @@ async def about_task(root):
                 "Default threads:"
                 + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
             )
-            if async_tools.EXECUTOR is None:
-                numprocs = 0
-            else:
-                # noinspection PyUnresolvedReferences
-                numprocs = len(async_tools.EXECUTOR._processes)
-            process.set("Worker Processes: " + str(numprocs))
+            process.set(
+                f"Worker Processes: {len(async_tools.ALL_PROCS)}"
+                f" with {len(async_tools.IDLE_PROCS)} idle"
+            )
             await trio.sleep_until(t + interval / 1000)
 
     # run using tcl event loop
@@ -1638,8 +1636,10 @@ async def main_task(root):
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
         await trio.sleep_forever()  # needed if nursery never starts a long running child
-    if async_tools.EXECUTOR is not None:
-        async_tools.EXECUTOR.shutdown(wait=True)
+    for subpool in async_tools.ALL_PROCS:
+        subpool.close()
+    for subpool in async_tools.ALL_PROCS:
+        subpool.join()
 
 
 def main():
