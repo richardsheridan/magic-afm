@@ -90,16 +90,14 @@ class WorkerProc:
             await trio.to_thread.run_sync(self._work_queue.put, (sync_fn, args), cancellable=True)
 
             result = await trio.to_thread.run_sync(self._work_queue.get, cancellable=True)
-            return result.unwrap()
         except trio.Cancelled:
             # Cancellation leaves the process in deadlocked state so
             # there is no choice but to kill
             self._proc.kill()
             self._proc.join()
-            # These should raise errors in any abandoned threads
-            self._work_queue._reader.close()
-            self._work_queue._writer.close()
             PROC_SEMAPHORE.acquire()
+            raise
+        return result.unwrap()
 
     def is_alive(self):
         return self._proc.is_alive()
