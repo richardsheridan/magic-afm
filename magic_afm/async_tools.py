@@ -19,8 +19,10 @@ A Docstring
 import os
 from contextlib import asynccontextmanager
 from functools import partial, wraps
-from multiprocessing import Process, Lock, SimpleQueue, Semaphore
+from multiprocessing import Process, Lock, Semaphore, Pipe
 from itertools import islice, count
+# noinspection PyUnresolvedReferences
+from multiprocessing.reduction import ForkingPickler
 
 import outcome
 import psutil
@@ -46,33 +48,41 @@ try:
 except AttributeError:
     PROC_NICE = 3
 
+# TODO
+# if os.name == "posix":
+#     from trio.lowlevel import FdStream as PipeSendStream
+#     PipeReceiveStream = PipeSendStream
+if os.name == "nt":
+    from trio._windows_pipes import PipeReceiveStream, PipeSendStream
+
 
 class WorkerProc:
     def __init__(self):
         self._worker_lock = Lock()
         self._worker_lock.acquire()
-        # TODO: awaitable Queue or Channel, with improved pickle
-        self._work_queue = SimpleQueue()
+        self._recv_pipe, self._send_pipe = Pipe()
         self._proc = Process(
             target=self._work,
-            args=(self._worker_lock, self._work_queue, PROC_SEMAPHORE),
+            args=(self._worker_lock, self._recv_pipe, self._send_pipe, PROC_SEMAPHORE),
             name=f"WorkerProc-{next(proc_counter)}",
         )
         self._proc.start()
+        self._recv_stream = None
+        self._send_stream = None
 
     @staticmethod
-    def _work(lock: Lock, queue: SimpleQueue, semaphore: Semaphore):
+    def _work(lock: Lock, recv_pipe, send_pipe, semaphore: Semaphore):
         semaphore.release()
         psutil.Process().nice(PROC_NICE)
         while lock.acquire(timeout=IDLE_TIMEOUT):
             # We got a job
-            fn, args = queue.get()
+            fn, args = recv_pipe.recv()
             result = outcome.capture(fn, *args)
             # Tell the cache that we're done and available for a job
             # Unlike the thread cache, it's impossible to deliver the
             # result from the worker process. So shove it onto the queue
             # and hope the receiver delivers the result and marks us idle
-            queue.put(result)
+            send_pipe.send(result)
 
             del fn
             del args
@@ -82,16 +92,50 @@ class WorkerProc:
         # assign a job as we quit must be checked by the assigning task.
         semaphore.acquire(timeout=0.0)
 
-    # noinspection PyUnresolvedReferences,PyProtectedMember
+    # async def send_all(self, buf):
+    #     """Implement multiprocessing framing"""
+    #     n = len(buf)
+    #     if n > 0x7fffffff:
+    #         pre_header = struct.pack("!i", -1)
+    #         header = struct.pack("!Q", n)
+    #         await self._send_stream.send_all(pre_header)
+    #         await self._send_stream.send_all(header)
+    #         await self._send_stream.send_all(buf)
+    #     else:
+    #         # For wire compatibility with 3.7 and lower
+    #         header = struct.pack("!i", n)
+    #         if n > 16384:
+    #             # The payload is large so Nagle's algorithm won't be triggered
+    #             # and we'd better avoid the cost of concatenation.
+    #             await self._send_stream.send_all(header)
+    #             await self._send_stream.send_all(buf)
+    #         else:
+    #             # Issue #20540: concatenate before sending, to avoid delays due
+    #             # to Nagle's algorithm on a TCP socket.
+    #             # Also note we want to avoid sending a 0-length buffer separately,
+    #             # to avoid "broken pipe" errors if the other end closed the pipe.
+    #             await self._send_stream.send_all(header + buf)
+    #
+    # async def receive_some(self):
+    #     """Implement multiprocessing framing"""
+    #     buf = await self._recv_stream.receive_some(4)
+    #     size, = struct.unpack("!i", buf.getvalue())
+    #     if size == -1:
+    #         buf = await self._recv_stream.receive_some(8)
+    #         size, = struct.unpack("!Q", buf.getvalue())
+    #     return await self._recv_stream.receive_some(size)
+
     async def run_sync(self, sync_fn, *args):
-        # TODO: avoid thread
+        # Rehabilitate pipes on our side to use trio
+        if self._send_stream is None:
+            self._recv_stream = PipeReceiveStream(self._recv_pipe.fileno())
+            self._send_stream = PipeSendStream(self._send_pipe.fileno())
         try:
             self._worker_lock.release()
-            await trio.to_thread.run_sync(self._work_queue.put, (sync_fn, args), cancellable=True)
-
-            result = await trio.to_thread.run_sync(self._work_queue.get, cancellable=True)
+            await self._send_stream.send_all(ForkingPickler.dumps((sync_fn, args)))
+            result = ForkingPickler.loads(await self._recv_stream.receive_some())
         except trio.Cancelled:
-            # Cancellation leaves the process in deadlocked state so
+            # Cancellation leaves the process in an unknown state so
             # there is no choice but to kill
             self._proc.kill()
             self._proc.join()
@@ -110,7 +154,9 @@ async def to_process_run_sync(sync_fn, *args, cancellable=False, limiter=cpu_bou
     trio.to_thread.run_sync. The intended use of this function is limited:
 
     - Circumvent the GIL for CPU-bound functions
-    - Make blocking APIs or infinite loops truly cancellable through SIGKILL/TerminateProcess
+    - Make blocking APIs or infinite loops truly cancellable through
+      SIGKILL/TerminateProcess without leaking resources
+    - TODO: Protect main process from untrusted/crashy code without leaks
 
     Anything else that works is gravy, normal multiprocessing caveats apply.
 
