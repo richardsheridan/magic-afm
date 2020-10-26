@@ -1,8 +1,12 @@
-"""
-A Docstring
+"""Magic AFM Async Tools
+
+A collection of standalone tools created to serve the async needs of the GUI
+but that have no dependency on any other part of the package.
+
+It is meant to be easy to lift individual items out into other projects.
 """
 
-# Copyright (C) 2020  Richard J. Sheridan
+# Copyright (C) Richard J. Sheridan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published

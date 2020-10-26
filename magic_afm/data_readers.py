@@ -1,3 +1,26 @@
+"""Magic AFM Data Readers
+
+This module abstracts the different file types that this package supports.
+Generally, they have the structure of a BaseForceVolumeFile subclass that has-a
+worker class. The File class opens file objects and parses metadata, while
+the worker class does the actual reads from the disk. Generally, the File class
+asyncifies the worker's disk reads with threads, although this is not a rule.
+"""
+
+# Copyright (C) Richard J. Sheridan
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import abc
 import dataclasses
 from subprocess import PIPE, STARTF_USESHOWWINDOW, STARTUPINFO

@@ -1,8 +1,13 @@
-"""
-A Docstring
+"""Magic AFM Calculation
+
+This module contains the actual, core code to calculate indentation ratios and
+modulus sensitivities from force curve data, and is self-sufficient from the
+rest of the Magic AFM package. If you want to replicate the results from our
+paper or inspect your own force curves for "Magic Ratio" conditions, this
+module should contain everything you need.
 """
 
-# Copyright (C) 2020  Richard J. Sheridan
+# Copyright (C) Richard J. Sheridan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published

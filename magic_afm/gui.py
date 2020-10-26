@@ -1,5 +1,10 @@
 """MagicAFM GUI
 
+This is a trio guest-mode async tkinter graphical interface for AFM users to
+calculate indentation ratios and modulus sensitivities for their force curve
+data in an intuitive and responsive package. By facilitating these sorts of
+calculations, we hope to improve the overall systematic error of reported
+modulus maps in the greater AFM nanomechanics community.
 """
 __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
