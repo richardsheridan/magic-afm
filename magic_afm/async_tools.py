@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from functools import partial, wraps
 from multiprocessing import Process, Lock, Semaphore, Pipe
 from itertools import islice, count
+
 # noinspection PyUnresolvedReferences
 from multiprocessing.reduction import ForkingPickler
 
@@ -41,6 +42,7 @@ IDLE_TIMEOUT = 60 * 10
 IDLE_PROC_CACHE = []
 proc_counter = count()
 # This semaphore counts total worker procs
+# only for informational purposes, so never block while acquiring!
 PROC_SEMAPHORE = Semaphore(0)
 
 try:
@@ -48,30 +50,53 @@ try:
 except AttributeError:
     PROC_NICE = 3
 
-# TODO
-# if os.name == "posix":
-#     from trio.lowlevel import FdStream as PipeSendStream
-#     PipeReceiveStream = PipeSendStream
 if os.name == "nt":
     from trio._windows_pipes import PipeReceiveStream, PipeSendStream
+
+    # TODO: This uses a thread per-process. Can we do better?
+    wait_sentinel = trio.lowlevel.WaitForSingleObject
+# TODO
+# elif os.name == "posix":
+#     from trio.lowlevel import FdStream as PipeSendStream
+#     PipeReceiveStream = PipeSendStream
+#     sentinel_wait = trio.lowlevel.wait_readable
+else:
+    raise RuntimeError(f"Unsupported OS: {os.name}")
+
+
+class BrokenWorkerError(Exception):
+    pass
 
 
 class WorkerProc:
     def __init__(self):
+        # As with the thread cache, releasing this lock serves toto kick a
+        # worker process off it's idle countdown and onto the work pipe.
         self._worker_lock = Lock()
         self._worker_lock.acquire()
-        self._recv_pipe, self._send_pipe = Pipe()
+        # On NT, a single duplexed pipe raises a TrioInternalError: GH#1767
+        child_recv_pipe, self._send_pipe = Pipe(duplex=False)
+        self._recv_pipe, child_send_pipe = Pipe(duplex=False)
         self._proc = Process(
             target=self._work,
-            args=(self._worker_lock, self._recv_pipe, self._send_pipe, PROC_SEMAPHORE),
+            args=(self._worker_lock, child_recv_pipe, child_send_pipe, PROC_SEMAPHORE),
             name=f"WorkerProc-{next(proc_counter)}",
+            daemon=True,
         )
         self._proc.start()
+        # These must be created in an async context, so defer to run_sync so
+        # that this object can be instantiated in e.g. a thread
         self._recv_stream = None
         self._send_stream = None
 
+    def __del__(self):
+        # Avoid __del__ errors on cleanup: GH#174, GH#1767
+        # multiprocessing will close them for us
+        self._send_stream._handle_holder.handle = -1
+        self._recv_stream._handle_holder.handle = -1
+
     @staticmethod
-    def _work(lock: Lock, recv_pipe, send_pipe, semaphore: Semaphore):
+    def _work(lock, recv_pipe, send_pipe, semaphore):
         semaphore.release()
         psutil.Process().nice(PROC_NICE)
         while lock.acquire(timeout=IDLE_TIMEOUT):
@@ -90,58 +115,35 @@ class WorkerProc:
         # Timeout acquiring lock, so we can probably exit.
         # Unlike thread cache, the race condition of someone trying to
         # assign a job as we quit must be checked by the assigning task.
-        semaphore.acquire(timeout=0.0)
-
-    # async def send_all(self, buf):
-    #     """Implement multiprocessing framing"""
-    #     n = len(buf)
-    #     if n > 0x7fffffff:
-    #         pre_header = struct.pack("!i", -1)
-    #         header = struct.pack("!Q", n)
-    #         await self._send_stream.send_all(pre_header)
-    #         await self._send_stream.send_all(header)
-    #         await self._send_stream.send_all(buf)
-    #     else:
-    #         # For wire compatibility with 3.7 and lower
-    #         header = struct.pack("!i", n)
-    #         if n > 16384:
-    #             # The payload is large so Nagle's algorithm won't be triggered
-    #             # and we'd better avoid the cost of concatenation.
-    #             await self._send_stream.send_all(header)
-    #             await self._send_stream.send_all(buf)
-    #         else:
-    #             # Issue #20540: concatenate before sending, to avoid delays due
-    #             # to Nagle's algorithm on a TCP socket.
-    #             # Also note we want to avoid sending a 0-length buffer separately,
-    #             # to avoid "broken pipe" errors if the other end closed the pipe.
-    #             await self._send_stream.send_all(header + buf)
-    #
-    # async def receive_some(self):
-    #     """Implement multiprocessing framing"""
-    #     buf = await self._recv_stream.receive_some(4)
-    #     size, = struct.unpack("!i", buf.getvalue())
-    #     if size == -1:
-    #         buf = await self._recv_stream.receive_some(8)
-    #         size, = struct.unpack("!Q", buf.getvalue())
-    #     return await self._recv_stream.receive_some(size)
+        semaphore.acquire(False)
 
     async def run_sync(self, sync_fn, *args):
         # Rehabilitate pipes on our side to use trio
         if self._send_stream is None:
             self._recv_stream = PipeReceiveStream(self._recv_pipe.fileno())
             self._send_stream = PipeSendStream(self._send_pipe.fileno())
-        try:
+        async with trio.open_nursery() as nursery:
+            await nursery.start(self._child_monitor)
             self._worker_lock.release()
-            await self._send_stream.send_all(ForkingPickler.dumps((sync_fn, args)))
-            result = ForkingPickler.loads(await self._recv_stream.receive_some())
-        except trio.Cancelled:
-            # Cancellation leaves the process in an unknown state so
-            # there is no choice but to kill
-            self._proc.kill()
-            self._proc.join()
-            PROC_SEMAPHORE.acquire()
-            raise
+            try:
+                await self._send_stream.send_all(ForkingPickler.dumps((sync_fn, args)))
+                result = ForkingPickler.loads(await self._recv_stream.receive_some())
+            except trio.Cancelled:
+                # Cancellation leaves the process in an unknown state so
+                # there is no choice but to kill
+                self._proc.kill()
+                self._proc.join()
+                PROC_SEMAPHORE.acquire(False)
+                raise
+            # must cancel the child monitor task to exit nursery
+            nursery.cancel_scope.cancel()
         return result.unwrap()
+
+    async def _child_monitor(self, task_status):
+        task_status.started()
+        # If this handle becomes ready, raise a catchable error
+        await wait_sentinel(self._proc.sentinel)
+        raise BrokenWorkerError(f"{self._proc} died unexpectedly")
 
     def is_alive(self):
         return self._proc.is_alive()
@@ -156,7 +158,7 @@ async def to_process_run_sync(sync_fn, *args, cancellable=False, limiter=cpu_bou
     - Circumvent the GIL for CPU-bound functions
     - Make blocking APIs or infinite loops truly cancellable through
       SIGKILL/TerminateProcess without leaking resources
-    - TODO: Protect main process from untrusted/crashy code without leaks
+    - Protect main process from untrusted/crashy code without leaks
 
     Anything else that works is gravy, normal multiprocessing caveats apply.
 
