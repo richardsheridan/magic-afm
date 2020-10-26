@@ -1558,12 +1558,10 @@ async def about_task(root):
                 "Default threads:"
                 + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
             )
-            if async_tools.EXECUTOR is None:
-                numprocs = 0
-            else:
-                # noinspection PyUnresolvedReferences
-                numprocs = len(async_tools.EXECUTOR._processes)
-            process.set("Worker Processes: " + str(numprocs))
+            process.set(
+                f"Worker Processes: {async_tools.PROC_SEMAPHORE.get_value()}"
+                f" with {sum(proc.is_alive() for proc in async_tools.IDLE_PROC_CACHE)} idle"
+            )
             await trio.sleep_until(t + interval / 1000)
 
     # run using tcl event loop
