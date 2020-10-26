@@ -37,6 +37,7 @@ except ImportError:
 
 else:
     myjit = myjit(nopython=True, nogil=True)
+    abs = np.abs
     # can't cache because weakrefs aren't pickleable? https://github.com/numba/numba/issues/6251
     # myjit = myjit(nopython=True, nogil=True, cache=True)
     # doesn't fix ZeroDivisionError? https://github.com/numba/numba/issues/1256
@@ -295,7 +296,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 @myjit
 def mylinspace(start, stop, num, endpoint):
     """np.linspace is surprisingly intensive, so trim the fat
-    
+
 Copyright (c) 2005-2020, NumPy Developers.
 All rights reserved.
 
@@ -350,7 +351,7 @@ def schwarz_red(red_f, red_fc, stable, offset):
     """
     # if red_f<red_fc, it is likely a small numerical error
     # this fixes the issue for arrays and python scalars without weird logic
-    df = np.abs(red_f - red_fc)
+    df = abs(red_f - red_fc)
 
     # Save computations if pure DMT
     if red_fc == -2:
