@@ -21,12 +21,15 @@ It is meant to be easy to lift individual items out into other projects.
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
+import _winapi
 from contextlib import asynccontextmanager
 from functools import partial, wraps
 from multiprocessing import Process, Lock, Semaphore, Pipe
 from itertools import islice, count
 
 # noinspection PyUnresolvedReferences
+from pickle import UnpicklingError
+
 from multiprocessing.reduction import ForkingPickler
 
 import outcome
@@ -55,7 +58,73 @@ except AttributeError:
     PROC_NICE = 3
 
 if os.name == "nt":
-    from trio._windows_pipes import PipeReceiveStream, PipeSendStream
+    from trio._windows_pipes import (
+        # PipeReceiveStream,
+        PipeSendStream,
+        _HandleHolder,
+        DEFAULT_RECEIVE_SIZE,
+    )
+
+
+    class PipeReceiveStream(trio.abc.ReceiveStream):
+        """Represents a receive stream over an os.pipe object."""
+
+        def __init__(self, handle: int) -> None:
+            self._handle_holder = _HandleHolder(handle)
+            from trio._util import ConflictDetector
+
+            self._conflict_detector = ConflictDetector("another task is currently using this pipe")
+
+        async def receive_some(self, max_bytes=None) -> bytes:
+            try:
+                with self._conflict_detector:
+                    if self._handle_holder.closed:
+                        raise trio.ClosedResourceError("this pipe is already closed")
+
+                    if max_bytes is not None:
+                        if not isinstance(max_bytes, int):
+                            raise TypeError("max_bytes must be integer >= 1")
+                        if max_bytes < 1:
+                            raise ValueError("max_bytes must be integer >= 1")
+
+                    buffer = bytearray(DEFAULT_RECEIVE_SIZE if max_bytes is None else max_bytes)
+                    try:
+                        size = await trio.lowlevel.readinto_overlapped(
+                            self._handle_holder.handle, buffer
+                        )
+                    except BrokenPipeError:
+                        if self._handle_holder.closed:
+                            raise trio.ClosedResourceError(
+                                "another task closed this pipe") from None
+
+                        # Windows raises BrokenPipeError on one end of a pipe
+                        # whenever the other end closes, regardless of direction.
+                        # Convert this to the Unix behavior of returning EOF to the
+                        # reader when the writer closes.
+                        #
+                        # And since we're not raising an exception, we have to
+                        # checkpoint. But readinto_overlapped did raise an exception,
+                        # so it might not have checkpointed for us. So we have to
+                        # checkpoint manually.
+                        await trio.lowlevel.checkpoint()
+                        return b""
+                    else:
+                        del buffer[size:]
+                        return buffer
+            except OSError as e:
+                if e.winerror == _winapi.ERROR_MORE_DATA:
+                    # possibly recursive but I don't think it is a problem
+                    avail, left = _winapi.PeekNamedPipe(self._handle_holder.handle)
+                    assert left > 0
+                    if max_bytes is not None and left + len(buffer) > max_bytes:
+                        raise trio.BrokenResourceError("Bad message length")
+                    buffer.extend(await self.receive_some(left))
+                    return buffer
+                else:
+                    raise
+
+        async def aclose(self):
+            await self._handle_holder.aclose()
 
     # TODO: This uses a thread per-process. Can we do better?
     wait_sentinel = trio.lowlevel.WaitForSingleObject
@@ -74,7 +143,7 @@ class BrokenWorkerError(Exception):
 
 class WorkerProc:
     def __init__(self):
-        # As with the thread cache, releasing this lock serves toto kick a
+        # As with the thread cache, releasing this lock serves to kick a
         # worker process off it's idle countdown and onto the work pipe.
         self._worker_lock = Lock()
         self._worker_lock.acquire()
@@ -131,7 +200,7 @@ class WorkerProc:
             self._worker_lock.release()
             try:
                 await self._send_stream.send_all(ForkingPickler.dumps((sync_fn, args)))
-                result = ForkingPickler.loads(await self._recv_stream.receive_some())
+                result = ForkingPickler.loads(await self._platform_recv())
             except trio.Cancelled:
                 # Cancellation leaves the process in an unknown state so
                 # there is no choice but to kill
@@ -148,6 +217,31 @@ class WorkerProc:
         # If this handle becomes ready, raise a catchable error
         await wait_sentinel(self._proc.sentinel)
         raise BrokenWorkerError(f"{self._proc} died unexpectedly")
+
+    if os.name == "nt":
+        async def _platform_recv(self):
+            # Relies on message-oriented semantics
+            result_bytes = await self._recv_stream.receive_some()
+            if not result_bytes:
+                # worker probably died but the stream iocp fired first
+                await trio.sleep_forever()  # wait for monitor to see it
+            return result_bytes
+    # elif os.name == "posix":
+    #     async def _platform_recv(self):
+    #         import struct
+    #         buf = self._recv_stream.receive_some(4)
+    #         size, = struct.unpack("!i", buf.getvalue())
+    #         if size == -1:
+    #             buf = self._recv_stream.receive_some(8)
+    #             size, = struct.unpack("!Q", buf.getvalue())
+    #         result_bytes = bytearray()
+    #         async for partial_result in self._recv_stream:
+    #             result_bytes.extend(partial_result)
+    #             if len(result_bytes) == size:
+    #                 break
+    #         # else:
+    #         #     # worker probably died but the stream closed first
+    #         #     await trio.sleep_forever()  # wait for monitor to see it
 
     def is_alive(self):
         return self._proc.is_alive()
