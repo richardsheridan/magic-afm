@@ -21,19 +21,10 @@ It is meant to be easy to lift individual items out into other projects.
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
-import _winapi
+from concurrent.futures.process import ProcessPoolExecutor
 from contextlib import asynccontextmanager
 from functools import partial, wraps
-from multiprocessing import Process, Lock, Semaphore, Pipe
-from itertools import islice, count
-
-# noinspection PyUnresolvedReferences
-from pickle import UnpicklingError
-
-from multiprocessing.reduction import ForkingPickler
-
-import outcome
-import psutil
+from itertools import islice
 import trio
 
 TOOLTIP_CANCEL = None, None, None
@@ -42,245 +33,65 @@ LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count())
 trs = partial(trio.to_thread.run_sync, cancellable=True)
 
-
-# How long a process will idle waiting for new work before gives up and exits.
-# This should be longer than a thread timeout proportionately to startup time.
-IDLE_TIMEOUT = 60 * 10
-IDLE_PROC_CACHE = []
-proc_counter = count()
-# This semaphore counts total worker procs
-# only for informational purposes, so never block while acquiring!
-PROC_SEMAPHORE = Semaphore(0)
-
-try:
-    PROC_NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
-except AttributeError:
-    PROC_NICE = 3
-
-if os.name == "nt":
-    from trio._windows_pipes import (
-        # PipeReceiveStream,
-        PipeSendStream,
-        _HandleHolder,
-        DEFAULT_RECEIVE_SIZE,
-    )
+EXECUTOR = None
 
 
-    class PipeReceiveStream(trio.abc.ReceiveStream):
-        """Represents a receive stream over an os.pipe object."""
+async def start_global_executor():
+    global EXECUTOR
+    if EXECUTOR is None:
+        EXECUTOR = ProcessPoolExecutor(cpu_bound_limiter.total_tokens)
+        with trio.CancelScope(shield=True):
+            # submit trash to start processes
+            # afterward EXECUTOR.submit() can be considered nonblocking
+            # from cpython 3.9 need to make sure to start all processes GH19453
+            await to_thread_map_unordered(
+                partial(EXECUTOR.submit, int),
+                range(cpu_bound_limiter.total_tokens),
+                limiter=trio.CapacityLimiter(cpu_bound_limiter.total_tokens),
+            )
+            assert len(EXECUTOR._processes) == cpu_bound_limiter.total_tokens
+            import psutil
 
-        def __init__(self, handle: int) -> None:
-            self._handle_holder = _HandleHolder(handle)
-            from trio._util import ConflictDetector
-
-            self._conflict_detector = ConflictDetector("another task is currently using this pipe")
-
-        async def receive_some(self, max_bytes=None) -> bytes:
-            try:
-                with self._conflict_detector:
-                    if self._handle_holder.closed:
-                        raise trio.ClosedResourceError("this pipe is already closed")
-
-                    if max_bytes is not None:
-                        if not isinstance(max_bytes, int):
-                            raise TypeError("max_bytes must be integer >= 1")
-                        if max_bytes < 1:
-                            raise ValueError("max_bytes must be integer >= 1")
-
-                    buffer = bytearray(DEFAULT_RECEIVE_SIZE if max_bytes is None else max_bytes)
-                    try:
-                        size = await trio.lowlevel.readinto_overlapped(
-                            self._handle_holder.handle, buffer
-                        )
-                    except BrokenPipeError:
-                        if self._handle_holder.closed:
-                            raise trio.ClosedResourceError(
-                                "another task closed this pipe") from None
-
-                        # Windows raises BrokenPipeError on one end of a pipe
-                        # whenever the other end closes, regardless of direction.
-                        # Convert this to the Unix behavior of returning EOF to the
-                        # reader when the writer closes.
-                        #
-                        # And since we're not raising an exception, we have to
-                        # checkpoint. But readinto_overlapped did raise an exception,
-                        # so it might not have checkpointed for us. So we have to
-                        # checkpoint manually.
-                        await trio.lowlevel.checkpoint()
-                        return b""
-                    else:
-                        del buffer[size:]
-                        return buffer
-            except OSError as e:
-                if e.winerror == _winapi.ERROR_MORE_DATA:
-                    # possibly recursive but I don't think it is a problem
-                    avail, left = _winapi.PeekNamedPipe(self._handle_holder.handle)
-                    assert left > 0
-                    if max_bytes is not None and left + len(buffer) > max_bytes:
-                        raise trio.BrokenResourceError("Bad message length")
-                    buffer.extend(await self.receive_some(left))
-                    return buffer
-                else:
-                    raise
-
-        async def aclose(self):
-            await self._handle_holder.aclose()
-
-    # TODO: This uses a thread per-process. Can we do better?
-    wait_sentinel = trio.lowlevel.WaitForSingleObject
-# TODO
-# elif os.name == "posix":
-#     from trio.lowlevel import FdStream as PipeSendStream
-#     PipeReceiveStream = PipeSendStream
-#     sentinel_wait = trio.lowlevel.wait_readable
-else:
-    raise RuntimeError(f"Unsupported OS: {os.name}")
-
-
-class BrokenWorkerError(Exception):
-    pass
-
-
-class WorkerProc:
-    def __init__(self):
-        # As with the thread cache, releasing this lock serves to kick a
-        # worker process off it's idle countdown and onto the work pipe.
-        self._worker_lock = Lock()
-        self._worker_lock.acquire()
-        # On NT, a single duplexed pipe raises a TrioInternalError: GH#1767
-        child_recv_pipe, self._send_pipe = Pipe(duplex=False)
-        self._recv_pipe, child_send_pipe = Pipe(duplex=False)
-        self._proc = Process(
-            target=self._work,
-            args=(self._worker_lock, child_recv_pipe, child_send_pipe, PROC_SEMAPHORE),
-            name=f"WorkerProc-{next(proc_counter)}",
-            daemon=True,
-        )
-        self._proc.start()
-        # These must be created in an async context, so defer to run_sync so
-        # that this object can be instantiated in e.g. a thread
-        self._recv_stream = None
-        self._send_stream = None
-
-    def __del__(self):
-        # Avoid __del__ errors on cleanup: GH#174, GH#1767
-        # multiprocessing will close them for us
-        self._send_stream._handle_holder.handle = -1
-        self._recv_stream._handle_holder.handle = -1
-
-    @staticmethod
-    def _work(lock, recv_pipe, send_pipe, semaphore):
-        semaphore.release()
-        psutil.Process().nice(PROC_NICE)
-        while lock.acquire(timeout=IDLE_TIMEOUT):
-            # We got a job
-            fn, args = recv_pipe.recv()
-            result = outcome.capture(fn, *args)
-            # Tell the cache that we're done and available for a job
-            # Unlike the thread cache, it's impossible to deliver the
-            # result from the worker process. So shove it onto the queue
-            # and hope the receiver delivers the result and marks us idle
-            send_pipe.send(result)
-
-            del fn
-            del args
-            del result
-        # Timeout acquiring lock, so we can probably exit.
-        # Unlike thread cache, the race condition of someone trying to
-        # assign a job as we quit must be checked by the assigning task.
-        semaphore.acquire(False)
-
-    async def run_sync(self, sync_fn, *args):
-        # Rehabilitate pipes on our side to use trio
-        if self._send_stream is None:
-            self._recv_stream = PipeReceiveStream(self._recv_pipe.fileno())
-            self._send_stream = PipeSendStream(self._send_pipe.fileno())
-        async with trio.open_nursery() as nursery:
-            await nursery.start(self._child_monitor)
-            self._worker_lock.release()
-            try:
-                await self._send_stream.send_all(ForkingPickler.dumps((sync_fn, args)))
-                result = ForkingPickler.loads(await self._platform_recv())
-            except trio.Cancelled:
-                # Cancellation leaves the process in an unknown state so
-                # there is no choice but to kill
-                self._proc.kill()
-                self._proc.join()
-                PROC_SEMAPHORE.acquire(False)
-                raise
-            # must cancel the child monitor task to exit nursery
-            nursery.cancel_scope.cancel()
-        return result.unwrap()
-
-    async def _child_monitor(self, task_status):
-        task_status.started()
-        # If this handle becomes ready, raise a catchable error
-        await wait_sentinel(self._proc.sentinel)
-        raise BrokenWorkerError(f"{self._proc} died unexpectedly")
-
-    if os.name == "nt":
-        async def _platform_recv(self):
-            # Relies on message-oriented semantics
-            result_bytes = await self._recv_stream.receive_some()
-            if not result_bytes:
-                # worker probably died but the stream iocp fired first
-                await trio.sleep_forever()  # wait for monitor to see it
-            return result_bytes
-    # elif os.name == "posix":
-    #     async def _platform_recv(self):
-    #         import struct
-    #         buf = self._recv_stream.receive_some(4)
-    #         size, = struct.unpack("!i", buf.getvalue())
-    #         if size == -1:
-    #             buf = self._recv_stream.receive_some(8)
-    #             size, = struct.unpack("!Q", buf.getvalue())
-    #         result_bytes = bytearray()
-    #         async for partial_result in self._recv_stream:
-    #             result_bytes.extend(partial_result)
-    #             if len(result_bytes) == size:
-    #                 break
-    #         # else:
-    #         #     # worker probably died but the stream closed first
-    #         #     await trio.sleep_forever()  # wait for monitor to see it
-
-    def is_alive(self):
-        return self._proc.is_alive()
+            # noinspection PyUnresolvedReferences,PyProtectedMember
+            for pid in EXECUTOR._processes:
+                try:
+                    nice = psutil.BELOW_NORMAL_PRIORITY_CLASS
+                except AttributeError:
+                    nice = 3
+                psutil.Process(pid).nice(nice)
 
 
 async def to_process_run_sync(sync_fn, *args, cancellable=False, limiter=cpu_bound_limiter):
     """Run sync_fn in a separate process
 
-    This is a wrapping of multiprocessing.Process that follows the API of
-    trio.to_thread.run_sync. The intended use of this function is limited:
+    This is a simple wrapping of concurrent.futures.ProcessPoolExecutor.submit
+    that follows the API of trio.to_thread.run_sync.
 
-    - Circumvent the GIL for CPU-bound functions
-    - Make blocking APIs or infinite loops truly cancellable through
-      SIGKILL/TerminateProcess without leaking resources
-    - Protect main process from untrusted/crashy code without leaks
-
-    Anything else that works is gravy, normal multiprocessing caveats apply.
-
-    If submitting many sync_fn calls, a slightly more efficient method may be
+    If submitting many sync_fn calls a slightly more efficient method may be
     to_process_map_unordered."""
+    await start_global_executor()
+    done_event = trio.Event()
+    trio_token = trio.lowlevel.current_trio_token()
+
+    def done_callback(cf_fut):
+        trio_token.run_sync_soon(done_event.set)
 
     async with limiter:
-        proc: WorkerProc
+        cf_fut = EXECUTOR.submit(sync_fn, *args)
         try:
-            while True:
-                proc = IDLE_PROC_CACHE.pop()
-                # Under normal circumstances workers are waiting on lock.acquire
-                # for a new job, but if they time out, they die immediately.
-                if proc.is_alive():
-                    break
-        except IndexError:
-            proc = await trio.to_thread.run_sync(WorkerProc)
-
-        try:
+            cf_fut.add_done_callback(done_callback)
             with trio.CancelScope(shield=not cancellable):
-                return await proc.run_sync(sync_fn, *args)
-        finally:
-            if proc.is_alive():
-                IDLE_PROC_CACHE.append(proc)
+                await done_event.wait()
+            return cf_fut.result(timeout=0)
+        except:  # noqa: E722
+            # This only does anything when an error is thrown in
+            # add_done_callback or a trio cancel comes, but only in the very
+            # rare case that it happens before the future's job is sent to a
+            # process.
+            # Running futures cannot be cancelled, so prefer cancellable=False
+            # or beware zombie processes here.
+            cf_fut.cancel()
+            raise
 
 
 def _chunk_producer(fn, job_items, chunksize):
