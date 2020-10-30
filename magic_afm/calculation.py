@@ -64,6 +64,7 @@ PROPERTY_UNITS_DICT = {
 }
 
 
+@myjit
 def gauss3x3(img):
     img = np.asarray(img).copy()
     rows, cols = img.shape
@@ -83,6 +84,7 @@ def gauss3x3(img):
     return img
 
 
+@myjit
 def median3x1(img):
     out = np.empty_like(img)
     rows, cols = out.shape
@@ -98,6 +100,7 @@ def median3x1(img):
     return out
 
 
+@myjit
 def median3x3(img):
     out = np.empty_like(img)
     rows, cols = out.shape
