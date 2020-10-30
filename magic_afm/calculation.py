@@ -23,13 +23,11 @@ module should contain everything you need.
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import enum
 import traceback
-from functools import partial
 
 import numpy as np
 import threadpoolctl
 from scipy.optimize import curve_fit
-from scipy.signal import resample
-from scipy.ndimage import median_filter, convolve1d
+from samplerate import resample
 from numpy.linalg import lstsq
 
 try:
@@ -67,8 +65,58 @@ PROPERTY_UNITS_DICT = {
 
 
 def gauss3x3(img):
-    img = np.asanyarray(img)
-    return convolve1d(convolve1d(img, gkern, axis=1), gkern, axis=0)
+    img = np.asarray(img).copy()
+    rows, cols = img.shape
+    tmp = np.empty(cols + 6, dtype=img.dtype)
+    for row in img:
+        tmp[:3] = row[0]
+        tmp[3:-3] = row
+        tmp[-3:] = row[-1]
+        row[:] = np.convolve(tmp, gkern)[4:-4]
+    if rows != cols:
+        tmp = np.empty(rows + 6, dtype=img.dtype)
+    for col in img.transpose():
+        tmp[:3] = col[0]
+        tmp[3:-3] = col
+        tmp[-3:] = col[-1]
+        col[:] = np.convolve(tmp, gkern)[4:-4]
+    return img
+
+
+def median3x1(img):
+    out = np.empty_like(img)
+    rows, cols = out.shape
+    for r in range(rows):
+        if r == 0:
+            vstart, vstop = (0, 2)
+        elif r == rows - 1:
+            vstart, vstop = (r - 1, rows)
+        else:
+            vstart, vstop = (r - 1, r + 2)
+        for c in range(cols):
+            out[r, c] = np.median(img[vstart:vstop, c])
+    return out
+
+
+def median3x3(img):
+    out = np.empty_like(img)
+    rows, cols = out.shape
+    for r in range(rows):
+        if r == 0:
+            vstart, vstop = (0, 2)
+        elif r == rows - 1:
+            vstart, vstop = (r - 1, rows)
+        else:
+            vstart, vstop = (r - 1, r + 2)
+        for c in range(cols):
+            if c == 0:
+                hstart, hstop = (0, 2)
+            elif c == cols - 1:
+                hstart, hstop = c - 1, cols
+            else:
+                hstart, hstop = c - 1, c + 2
+            out[r, c] = np.median(img[vstart:vstop, hstart:hstop])
+    return out
 
 
 def flatten(img):
@@ -100,8 +148,8 @@ MANIPULATIONS = dict(
     [
         ("Flatten", flatten),
         ("PlaneFit", planefit),
-        ("Median3x1", partial(median_filter, size=(3, 1))),
-        ("Median3x3", partial(median_filter, size=(3, 3))),
+        ("Median3x1", median3x1),
+        ("Median3x3", median3x3),
         ("Gauss3x3", gauss3x3),
     ]
 )
@@ -111,7 +159,10 @@ def resample_dset(X, npts, fourier):
     """Consistent API for resampling force curves with Fourier or interpolation"""
     X = np.atleast_2d(X)
     if fourier:
-        return resample(X, npts, axis=1, window=("kaiser", 6),).squeeze()
+        ratio = npts / len(X[0])
+        trend = X[:, 0]
+        X_detrend = X - trend
+        return np.stack([resample(x, ratio) for x in X_detrend]).squeeze() + trend
     else:
         tnew = np.linspace(0, 1, npts, endpoint=False)
         told = np.linspace(0, 1, X.shape[-1], endpoint=False)
@@ -343,6 +394,20 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     if endpoint and num > 1:
         y[-1] = stop
     return y
+
+
+def curve_fit2(function, xdata, ydata, p0, sigma=None, bounds=None):
+    """Wrap to match api of scipy.optimize.curve_fit"""
+    if bounds is None:
+        constraints = None
+    else:
+        constraints = []
+        for lo, hi in bounds.T.tolist():
+            if lo == 0.0 and hi == np.inf:
+                constraints.append((1, None, None))
+            else:
+                constraints.append((2, lo, hi))
+    return leastsq(function, xdata, ydata, p0, sigma, constraints)
 
 
 @myjit
@@ -626,7 +691,7 @@ def rapid_forcecurve_estimate(delta, force, radius):
     deltamin = delta[imin]
 
     fmin = force[imin]
-    fc_guess = fmin - fzero
+    fc_guess = fzero - fmin
 
     imax = np.argmax(delta)
     deltamax = delta[imax]
@@ -646,7 +711,7 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=lambda: None, p
     bounds = np.transpose(
         (
             (0.0, np.inf),  # M
-            (-np.inf, 0.0),  # fc
+            (0.0, np.inf),  # fc
             # (0, 1),           # tau
             (np.min(delta), np.max(delta)),  # delta_shift
             (np.min(force), np.max(force)),  # force_shift
@@ -671,22 +736,11 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=lambda: None, p
             print("Fit likely failed: NaNs in params")
             return np.full_like(delta, np.nan)
         return force_curve(
-            red_curve, delta, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale,
+            red_curve, delta, k, radius, M, -fc, tau, delta_shift, force_shift, lj_delta_scale,
         )
 
     try:
-        beta, cov = curve_fit(
-            partial_force_curve,
-            delta,
-            force,
-            p0=p0,
-            bounds=bounds,
-            xtol=1e-9,
-            ftol=1e-8,
-            method="trf",
-            verbose=0,
-            jac="2-point",
-        )
+        beta, cov = curve_fit(partial_force_curve, delta, force, p0=p0, bounds=bounds)
     except Exception as e:
         traceback.print_exception(
             type(e), e, e.__traceback__,
@@ -716,15 +770,15 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
 
     maxforce = force[sl].mean()
     maxdelta = delta_curve(
-        schwarz_wrap, maxforce, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale,
+        schwarz_wrap, maxforce, k, radius, M, -fc, tau, delta_shift, force_shift, lj_delta_scale,
     )
     mindelta = delta_curve(
         schwarz_wrap,
-        fc + force_shift,
+        force_shift - fc,
         k,
         radius,
         M,
-        fc,
+        -fc,
         tau,
         delta_shift,
         force_shift,
@@ -732,7 +786,16 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
     )
     zeroindforce = float(
         force_curve(
-            red_curve, delta_shift, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale,
+            red_curve,
+            delta_shift,
+            k,
+            radius,
+            M,
+            -fc,
+            tau,
+            delta_shift,
+            force_shift,
+            lj_delta_scale,
         )
     )
 
