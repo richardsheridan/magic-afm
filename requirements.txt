@@ -1,10 +1,14 @@
 h5py==2.10.0
 imageio==2.9.0
-matplotlib @ git+https://github.com/richardsheridan/matplotlib/@ef900b659b88feac6c8788739561394d19b6ff39
+matplotlib @ git+https://github.com/richardsheridan/matplotlib/@0b1660bfbdf742d795edb1e742c0ee66b40bdef0
+# matplotlib>=3.4
 numba==0.51.2
-psutil==5.7.2
-pyinstaller @ git+https://github.com/bwoodsend/pyinstaller@7e6d5b8c483d20586e7e6e951f1060660445d3b2
-scipy==1.5.0
+psutil==5.7.3
+pyinstaller @ git+https://github.com/pyinstaller/pyinstaller@008e15774ddd3e01fa28f961e49bdc90c20b67d4
+# pyinstaller>4.0
+numpy==1.19.3
+scipy==1.5.3
 threadpoolctl==2.1.0
 tqdm @ git+https://github.com/richardsheridan/tqdm/@3caa265562afc68e8ea9e2355502a85cb5084a54
 trio==0.17.0
+samplerate==0.1.0

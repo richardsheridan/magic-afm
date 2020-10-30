@@ -396,20 +396,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     return y
 
 
-def curve_fit2(function, xdata, ydata, p0, sigma=None, bounds=None):
-    """Wrap to match api of scipy.optimize.curve_fit"""
-    if bounds is None:
-        constraints = None
-    else:
-        constraints = []
-        for lo, hi in bounds.T.tolist():
-            if lo == 0.0 and hi == np.inf:
-                constraints.append((1, None, None))
-            else:
-                constraints.append((2, lo, hi))
-    return leastsq(function, xdata, ydata, p0, sigma, constraints)
-
-
 @myjit
 def schwarz_red(red_f, red_fc, stable, offset):
     """Calculate Schwarz potential indentation depth from force in reduced units.
