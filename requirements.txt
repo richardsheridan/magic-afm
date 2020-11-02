@@ -1,6 +1,6 @@
 h5py==2.10.0
 imageio==2.9.0
-matplotlib @ git+https://github.com/richardsheridan/matplotlib/@0b1660bfbdf742d795edb1e742c0ee66b40bdef0
+matplotlib @ git+https://github.com/matplotlib/matplotlib@59bfcfa8ff479d228502e3561e02fe4f70599505
 # matplotlib>=3.4
 numba==0.51.2
 psutil==5.7.3
