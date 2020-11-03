@@ -38,8 +38,6 @@ __date__ = "15/05/2017"
 __copyright__ = "European Synchrotron Radiation Facility, Grenoble, France"
 
 import numpy
-from numpy.linalg import inv
-from numpy.linalg.linalg import LinAlgError
 import logging
 import copy
 
@@ -388,11 +386,7 @@ def leastsq(
         flag = 0
         while flag == 0:
             alpha = alpha0 * (1.0 + flambda * numpy.identity(nr))
-            # deltapar = numpy.dot(beta, inv(alpha))
-            try:
-                deltapar = numpy.linalg.solve(alpha.T, beta.T).T
-            except LinAlgError:
-                raise
+            deltapar = numpy.linalg.solve(alpha.T, beta.T).T
             if constraints is None:
                 newpar = fitparam + deltapar[0]
             else:
@@ -456,7 +450,7 @@ def leastsq(
                 last_evaluation = yfit
             iiter = iiter - 1
     # this is the covariance matrix of the actually fitted parameters
-    cov0 = inv(alpha0)
+    cov0 = numpy.linalg.pinv(alpha0)
     if constraints is None:
         cov = cov0
     else:
@@ -484,16 +478,11 @@ def leastsq(
             last_evaluation=last_evaluation,
             full_output=True,
         )
-        try:
-            cov = inv(alpha)
-        except LinAlgError:
-            _logger.critical("Error calculating covariance matrix after successful fit")
-            cov = None
-        if cov is not None:
-            for idx, value in enumerate(flag_special):
-                if value in [CFIXED, CIGNORED]:
-                    cov = numpy.insert(numpy.insert(cov, idx, 0, axis=1), idx, 0, axis=0)
-                    cov[idx, idx] = fittedpar[idx] * fittedpar[idx]
+        cov = numpy.linalg.pinv(alpha)
+        for idx, value in enumerate(flag_special):
+            if value in [CFIXED, CIGNORED]:
+                cov = numpy.insert(numpy.insert(cov, idx, 0, axis=1), idx, 0, axis=0)
+                cov[idx, idx] = fittedpar[idx] * fittedpar[idx]
 
     if not full_output:
         return fittedpar, cov
