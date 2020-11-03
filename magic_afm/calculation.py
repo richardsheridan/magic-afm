@@ -26,7 +26,7 @@ import traceback
 
 import numpy as np
 import threadpoolctl
-from scipy.optimize import curve_fit
+from ._vendored_lstsq import leastsq
 from samplerate import resample
 from numpy.linalg import lstsq
 
@@ -397,6 +397,20 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     if endpoint and num > 1:
         y[-1] = stop
     return y
+
+
+def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
+    """Wrap to match api of scipy.optimize.curve_fit"""
+    if bounds is None:
+        constraints = None
+    else:
+        constraints = []
+        for lo, hi in bounds.T.tolist():
+            if lo == 0.0 and hi == np.inf:
+                constraints.append((1, None, None))
+            else:
+                constraints.append((2, lo, hi))
+    return leastsq(function, xdata, ydata, p0, sigma, constraints)
 
 
 @myjit
