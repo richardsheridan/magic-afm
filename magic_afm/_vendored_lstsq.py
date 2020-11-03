@@ -619,9 +619,9 @@ def chisq_alpha_beta(
             Sequence with the indices of the original parameters considered in the calculations.
     """
     if epsfcn is None:
-        epsfcn = numpy.finfo(numpy.float).eps
+        epsfcn = numpy.finfo(numpy.float32).eps
     else:
-        epsfcn = max(epsfcn, numpy.finfo(numpy.float).eps)
+        epsfcn = max(epsfcn, numpy.finfo(numpy.float32).eps)
     n_param = len(parameters)
     if constraints is None:
         derivfactor = numpy.ones((n_param,))
