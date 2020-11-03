@@ -1484,7 +1484,18 @@ async def open_task(root):
                 smoothing_time=0.5,
                 miniters=1,
             )
-            path = await data_readers.convert_ardf(path, pbar=pbar)
+            try:
+                path = await data_readers.convert_ardf(path, pbar=pbar)
+            except FileNotFoundError as e:
+                await trio.to_thread.run_sync(
+                    partial(
+                        tkinter.messagebox.showerror,
+                        master=root,
+                        title="Converter not found",
+                        message=str(e),
+                    )
+                )
+                return
         if cscope.cancelled_caught:
             return
 
