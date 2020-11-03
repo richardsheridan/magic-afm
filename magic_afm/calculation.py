@@ -766,7 +766,7 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
     )
     mindelta = delta_curve(
         schwarz_wrap,
-        fc - force_shift,
+        force_shift + fc,
         k,
         radius,
         M,
