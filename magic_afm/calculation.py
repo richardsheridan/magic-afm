@@ -747,6 +747,9 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
     """
     M, fc, delta_shift, force_shift, lj_delta_scale, *_ = beta
 
+    # sign convention mismatch
+    fc = -fc
+
     assert fit_mode
     if fit_mode == FitMode.EXTEND:
         red_curve = red_extend
@@ -759,15 +762,15 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
 
     maxforce = force[sl].mean()
     maxdelta = delta_curve(
-        schwarz_wrap, maxforce, k, radius, M, -fc, tau, delta_shift, force_shift, lj_delta_scale,
+        schwarz_wrap, maxforce, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale,
     )
     mindelta = delta_curve(
         schwarz_wrap,
-        force_shift - fc,
+        fc - force_shift,
         k,
         radius,
         M,
-        -fc,
+        fc,
         tau,
         delta_shift,
         force_shift,
@@ -775,16 +778,7 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
     )
     zeroindforce = float(
         force_curve(
-            red_curve,
-            delta_shift,
-            k,
-            radius,
-            M,
-            -fc,
-            tau,
-            delta_shift,
-            force_shift,
-            lj_delta_scale,
+            red_curve, delta_shift, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale,
         )
     )
 

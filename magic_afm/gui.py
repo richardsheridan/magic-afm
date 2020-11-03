@@ -1376,11 +1376,11 @@ def draw_force_curve(data, plot_ax, options):
             artists.extend(
                 plot_ax.plot(
                     data.ind + data.mindelta - data.beta[2],
-                    data.defl * options.k + data.beta[1],
+                    data.defl * options.k - data.beta[1],
                     **mopts,
                 )
             )
-            artists.extend(plot_ax.plot(data.mindelta - data.beta[2], data.beta[1], **mopts,))
+            artists.extend(plot_ax.plot(data.mindelta - data.beta[2], -data.beta[1], **mopts,))
         else:
             artists.extend(plot_ax.plot(data.delta[: data.split], data.f[: data.split]))
             artists.extend(plot_ax.plot(data.delta[data.split :], data.f[data.split :]))
