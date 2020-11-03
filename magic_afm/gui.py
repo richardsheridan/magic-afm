@@ -1605,7 +1605,7 @@ async def main_task(root):
         open_callback = partial(nursery.start_soon, open_task, root)
         demo_callback = partial(nursery.start_soon, demo_task, root)
         about_callback = partial(nursery.start_soon, about_task, root)
-        help_action = partial(open_with_os_default, "README.rst")
+        help_action = partial(open_with_os_default, "https://github.com/richardsheridan/magic-afm")
 
         # calls root.destroy by default
         root.protocol("WM_DELETE_WINDOW", quit_callback)
