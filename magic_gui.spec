@@ -4,7 +4,10 @@ block_cipher = None
 
 
 a = Analysis(['magic_gui.py'],
-             binaries=[],
+             binaries=[
+                 ('./_samplerate_data/libsamplerate-64bit.dll',r'./samplerate/_samplerate_data'),
+                 ('./_samplerate_data/libsamplerate-32bit.dll',r'./samplerate/_samplerate_data'),
+             ],
              datas=[('ARDFtoHDF5.exe','.'),('README.rst','.')],
              hiddenimports=[],
              hookspath=[],
@@ -25,7 +28,7 @@ exe = EXE(pyz,
           bootloader_ignore_signals=False,
           strip=False,
           upx=True,
-          console=False )
+          console=True )
 coll = COLLECT(exe,
                a.binaries,
                a.zipfiles,
