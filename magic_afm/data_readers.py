@@ -233,7 +233,11 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
 
     async def get_image(self, image_name):
         await trio.sleep(0)
-        return np.zeros(self.shape, dtype=np.float32), True
+        try:
+            image, _ = self._calc_images[image_name]
+        except KeyError:
+            image = np.zeros(self.shape, dtype=np.float32)
+        return image, True
 
 
 NANOMETER_UNIT_CONVERSION = 1e9  # maybe we can intelligently read this from the file someday
