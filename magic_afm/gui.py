@@ -1564,8 +1564,8 @@ async def about_task(root):
                 + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
             )
             process.set(
-                f"Worker Processes: {async_tools.PROC_SEMAPHORE.get_value()}"
-                f" with {sum(proc.is_alive() for proc in async_tools.IDLE_PROC_CACHE)} idle"
+                "Worker Processes: "
+                + str(0 if async_tools.EXECUTOR is None else len(async_tools.EXECUTOR._processes))
             )
             await trio.sleep_until(t + interval / 1000)
 
