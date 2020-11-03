@@ -165,7 +165,7 @@ def resample_dset(X, npts, fourier):
         ratio = npts / len(X[0])
         trend = X[:, 0]
         X_detrend = X - trend
-        return np.stack([resample(x, ratio) for x in X_detrend]).squeeze() + trend
+        return np.stack([resample(x, ratio, "sinc_fastest") for x in X_detrend]).squeeze() + trend
     else:
         tnew = np.linspace(0, 1, npts, endpoint=False)
         told = np.linspace(0, 1, X.shape[-1], endpoint=False)
