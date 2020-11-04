@@ -2,7 +2,7 @@ h5py==2.10.0
 imageio==2.9.0
 matplotlib @ git+https://github.com/matplotlib/matplotlib@59bfcfa8ff479d228502e3561e02fe4f70599505
 # matplotlib>=3.4
-numba==0.51.2
+# numba @ git+https://github.com/eric-wieser/numba@4ab1b18734f99e76698c576e12e881174a803bd5
 psutil==5.7.3
 pyinstaller @ git+https://github.com/pyinstaller/pyinstaller@008e15774ddd3e01fa28f961e49bdc90c20b67d4
 # pyinstaller>4.0
