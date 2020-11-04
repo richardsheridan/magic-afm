@@ -122,6 +122,27 @@ def median3x3(img):
     return out
 
 
+def fillnan(img):
+    out = np.copy(np.ma.getdata(img))
+    rows, cols = np.shape(out)
+    nan_inds = np.nonzero(np.ma.getmaskarray(img))
+    for r, c in zip(*nan_inds):
+        if r == 0:
+            vstart, vstop = (0, 2)
+        elif r == rows - 1:
+            vstart, vstop = (r - 1, rows)
+        else:
+            vstart, vstop = (r - 1, r + 2)
+        if c == 0:
+            hstart, hstop = (0, 2)
+        elif c == cols - 1:
+            hstart, hstop = c - 1, cols
+        else:
+            hstart, hstop = c - 1, c + 2
+        out[r, c] = np.nanmedian(np.ma.getdata(img)[vstart:vstop, hstart:hstop])
+    return out
+
+
 def flatten(img):
     img = np.ma.getdata(img)
     a = np.vander(np.arange(img.shape[1]), 2)
@@ -154,6 +175,7 @@ MANIPULATIONS = dict(
         ("Median3x1", median3x1),
         ("Median3x3", median3x3),
         ("Gauss3x3", gauss3x3),
+        ("FillNaNs", fillnan),
     ]
 )
 
