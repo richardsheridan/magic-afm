@@ -473,6 +473,18 @@ def impartial(fn):
     return impartial_wrapper
 
 
+def unbind_mousewheel(widget_with_bind):
+    # https://stackoverflow.com/a/44269385
+    def empty_scroll_command(event):
+        return "break"
+    # Windows and OSX
+    widget_with_bind.bind("<MouseWheel>", empty_scroll_command)
+    # Linux and other *nix systems
+    widget_with_bind.bind("<ButtonPress-4>", empty_scroll_command)
+    widget_with_bind.bind("<ButtonPress-5>", empty_scroll_command)
+
+
+
 class ForceVolumeTkDisplay:
     def __init__(self, root, name, initial_values: data_readers.ForceVolumeParams, **kwargs):
         self._nursery = None
@@ -507,6 +519,7 @@ class ForceVolumeTkDisplay:
         self.image_name_menu = ttk.Combobox(
             image_name_labelframe, width=12, state="readonly", textvariable=self.image_name_strvar,
         )
+        unbind_mousewheel(self.image_name_menu)
         self.image_name_menu.pack(fill="x")
         self.reset_image_name_menu(initial_values.image_names)
         image_name_labelframe.pack(fill="x")
@@ -519,6 +532,7 @@ class ForceVolumeTkDisplay:
             values=COLORMAPS,
             width=max(map(len, COLORMAPS)) - 1,
         )
+        unbind_mousewheel(colormap_menu)
         colormap_menu.pack(fill="x")
         colormap_labelframe.pack(fill="x")
         manipulate_labelframe = ttk.Labelframe(image_opts_frame, text="Manipulations")
@@ -531,6 +545,7 @@ class ForceVolumeTkDisplay:
             textvariable=self.manipulate_strvar,
             values=list(calculation.MANIPULATIONS),
         )
+        unbind_mousewheel(manipulate_menu)
         manipulate_menu.pack(fill="x")
         manipulate_labelframe.pack(fill="x")
 
