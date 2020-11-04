@@ -16,7 +16,7 @@ Features:
 
 Supported file formats:
 
-- QNM, FV, and FFV data from Nanoscope V3 or higher (Bruker/Veeco .spm/.pfc)
+- QNM and FFV data from Nanoscope V3 or higher (Bruker/Veeco .spm/.pfc)
 
 - Asylum research ARDF/HDF5
 
@@ -27,10 +27,16 @@ Supported file formats:
 Motivation
 ----------
 This package is companion software to our recent publication, "Vanishing
-Cantilever Calibration Error with Magic Ratio Atomic Force Microscopy" [MRAFM]_.
+Cantilever Calibration Error with Magic Ratio Atomic Force Microscopy" [MRAFM]_,
+where we show that the ratio of cantilever deflection to tip indentation is an
+important dimensionless number controlling the amplification or suppression of
+sources of error, and that under common thermal calibration methods the
+sensitivity of modulus estimates to the spring constant error can be eliminated
+through choice of system parameters.
+
 We hoped to create a force curve analysis package that helps AFM users to
 calculate indentation ratios and modulus sensitivities for their force curve
-data in an intuitive and responsive package. By facilitating these sorts of
+data in an intuitive and responsive package.  By facilitating these sorts of
 calculations, we hope to improve the overall systematic error of reported
 modulus maps in the greater AFM nanomechanics community.
 
@@ -89,7 +95,33 @@ By default a height map is shown, when it is available inside the data file.
 Other precalculated images can be displayed using the "Image" drop-down box. The
 "Colormap" menu allows you to select from a few pre-defined colormaps. Images
 can be flattened or smoothed in the "Manipulations" window. The manipulated images
-are added to the image menu with "Calc<Manip>" where <Manip> is the selected operation.
+are added to the image menu with "Calc<Ext/Ret><Manip>" where <Manip> is the
+selected operation and <Ext/Ret> indicates whether the parameter was estimated
+from the extend or retract data. The available image manipulations are:
+
+Flatten
+   A linear fit to each row of the image is subtracted from that row
+
+PlaneFit
+   A 2D linear fit to the image is subtracted from that image
+
+Median3x1
+   Each pixel is replaced by the median value of that pixel and its vertical
+   neighbors. Good for removing scanline artifacts.
+
+Median3x3
+   Each pixel is replaced by the median value of that pixel and its eight
+   neighbors. Good for removing extreme outlier pixels.
+
+Gauss3x3
+   Blurs the image with a small Gaussian kernel. Good for random (pixel-wise)
+   noise reduction via spatial averaging.
+
+FillNaNs
+   If the fitter was unsuccessful at a certain point, it will write NaN values
+   into those pixels so they appear bright red in the figure. This fills in
+   those pixels selectively with the median of their non-NaN neighbors. Works
+   best when bad fits are sparse!
 
 Force curves are displayed by left-clicking the image in the data window.
 Shift+click allows multiple curves to be plotted. Ctrl+drag plots
@@ -102,10 +134,15 @@ force curve.
 
 The "Force curve display" can be toggled between spatial (d vs z) and
 natural (f vs δ) units. The "Preprocessing" parameters are read from the data file
-metadata but can be adjusted on the fly, updating the display immediately. Fitting
-can be toggled between the default nothing (Skip), the approach curve (Extend) or
+metadata but can be adjusted on the fly, updating the display immediately.
+"Deflection Sens." refers to the calibration factor that multiplies the static vertical
+photodetector signal to obtain the cantilever deflection in nm (sometimes called
+InvOLS.) "Spring Constant" refers to the static cantilever spring constant
+measured at the position of the probe tip.
+
+Fitting can be toggled between the default nothing (Skip), the approach curve (Extend) or
 the retract curve (Retract). The fit parameters are not read from the file and
-only update the display when either the extend or the retract portions of the
+only affect the display when either the extend or the retract portions of the
 force curve are toggled to fit. "Tip Radius (nm)" refers to the nominal radius
 of the parabolic probe assumed in the indentation model. "DMT-JKR (0-1)" refers
 to the transition parameter between the long-range and short-range adhesion
@@ -138,7 +175,7 @@ at any point in the map. Mainly, this helps diagnose issues and confirm robust
 fits. The "calculate properties" button rapidly fits all data in the file and
 creates new images for each in the "Image" menu.
 
-.. establish if you are in the magic ratio regime
+.. TODO: establish if you are in the magic ratio regime
 
 Future Plans:
 
@@ -152,7 +189,7 @@ API
 calculation. "magic fitting workflow.ipynb" doubles as an explainer and alternative
 interface. It also functions as the test suite for the calculation code, such as it is.
 
-.. This section will list the function names, arguments, results, exceptions and
+.. TODO: This section will list the function names, arguments, results, exceptions and
    side effects. Possibly generated from docstrings?
 
 Contributing
