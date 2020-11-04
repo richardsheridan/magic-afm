@@ -67,11 +67,13 @@ install from the requirements.txt into a fresh environment::
     conda activate magic_afm
     conda install --file requirements.txt
 
-Eventually we should supply setup.py and a pypi package, once the dependencies
-settle. A beta release Pyinstaller build will be available on Github after
-an upstream bugfix in OpenBLAS.
+Eventually we should supply :code:`setup.py` and a pypi package, once the
+dependencies settle.
 
-If dealing with ARDF files, you must acquire ARDFtoHDF5.exe from Oxford
+A PyInstaller release for Windows is available on Github. Simply download the
+ZIP archive, extract it to your hard drive, and run :code:`magic_gui.exe`.
+
+If dealing with ARDF files, you must acquire :code:`ARDFtoHDF5.exe` from Oxford
 Instruments/Asylum Research and put it in the root of the source or Pyinstaller
 folder. We then are able to automatically convert the ARDF files to HDF5
 on demand. (NOTE: This will duplicate all each file's data on your hard drive!)
@@ -196,3 +198,6 @@ Contributing
 ------------
 If you notice any bugs, need any help, or want to contribute any code,
 GitHub issues and pull requests are very welcome!
+
+If you are reporting a crash, please include the traceback dump that is written
+in the source or PyInstaller folder.
