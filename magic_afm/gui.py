@@ -1004,15 +1004,19 @@ async def force_volume_task(display, opened_fvol):
         property_map = property_map.reshape((*img_shape, -1,))
 
         # Actually write out results to external world
+        if options.fit_mode == calculation.FitMode.EXTEND:
+            extret = "Ext"
+        else:
+            extret = "Ret"
         for name in calculation.PROPERTY_UNITS_DICT:
             opened_fvol.add_image(
-                image_name="Calc" + name,
+                image_name="Calc" + extret + name,
                 units=calculation.PROPERTY_UNITS_DICT[name],
                 scandown=scandown,
                 image=property_map[name].squeeze(),
             )
-            if "Calc" + name not in combobox_values:
-                combobox_values.append("Calc" + name)
+            if "Calc" + extret + name not in combobox_values:
+                combobox_values.append("Calc" + extret + name)
 
         display.reset_image_name_menu(combobox_values)
 
