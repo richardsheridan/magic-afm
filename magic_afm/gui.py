@@ -491,6 +491,8 @@ class ForceVolumeTkDisplay:
         self._prev_defl_sens = 1.0
         self._prev_k = 1.0
         self._prev_sync_dist = 0
+        self._prev_radius = 20.0
+        self._prev_tau = 0.0
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
         window.wm_title(name)
 
@@ -648,6 +650,8 @@ class ForceVolumeTkDisplay:
 
         fit_radius_label = ttk.Label(fit_labelframe, text="Tip radius (nm)")
         fit_radius_label.grid(row=1, column=0, columnspan=2, sticky="W")
+        self.radius_strvar = tk.StringVar(fit_labelframe)
+        self.radius_strvar.trace_add("write", self.radius_callback)
         self.fit_radius_sbox = ttk.Spinbox(
             fit_labelframe,
             from_=1,
@@ -655,14 +659,14 @@ class ForceVolumeTkDisplay:
             increment=0.1,
             format="%0.1f",
             width=6,
-            validate="all",
-            validatecommand="string is double -strict %S",
-            invalidcommand="%W set %s",
+            textvariable=self.radius_strvar,
         )
         self.fit_radius_sbox.set(20.0)
         self.fit_radius_sbox.grid(row=1, column=2, sticky="E")
         fit_tau_label = ttk.Label(fit_labelframe, text="DMT-JKR (0-1)", justify="left")
         fit_tau_label.grid(row=2, column=0, columnspan=2, sticky="W")
+        self.tau_strvar = tk.StringVar(fit_labelframe)
+        self.tau_strvar.trace_add("write", self.tau_callback)
         self.fit_tau_sbox = ttk.Spinbox(
             fit_labelframe,
             from_=0,
@@ -670,8 +674,7 @@ class ForceVolumeTkDisplay:
             increment=0.05,
             format="%0.2f",
             width=6,
-            validatecommand="string is double -strict %S",
-            invalidcommand="%W set %s",
+            textvariable=self.tau_strvar,
         )
         self.fit_tau_sbox.set(0.0)
         self.fit_tau_sbox.grid(row=2, column=2, sticky="E")
@@ -845,6 +848,22 @@ class ForceVolumeTkDisplay:
             self._prev_sync_dist = int(self.sync_dist_strvar.get())
         except ValueError:
             self.sync_dist_strvar.set(str(self._prev_sync_dist))
+        else:
+            self.replot()
+
+    def radius_callback(self, *args):
+        try:
+            self._prev_radius = float(self.radius_strvar.get())
+        except ValueError:
+            self.radius_strvar.set(str(self._prev_radius))
+        else:
+            self.replot()
+
+    def tau_callback(self, *args):
+        try:
+            self._prev_tau = float(self.tau_strvar.get())
+        except ValueError:
+            self.tau_strvar.set(str(self._prev_tau))
         else:
             self.replot()
 
