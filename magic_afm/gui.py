@@ -477,12 +477,12 @@ def unbind_mousewheel(widget_with_bind):
     # https://stackoverflow.com/a/44269385
     def empty_scroll_command(event):
         return "break"
+
     # Windows and OSX
     widget_with_bind.bind("<MouseWheel>", empty_scroll_command)
     # Linux and other *nix systems
     widget_with_bind.bind("<ButtonPress-4>", empty_scroll_command)
     widget_with_bind.bind("<ButtonPress-5>", empty_scroll_command)
-
 
 
 class ForceVolumeTkDisplay:
@@ -1359,7 +1359,7 @@ def draw_data_table(data, ax):
                 "{:.2f}".format(data.defl / data.ind),
             ],
         ],
-        loc="upper left",
+        loc="top",
         colLabels=colLabels,
         colLoc="right",
     )
@@ -1371,14 +1371,18 @@ def draw_data_table(data, ax):
 
 def draw_force_curve(data, plot_ax, options):
     artists = []
+    aex = artists.extend
+    aap = artists.append
     if options.disp_kind == DispKind.zd:
         plot_ax.set_xlabel("Z piezo (nm)")
         plot_ax.set_ylabel("Cantilever deflection (nm)")
-        artists.extend(plot_ax.plot(data.z[: data.split], data.d[: data.split]))
-        artists.extend(plot_ax.plot(data.z[data.split :], data.d[data.split :]))
+        aex(plot_ax.plot(data.z[: data.split], data.d[: data.split], label="Extend"))
+        aex(plot_ax.plot(data.z[data.split :], data.d[data.split :], label="Retract"))
         if options.fit_mode:
-            artists.extend(plot_ax.plot(data.z[data.sl], data.d_fit, "--"))
-            artists.append(plot_ax.axvline(data.z_tru, ls=":", c=artists[0].get_color()))
+            aex(plot_ax.plot(data.z[data.sl], data.d_fit, "--", label="Model"))
+            aap(
+                plot_ax.axvline(data.z_tru, ls=":", c=artists[0].get_color(), label="Surface Z")
+            )
     elif options.disp_kind == DispKind.δf:
         plot_ax.set_xlabel("Indentation depth (nm)")
         plot_ax.set_ylabel("Indentation force (nN)")
@@ -1386,25 +1390,31 @@ def draw_force_curve(data, plot_ax, options):
             delta = data.delta - data.beta[2]
             f = data.f - data.beta[3]
             f_fit = data.f_fit - data.beta[3]
-            artists.extend(plot_ax.plot(delta[: data.split], f[: data.split]))
-            artists.extend(plot_ax.plot(delta[data.split :], f[data.split :]))
-            artists.extend(plot_ax.plot(delta[data.sl], f_fit, "--"))
+            aex(plot_ax.plot(delta[: data.split], f[: data.split], label="Extend"))
+            aex(plot_ax.plot(delta[data.split :], f[data.split :], label="Retract"))
+            aex(plot_ax.plot(delta[data.sl], f_fit, "--", label="Model"))
             mopts = dict(
                 marker="X", markersize=8, linestyle="", markeredgecolor="k", markerfacecolor="k",
             )
-            artists.extend(
+            aex(
                 plot_ax.plot(
                     data.ind + data.mindelta - data.beta[2],
                     data.defl * options.k - data.beta[1],
+                    label="Max/Crit",
                     **mopts,
                 )
             )
-            artists.extend(plot_ax.plot(data.mindelta - data.beta[2], -data.beta[1], **mopts,))
+            aex(plot_ax.plot(data.mindelta - data.beta[2], -data.beta[1], **mopts,))
         else:
-            artists.extend(plot_ax.plot(data.delta[: data.split], data.f[: data.split]))
-            artists.extend(plot_ax.plot(data.delta[data.split :], data.f[data.split :]))
+            aex(
+                plot_ax.plot(data.delta[: data.split], data.f[: data.split], label="Extend")
+            )
+            aex(
+                plot_ax.plot(data.delta[data.split :], data.f[data.split :], label="Retract")
+            )
     else:
         raise ValueError("Unknown DispKind: ", data.disp_kind)
+    aap(plot_ax.legend())
     return artists, artists[0].get_color()
 
 
