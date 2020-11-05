@@ -1516,7 +1516,8 @@ async def open_task(root):
     path = trio.Path(path)
 
     # choose handler based on file suffix
-    if path.suffix == ".ARDF":
+    suffix = path.suffix.lower()
+    if suffix == ".ardf":
         with trio.CancelScope() as cscope:
             pbar = tqdm_tk(
                 tk_parent=root,
@@ -1542,7 +1543,7 @@ async def open_task(root):
         if cscope.cancelled_caught:
             return
 
-    async with data_readers.SUFFIX_FVFILE_MAP[path.suffix](path) as opened_fv:
+    async with data_readers.SUFFIX_FVFILE_MAP[suffix](path) as opened_fv:
         with ForceVolumeTkDisplay(root, path.name, opened_fv.parameters) as display:
             await force_volume_task(display, opened_fv)
 
