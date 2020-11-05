@@ -1400,9 +1400,7 @@ def draw_force_curve(data, plot_ax, options):
         aex(plot_ax.plot(data.z[data.split :], data.d[data.split :], label="Retract"))
         if options.fit_mode:
             aex(plot_ax.plot(data.z[data.sl], data.d_fit, "--", label="Model"))
-            aap(
-                plot_ax.axvline(data.z_tru, ls=":", c=artists[0].get_color(), label="Surface Z")
-            )
+            aap(plot_ax.axvline(data.z_tru, ls=":", c=artists[0].get_color(), label="Surface Z"))
     elif options.disp_kind == DispKind.δf:
         plot_ax.set_xlabel("Indentation depth (nm)")
         plot_ax.set_ylabel("Indentation force (nN)")
@@ -1426,12 +1424,8 @@ def draw_force_curve(data, plot_ax, options):
             )
             aex(plot_ax.plot(data.mindelta - data.beta[2], -data.beta[1], **mopts,))
         else:
-            aex(
-                plot_ax.plot(data.delta[: data.split], data.f[: data.split], label="Extend")
-            )
-            aex(
-                plot_ax.plot(data.delta[data.split :], data.f[data.split :], label="Retract")
-            )
+            aex(plot_ax.plot(data.delta[: data.split], data.f[: data.split], label="Extend"))
+            aex(plot_ax.plot(data.delta[data.split :], data.f[data.split :], label="Retract"))
     else:
         raise ValueError("Unknown DispKind: ", data.disp_kind)
     aap(plot_ax.legend())
