@@ -183,22 +183,14 @@ MANIPULATIONS = dict(
 def resample_dset(X, npts, fourier):
     """Consistent API for resampling force curves with Fourier or interpolation"""
     X = np.atleast_2d(X)
-    ncurves, old_npts, = X.shape
     if fourier:
-        ratio = npts / old_npts
+        ratio = npts / len(X[0])
         trend = X[:, [0]]  # Should be 2D
         X_detrend = X - trend
-        nchunks = ncurves // 128
-        extra_curves = ncurves % 128
-        chunks = np.split(X_detrend[: ncurves * nchunks], nchunks) if nchunks else []
-        if extra_curves:
-            chunks.append(X_detrend[-extra_curves:])
-        return np.squeeze(
-            np.concatenate([resample(chunk.T, ratio, "sinc_fastest").T for chunk in chunks]) + trend
-        )
+        return np.stack([resample(x, ratio, "sinc_fastest") for x in X_detrend] + trend).squeeze()
     else:
         tnew = np.linspace(0, 1, npts, endpoint=False)
-        told = np.linspace(0, 1, old_npts, endpoint=False)
+        told = np.linspace(0, 1, X.shape[-1], endpoint=False)
         return np.stack([np.interp(tnew, told, x,) for x in X]).squeeze()
 
 

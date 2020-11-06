@@ -902,9 +902,6 @@ async def force_volume_task(display, opened_fvol):
 
         async with spinner_scope() as cancel_scope:
             # assign pbar and progress_image ASAP in case of cancel
-            progress_image: matplotlib.image.AxesImage = display.img_ax.imshow(
-                np.zeros(img_shape + (4,), dtype="f4"), extent=axesimage.get_extent()
-            )  # transparent initial image, no need to draw
             pbar = tqdm_tk(
                 total=ncurves,
                 desc="Loading and resampling force curves...",
@@ -916,6 +913,9 @@ async def force_volume_task(display, opened_fvol):
                 leave=False,
                 cancel_callback=cancel_scope.cancel,
             )
+            progress_image: matplotlib.image.AxesImage = display.img_ax.imshow(
+                np.zeros(img_shape + (4,), dtype="f4"), extent=axesimage.get_extent()
+            )  # transparent initial image, no need to draw
 
             npts, split = opened_fvol.npts, opened_fvol.split
             resample = npts > RESAMPLE_NPTS
@@ -931,46 +931,45 @@ async def force_volume_task(display, opened_fvol):
             else:
                 raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
-            to_resample = []
             delta = np.empty((ncurves, segment_npts), np.float32)
             f = np.empty((ncurves, segment_npts), np.float32)
+            first = True
 
             @async_tools.spawn_limit(async_tools.cpu_bound_limiter)
-            async def resample_helper(chunk):
-                i, *chunk = zip(*chunk)
-                chunk = np.concatenate(chunk, 0)
-                chunk = await trio.to_thread.run_sync(
-                    calculation.resample_dset,
-                    chunk,
-                    npts,
-                    True,
-                    cancellable=True,
-                    limiter=trio.CapacityLimiter(1),
-                )
-                z, d = np.split(chunk[:, sl], 2)
-                del chunk
+            async def resample_helper(i):
+                nonlocal first
+                if first:
+                    pbar.unpause()
+                    first = False
+                z, d = await opened_fvol.get_force_curve(*np.unravel_index(i, img_shape))
+                if resample:
+                    z = await trio.to_thread.run_sync(
+                        calculation.resample_dset,
+                        z,
+                        npts,
+                        True,
+                        cancellable=True,
+                        limiter=trio.CapacityLimiter(1),
+                    )
+                    d = await trio.to_thread.run_sync(
+                        calculation.resample_dset,
+                        d,
+                        npts,
+                        True,
+                        cancellable=True,
+                        limiter=trio.CapacityLimiter(1),
+                    )
+                z = z[sl]
+                d = d[sl]
                 delta[i, :] = z - d
                 f[i, :] = d * options.k
-                pbar.update(len(i))
+                pbar.update()
 
             async with trio.open_nursery() as nursery:
                 for i in range(ncurves):
-                    z, d = await opened_fvol.get_force_curve(*np.unravel_index(i, img_shape))
-                    if resample:
-                        to_resample.append((i, z, d))
-                        if len(to_resample) == 128:
-                            async with async_tools.cpu_bound_limiter:
-                                nursery.start_soon(resample_helper, to_resample.copy())
-                            to_resample.clear()
-                    else:
-                        z = z[sl]
-                        d = d[sl]
-                        delta[i, :] = z - d
-                        f[i, :] = d * options.k
-                        pbar.update()
-                if to_resample:
-                    nursery.start_soon(resample_helper, to_resample)
-            del to_resample, i, z, d
+                    async with async_tools.cpu_bound_limiter:
+                        nursery.start_soon(resample_helper, i)
+                    # await resample_helper(i) # single threaded
 
             pbar.set_description_str("Fitting force curves...")
             pbar.unit = " fits"
