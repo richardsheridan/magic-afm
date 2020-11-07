@@ -185,9 +185,9 @@ def resample_dset(X, npts, fourier):
     X = np.atleast_2d(X)
     if fourier:
         ratio = npts / len(X[0])
-        trend = X[:, [0]]  # Should be 2D
-        X_detrend = X - trend
-        return np.stack([resample(x, ratio, "sinc_fastest") for x in X_detrend] + trend).squeeze()
+        trend = np.copy(X[:, [0]])  # Should be 2D
+        X = X - trend
+        return np.squeeze(np.stack([resample(x, ratio, "sinc_fastest") for x in X]) + trend)
     else:
         tnew = np.linspace(0, 1, npts, endpoint=False)
         told = np.linspace(0, 1, X.shape[-1], endpoint=False)
