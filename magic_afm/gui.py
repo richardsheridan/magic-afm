@@ -961,8 +961,8 @@ async def force_volume_task(display, opened_fvol):
                     )
                 z = z[sl]
                 d = d[sl]
-                delta[i, :] = z - d
-                f[i, :] = d * options.k
+                delta[i] = z - d
+                f[i] = d * options.k
                 pbar.update()
 
             async with trio.open_nursery() as nursery:
