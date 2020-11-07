@@ -1015,6 +1015,7 @@ async def force_volume_task(display, opened_fvol):
 
         await display.canvas.draw_send.send(draw_fn)
         pbar.close()
+        del delta, f  # patch trio memory leak
 
         if cancel_scope.cancelled_caught:
             return
