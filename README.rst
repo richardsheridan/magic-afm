@@ -125,6 +125,9 @@ FillNaNs
    those pixels selectively with the median of their non-NaN neighbors. Works
    best when bad fits are sparse!
 
+All calculated images can be exported by clicking "Export calculated maps" to various
+image and data formats.
+
 Force curves are displayed by left-clicking the image in the data window.
 Shift+click allows multiple curves to be plotted. Ctrl+drag plots
 continuously as the mouse moves over the image. A cross
@@ -155,7 +158,7 @@ If a fit has been performed, a table is displayed above the force curve indicati
 the key inferred parameters:
 
 M
-    Indentation Modulus
+    Indentation Modulus M=4/3*E/(1-ν*ν)
 
 dM/dk x k/M
     relative sensitivity of M to the spring constant
@@ -174,8 +177,20 @@ d/δ
 
 Using this table you observe the best fit value and uncertainty for parameters
 at any point in the map. Mainly, this helps diagnose issues and confirm robust
-fits. The "calculate properties" button rapidly fits all data in the file and
-creates new images for each in the "Image" menu.
+fits. If you select multiple points, the average of the values of those points
+will be displayed. Note that the current calculation assumes you are using the GCI/GetReal/Qf1.3
+calibration method, as is current best practice. If you are doing hard-contact +
+thermal calibration, you must approximately double the relative sensitivity value.
+
+Additionally, fitting plots a curve labeled "Model" for the best-fit estimate.
+If viewing in d vs z mode, "Surface Z" indicates the apparent height of the
+substrate after accounting for indentation effects. If viewing in f vs δ mode,
+Max/Crit markers indicate the apparent point of the "Maximum" and "Critical"
+(snap-off) force and indentation, respectively.
+
+The "calculate properties" button rapidly fits all data in the file and
+creates new images for each in the "Image" menu. All calculated images can be
+exported by clicking "Export calculated maps" to various image and data formats.
 
 .. TODO: establish if you are in the magic ratio regime
 
