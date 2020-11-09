@@ -1131,7 +1131,7 @@ async def force_volume_task(display, opened_fvol):
         if name not in opened_fvol.image_names:
             manip_fn = calculation.MANIPULATIONS[manip_name]
             async with spinner_scope():
-                manip_img = await trs(manip_fn, axesimage.get_array())
+                manip_img = await trs(manip_fn, np.ma.getdata(axesimage.get_array()))
             opened_fvol.add_image(
                 name, unit, scandown, manip_img,
             )

@@ -66,8 +66,8 @@ PROPERTY_UNITS_DICT = {
 
 @myjit
 def gauss3x3(img):
-    img = np.asarray(img).copy()
-    rows, cols = img.shape
+    img = np.copy(img)
+    rows, cols = np.shape(img)
     tmp = np.empty(cols + 6, dtype=img.dtype)
     for row in img:
         tmp[:3] = row[0]
@@ -87,7 +87,7 @@ def gauss3x3(img):
 @myjit
 def median3x1(img):
     out = np.empty_like(img)
-    rows, cols = out.shape
+    rows, cols = np.shape(out)
     for r in range(rows):
         if r == 0:
             vstart, vstop = (0, 2)
@@ -103,7 +103,7 @@ def median3x1(img):
 @myjit
 def median3x3(img):
     out = np.empty_like(img)
-    rows, cols = out.shape
+    rows, cols = np.shape(out)
     for r in range(rows):
         if r == 0:
             vstart, vstop = (0, 2)
@@ -122,10 +122,11 @@ def median3x3(img):
     return out
 
 
+@myjit
 def fillnan(img):
-    out = np.copy(np.ma.getdata(img))
+    out = np.copy(img)
     rows, cols = np.shape(out)
-    nan_inds = np.nonzero(np.ma.getmaskarray(img))
+    nan_inds = np.nonzero(np.isnan(img))
     for r, c in zip(*nan_inds):
         if r == 0:
             vstart, vstop = (0, 2)
@@ -139,13 +140,12 @@ def fillnan(img):
             hstart, hstop = c - 1, cols
         else:
             hstart, hstop = c - 1, c + 2
-        out[r, c] = np.nanmedian(np.ma.getdata(img)[vstart:vstop, hstart:hstop])
+        out[r, c] = np.nanmedian(img[vstart:vstop, hstart:hstop])
     return out
 
 
 def flatten(img):
-    img = np.ma.getdata(img)
-    a = np.vander(np.arange(img.shape[1]), 2)
+    a = np.vander(np.arange(np.shape(img)[1]), 2)
     b = img.T
     keep = ~np.logical_or.reduce(~np.isfinite(b), axis=1)
     try:
@@ -156,8 +156,7 @@ def flatten(img):
 
 
 def planefit(img):
-    img = np.ma.getdata(img)
-    ind = np.indices(img.shape)
+    ind = np.indices(np.shape(img))
     a = np.stack((np.ones_like(img.ravel()), ind[0].ravel(), ind[1].ravel())).T  # [1, x, y]
     b = img.ravel()
     keep = np.isfinite(b)
