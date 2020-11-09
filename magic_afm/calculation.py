@@ -26,18 +26,13 @@ import traceback
 
 import numpy as np
 import threadpoolctl
-from ._vendored_lstsq import leastsq
 from samplerate import resample
 from numpy.linalg import lstsq
 
 try:
     from numba import jit as myjit
 except ImportError:
-
-    def myjit(fn):
-        return fn
-
-
+    myjit = lambda x: x
 else:
     myjit = myjit(nopython=True, nogil=True)
     abs = np.abs
@@ -420,18 +415,24 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     return y
 
 
-def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
-    """Wrap to match api of scipy.optimize.curve_fit"""
-    if bounds is None:
-        constraints = None
-    else:
-        constraints = []
-        for lo, hi in bounds.T.tolist():
-            if lo == 0.0 and hi == np.inf:
-                constraints.append((1, None, None))
-            else:
-                constraints.append((2, lo, hi))
-    return leastsq(function, xdata, ydata, p0, sigma, constraints)
+try:
+    # Use scipy if available
+    from scipy.optimize import curve_fit
+except ImportError:
+    from ._vendored_lstsq import leastsq
+
+    def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
+        """Wrap to match api of scipy.optimize.curve_fit"""
+        if bounds is None:
+            constraints = None
+        else:
+            constraints = []
+            for lo, hi in bounds.T.tolist():
+                if lo == 0.0 and hi == np.inf:
+                    constraints.append((1, None, None))
+                else:
+                    constraints.append((2, lo, hi))
+        return leastsq(function, xdata, ydata, p0, sigma, constraints)
 
 
 @myjit
