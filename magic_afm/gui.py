@@ -883,7 +883,9 @@ async def force_volume_task(display, opened_fvol):
     # plot_curve_event_response
     plot_curve_cancels_pending = set()
     artists = []
+    table = None
     existing_points = set()
+    point_data = {}
 
     # set in change_image_callback
     colorbar: Optional[Colorbar] = None
@@ -1102,6 +1104,8 @@ async def force_volume_task(display, opened_fvol):
 
     @async_tools.spawn_limit(trio.CapacityLimiter(1))
     async def redraw_existing_points():
+        point_data.clear()
+
         def draw_fn():
             for artist in artists:
                 artist.remove()
@@ -1188,11 +1192,6 @@ async def force_volume_task(display, opened_fvol):
                     async_tools.make_cancel_poller(),
                 )
                 del force_curve  # contained in data
-                # XXX: Race condition
-                # cancel can occur after the last call to the above cancel poller
-                # checkpoint make sure to raise Cancelled if it just happened
-                # await trio.sleep(0)
-
             plot_curve_cancels_pending.discard(cancel_scope)
 
             if cancel_scope.cancelled_caught:
@@ -1200,17 +1199,23 @@ async def force_volume_task(display, opened_fvol):
                 return
 
             def draw_fn():
+                nonlocal table
                 # Clearing Phase
                 # Clear previous artists and reset plots (faster than .clear()?)
+                if table is not None:
+                    table.remove()
+                    table = None
                 if clear_previous:
                     for artist in artists:
                         artist.remove()
                     artists.clear()
                     existing_points.clear()
+                    point_data.clear()
 
                     existing_points.add(point)
                     display.plot_ax.relim()
                     display.plot_ax.set_prop_cycle(None)
+                point_data[point] = data  # unconditional so draw_force_curve gets the latest data
 
                 # Drawing Phase
                 # Based options choose plots and collect artists for deletion
@@ -1228,8 +1233,7 @@ async def force_volume_task(display, opened_fvol):
                     )
                 )
                 if options.fit_mode:
-                    table = draw_data_table(data, display.plot_ax,)
-                    artists.append(table)
+                    table = draw_data_table(point_data, display.plot_ax,)
 
             await display.canvas.draw_send.send(draw_fn)
 
@@ -1357,32 +1361,74 @@ def expand_colorbar(colorbar):
     colorbar.solids.set_picker(True)
 
 
-def draw_data_table(data, ax):
-    exp = np.log10(data.beta[0])
-    prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get((-exp + 2.7) // 3, ("", 1))
-    colLabels = [
-        f"$M$ ({prefix}Pa)",
-        r"${dM}/{dk} \times {k}/{M}$",
-        "$F_{adh}$ (nN)",
-        "d (nm)",
-        "δ (nm)",
-        "d/δ",
-    ]
-    table = ax.table(
-        [
+def draw_data_table(point_data, ax):
+    assert point_data
+    if len(point_data) == 1:
+        data = next(iter(point_data.values()))
+        exp = np.log10(data.beta[0])
+        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get((-exp + 2.7) // 3, ("", 1))
+        colLabels = [
+            f"$M$ ({prefix}Pa)",
+            r"${dM}/{dk} \times {k}/{M}$",
+            "$F_{adh}$ (nN)",
+            "d (nm)",
+            "δ (nm)",
+            "d/δ",
+        ]
+        table = ax.table(
             [
-                "{:.2f}±{:.2f}".format(data.beta[0] * fac, data.beta_err[0] * fac,),
-                "{:.2e}".format(data.sens[0]),
-                "{:.2f}±{:.2f}".format(data.beta[1], data.beta_err[1]),
-                "{:.2f}".format(data.defl),
-                "{:.2f}".format(data.ind),
-                "{:.2f}".format(data.defl / data.ind),
+                [
+                    "{:.2f}±{:.2f}".format(data.beta[0] * fac, data.beta_err[0] * fac,),
+                    "{:.2e}".format(data.sens[0]),
+                    "{:.2f}±{:.2f}".format(data.beta[1], data.beta_err[1]),
+                    "{:.2f}".format(data.defl),
+                    "{:.2f}".format(data.ind),
+                    "{:.2f}".format(data.defl / data.ind),
+                ],
             ],
-        ],
-        loc="top",
-        colLabels=colLabels,
-        colLoc="right",
-    )
+            loc="top",
+            colLabels=colLabels,
+            colLoc="right",
+        )
+    else:
+        m, sens, fadh, defl, ind, rat = np.transpose(
+            [
+                (
+                    data.beta[0],
+                    data.sens[0],
+                    data.beta[1],
+                    data.defl,
+                    data.ind,
+                    data.defl / data.ind,
+                )
+                for data in point_data.values()
+            ],
+        )
+        exp = np.log10(np.mean(m))
+        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get((-exp + 2.7) // 3, ("", 1))
+        colLabels = [
+            f"$M$ ({prefix}Pa)",
+            r"${dM}/{dk} \times {k}/{M}$",
+            "$F_{adh}$ (nN)",
+            "d (nm)",
+            "δ (nm)",
+            "d/δ",
+        ]
+        table = ax.table(
+            [
+                [
+                    "{:.2f}±{:.2f}".format(np.mean(m) * fac, np.std(m, ddof=1) * fac,),
+                    "{:.2e}±{:.2e}".format(np.mean(sens), np.std(sens, ddof=1)),
+                    "{:.2f}±{:.2f}".format(np.mean(fadh), np.std(fadh, ddof=1)),
+                    "{:.2f}±{:.2f}".format(np.mean(defl), np.std(defl, ddof=1)),
+                    "{:.2f}±{:.2f}".format(np.mean(ind), np.std(ind, ddof=1)),
+                    "{:.2f}±{:.2f}".format(np.mean(rat), np.std(rat, ddof=1)),
+                ],
+            ],
+            loc="top",
+            colLabels=colLabels,
+            colLoc="right",
+        )
     table.auto_set_font_size(False)
     table.set_fontsize(9)
     table.auto_set_column_width(range(len(colLabels)))
