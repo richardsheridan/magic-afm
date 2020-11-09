@@ -181,6 +181,8 @@ fits. If you select multiple points, the average of the values of those points
 will be displayed. Note that the current calculation assumes you are using the GCI/GetReal/Qf1.3
 calibration method, as is current best practice. If you are doing hard-contact +
 thermal calibration, you must approximately double the relative sensitivity value.
+For calibrations that do not involve the equipartition theorem, the sensitivity
+value reported is not applicable.
 
 Additionally, fitting plots a curve labeled "Model" for the best-fit estimate.
 If viewing in d vs z mode, "Surface Z" indicates the apparent height of the
