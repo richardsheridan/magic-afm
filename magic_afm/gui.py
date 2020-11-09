@@ -1428,7 +1428,7 @@ def draw_force_curve(data, plot_ax, options):
             aex(plot_ax.plot(data.delta[data.split :], data.f[data.split :], label="Retract"))
     else:
         raise ValueError("Unknown DispKind: ", data.disp_kind)
-    aap(plot_ax.legend())
+    plot_ax.legend(handles=artists)
     return artists, artists[0].get_color()
 
 
