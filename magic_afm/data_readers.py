@@ -37,7 +37,7 @@ def mmap_path_read_only(str_path):
     import mmap
 
     with open(str_path, "rb", buffering=0) as file:
-        return mmap.mmap(file.fileno(), 0, None, mmap.ACCESS_READ)
+        return mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
 
 
 async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
@@ -265,16 +265,16 @@ class ForceMapWorker:
         # We only care about 2 channels, Defl and ZSnsr
         # Convert channels array to a map that can be used to index into ForceMap data by name
         # chanmap should always be {'Defl':1,'ZSnsr':2} but it's cheap to calculate
-        self.chanmap = {
+        chanmap = {
             key.decode("utf8"): index
             for index, key in enumerate(self.force_curves.attrs["Channels"])
         }
+        # We could slice with "1:" if chanmap were constant but I'm not sure if it is
+        self.defl_zsnsr_row_slice = [chanmap["Defl"], chanmap["ZSnsr"]]
 
     def _shared_get_part(self, curve, s):
         # Index into the data and grab the Defl and Zsnsr ext and ret arrays as one 2D array
-        # We could slice with "1:" if chanmap were constant but I'm not sure if it is
-        defl_zsnsr_rows = [self.chanmap["Defl"], self.chanmap["ZSnsr"]]
-        defl_zsnsr = curve[defl_zsnsr_rows, :]  # XXX Read h5data
+        defl_zsnsr = curve[self.defl_zsnsr_row_slice, :]  # XXX Read h5data
 
         # we are happy to throw away data far from the surface to square up the data
         # Also reverse axis zero so data is ordered zsnsr,defl like we did for FFM
@@ -405,6 +405,7 @@ class ARH5File(BaseForceVolumeFile):
         self.shape = await trs(lambda name: images[name].shape, next(iter(image_names)))
 
         self.k = float(self.notes["SpringConstant"])
+        # what about FastScanSize and SlowScanSize?
         self.scansize = float(self.notes["ScanSize"]) * NANOMETER_UNIT_CONVERSION
         self.defl_sens = self._defl_sens_orig = float(self.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
         self.npts, self.split = worker.npts, worker.split
@@ -543,7 +544,7 @@ class QNMWorker(BrukerWorkerBase):
 
         image, scandown = self.get_image("Height Sensor")
         image *= NANOMETER_UNIT_CONVERSION
-        self.height_for_z = image, scandown
+        self.height_for_z = image
         amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
         self.z_basis = -amp * np.cos(
             np.linspace(0, 2 * np.pi, npts, endpoint=False, dtype=np.float32)
@@ -561,8 +562,7 @@ class QNMWorker(BrukerWorkerBase):
         d = np.roll(d, s - sync_dist)  # TODO roll across two adjacent indents
 
         # need to infer z from amp/height
-        image, scandown = self.height_for_z
-        z = self.z_basis - image[r, c]
+        z = self.z_basis - self.height_for_z[r, c]
 
         return z, d
 
@@ -591,6 +591,10 @@ class NanoscopeFile(BaseForceVolumeFile):
         # \Frame direction: Down
         # \Line Direction: Retrace
         # \Z direction: Retract
+
+        # and in the image lists
+        # \Aspect Ratio: 1:1
+        # \Scan Size: 800 800 nm
 
         self._file_image_names = header["Image"].keys()
 
