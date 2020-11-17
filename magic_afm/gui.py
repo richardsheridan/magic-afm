@@ -1462,13 +1462,12 @@ def draw_force_curve(data, plot_ax, options):
             )
             aex(
                 plot_ax.plot(
-                    data.ind + data.mindelta - data.beta[2],
-                    data.defl * options.k - data.beta[1],
+                    [data.ind + data.mindelta - data.beta[2], data.mindelta - data.beta[2]],
+                    [data.defl * options.k - data.beta[1], -data.beta[1]],
                     label="Max/Crit",
                     **mopts,
                 )
             )
-            aex(plot_ax.plot(data.mindelta - data.beta[2], -data.beta[1], **mopts,))
         else:
             aex(plot_ax.plot(data.delta[: data.split], data.f[: data.split], label="Extend"))
             aex(plot_ax.plot(data.delta[data.split :], data.f[data.split :], label="Retract"))
