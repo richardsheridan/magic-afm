@@ -1104,14 +1104,13 @@ async def force_volume_task(display, opened_fvol):
 
     @async_tools.spawn_limit(trio.CapacityLimiter(1))
     async def redraw_existing_points():
-        point_data.clear()
-
         def draw_fn():
             for artist in artists:
                 artist.remove()
             display.plot_ax.relim()
             display.plot_ax.set_prop_cycle(None)
             artists.clear()
+            point_data.clear()
 
         await display.canvas.draw_send.send(draw_fn)
         async with spinner_scope():
