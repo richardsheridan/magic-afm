@@ -266,7 +266,7 @@ class ForceMapWorker:
         # Convert channels array to a map that can be used to index into ForceMap data by name
         # chanmap should always be {'Defl':1,'ZSnsr':2} but it's cheap to calculate
         chanmap = {
-            key.decode("utf8"): index
+            key: index
             for index, key in enumerate(self.force_curves.attrs["Channels"])
         }
         # We could slice with "1:" if chanmap were constant but I'm not sure if it is
@@ -393,7 +393,7 @@ class ARH5File(BaseForceVolumeFile):
             dict,
             (
                 line.split(":", 1)
-                for line in h5data.attrs["Note"].decode("utf8").split("\n")
+                for line in h5data.attrs["Note"].split("\n")
                 if ":" in line and "@Line:" not in line
             ),
         )

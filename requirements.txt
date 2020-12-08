@@ -1,11 +1,11 @@
-h5py==2.10.0
+h5py==3.1.0
 imageio==2.9.0
 matplotlib @ git+https://github.com/matplotlib/matplotlib@59bfcfa8ff479d228502e3561e02fe4f70599505
 # matplotlib>=3.4
-# numba @ git+https://github.com/eric-wieser/numba@4ab1b18734f99e76698c576e12e881174a803bd5
+# numba @ git+https://github.com/numba/numba@8ff4314e31c91ede04b7abb8ece6e0d7f0f59f87 # GH#6373
+# numba @ git+https://github.com/sk1p/numba@d2e5aa63c1b8702674920c199d2fd9cccb7f26c3 # GH#6284
 psutil==5.7.3
-pyinstaller @ git+https://github.com/pyinstaller/pyinstaller@008e15774ddd3e01fa28f961e49bdc90c20b67d4
-# pyinstaller>4.0
+pyinstaller==4.1
 numpy==1.19.3
 threadpoolctl==2.1.0
 tqdm @ git+https://github.com/richardsheridan/tqdm/@3caa265562afc68e8ea9e2355502a85cb5084a54
