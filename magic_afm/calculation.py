@@ -850,7 +850,7 @@ def calc_properties_imap(delta_f_i_kwargs):
         ind_mod_sens_k = (ind_mod_perturb - ind_mod) / ind_mod / eps
         properties = (
             ind_mod * 1e9,
-            -adh_force / 1e9,
+            adh_force / 1e9,
             deflection / 1e9,
             indentation / 1e9,
             -z_true_surface / 1e9,
