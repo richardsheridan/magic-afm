@@ -70,7 +70,7 @@ from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
 from matplotlib.ticker import EngFormatter
 from matplotlib.transforms import Bbox, BboxTransform
-from tqdm.gui import tqdm_tk
+from tqdm.tk import tqdm_tk
 from tqdm.std import TqdmExperimentalWarning
 import imageio
 
@@ -907,7 +907,11 @@ async def force_volume_task(display, opened_fvol):
             pbar = tqdm_tk(
                 total=ncurves,
                 desc="Loading and resampling force curves...",
-                smoothing_time=2,
+                bar_format=(
+                    "{n_fmt}/{total_fmt}, {rate_noinv_fmt}\n"
+                    "{elapsed} elapsed, {remaining} ETA\n\n"
+                    "{percentage:3.0f}%"
+                ),
                 mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 2,
                 unit=" curves",
                 tk_parent=display.tkwindow,
@@ -975,9 +979,8 @@ async def force_volume_task(display, opened_fvol):
 
             pbar.set_description_str("Fitting force curves...")
             pbar.unit = " fits"
-            pbar.avg_time = None
             pbar.reset(total=ncurves)
-            pbar.smoothing_time = 0.1
+            pbar.smoothing = 1/120
             property_map = np.empty(
                 ncurves, dtype=np.dtype([(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]),
             )
@@ -994,12 +997,7 @@ async def force_volume_task(display, opened_fvol):
                     zip(delta, f, range(ncurves), repeat(optionsdict)),
                     16,  # chunksize, but sadly can't use kwarg
                 )
-                t0 = trio.current_time()
-                check_time = True
                 async for i, properties in property_aiter:
-                    if check_time and (trio.current_time() - t0 > 10):
-                        check_time = False
-                        pbar.smoothing_time = 5
                     if properties is None:
                         property_map[i] = np.nan
                         color = (1, 0, 0, 0.5)

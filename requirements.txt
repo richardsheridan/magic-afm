@@ -8,6 +8,6 @@ psutil==5.7.3
 pyinstaller==4.1
 numpy==1.19.3
 threadpoolctl==2.1.0
-tqdm @ git+https://github.com/richardsheridan/tqdm/@3caa265562afc68e8ea9e2355502a85cb5084a54
+tqdm==4.56.0
 trio==0.17.0
 samplerate==0.1.0
