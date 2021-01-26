@@ -1584,6 +1584,8 @@ async def open_task(root):
                 return
         if cscope.cancelled_caught:
             return
+        else:
+            suffix = path.suffix.lower()
 
     async with data_readers.SUFFIX_FVFILE_MAP[suffix](path) as opened_fv:
         with ForceVolumeTkDisplay(root, path.name, opened_fv.parameters) as display:
