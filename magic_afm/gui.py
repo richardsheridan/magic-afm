@@ -904,118 +904,90 @@ async def force_volume_task(display, opened_fvol):
 
         async with spinner_scope() as cancel_scope:
             # assign pbar and progress_image ASAP in case of cancel
-            pbar = tqdm_tk(
+            with tqdm_tk(
                 total=ncurves,
-                desc="Loading and resampling force curves...",
+                desc="Fitting force curves...",
                 bar_format=(
                     "{n_fmt}/{total_fmt}, {rate_noinv_fmt}\n"
                     "{elapsed} elapsed, {remaining} ETA\n\n"
                     "{percentage:3.0f}%"
                 ),
+                smoothing=0.01,
+                # smoothing_time=1,
                 mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 2,
-                unit=" curves",
+                unit=" fits",
                 tk_parent=display.tkwindow,
                 grab=False,
                 leave=False,
                 cancel_callback=cancel_scope.cancel,
-            )
-            progress_image: matplotlib.image.AxesImage = display.img_ax.imshow(
-                np.zeros(img_shape + (4,), dtype="f4"), extent=axesimage.get_extent()
-            )  # transparent initial image, no need to draw
-
-            npts, split = opened_fvol.npts, opened_fvol.split
-            resample = npts > RESAMPLE_NPTS
-            if resample:
-                split = split * RESAMPLE_NPTS // npts
-                npts = RESAMPLE_NPTS
-            if options.fit_mode == calculation.FitMode.EXTEND:
-                sl = slice(split)
-                segment_npts = split
-            elif options.fit_mode == calculation.FitMode.RETRACT:
-                sl = slice(split, None)
-                segment_npts = npts - split
-            else:
-                raise ValueError("Unknown fit_mode: ", options.fit_mode)
-
-            delta = np.empty((ncurves, segment_npts), np.float32)
-            f = np.empty((ncurves, segment_npts), np.float32)
-            first = True
-
-            @async_tools.spawn_limit(async_tools.cpu_bound_limiter)
-            async def resample_helper(i):
-                nonlocal first
-                if first:
-                    pbar.unpause()
-                    first = False
-                z, d = await opened_fvol.get_force_curve(*np.unravel_index(i, img_shape))
-                if resample:
-                    z = await trio.to_thread.run_sync(
-                        calculation.resample_dset,
-                        z,
-                        npts,
-                        True,
-                        cancellable=True,
-                        limiter=trio.CapacityLimiter(1),
-                    )
-                    d = await trio.to_thread.run_sync(
-                        calculation.resample_dset,
-                        d,
-                        npts,
-                        True,
-                        cancellable=True,
-                        limiter=trio.CapacityLimiter(1),
-                    )
-                z = z[sl]
-                d = d[sl]
-                delta[i] = z - d
-                f[i] = d * options.k
-                pbar.update()
-
-            async with trio.open_nursery() as nursery:
-                for i in range(ncurves):
-                    async with async_tools.cpu_bound_limiter:
-                        nursery.start_soon(resample_helper, i)
-                    # await resample_helper(i) # single threaded
-
-            pbar.set_description_str("Fitting force curves...")
-            pbar.unit = " fits"
-            pbar.reset(total=ncurves)
-            pbar.smoothing = 1/120
-            property_map = np.empty(
-                ncurves, dtype=np.dtype([(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]),
-            )
-            progress_array = progress_image.get_array()
-
-            def draw_fn():
-                progress_image.changed()
-                progress_image.pchanged()
-
-            async with trio.open_nursery() as nursery:
-                property_aiter = await nursery.start(
-                    async_tools.to_process_map_unordered,
-                    calculation.calc_properties_imap,
-                    zip(delta, f, range(ncurves), repeat(optionsdict)),
-                    16,  # chunksize, but sadly can't use kwarg
+            ) as pbar:
+                progress_image: matplotlib.image.AxesImage = display.img_ax.imshow(
+                    np.zeros(img_shape + (4,), dtype="f4"), extent=axesimage.get_extent()
+                )  # transparent initial image, no need to draw
+                progress_array = progress_image.get_array()
+                property_map = np.empty(
+                    ncurves,
+                    dtype=np.dtype([(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]),
                 )
-                async for i, properties in property_aiter:
-                    if properties is None:
-                        property_map[i] = np.nan
-                        color = (1, 0, 0, 0.5)
-                    else:
-                        property_map[i] = properties
-                        color = (0, 1, 0, 0.5)
+                imap_send_chan, imap_recv_chan = trio.open_memory_channel(0)
 
-                    pbar.update()
-                    r, c = np.unravel_index(i, img_shape)
-                    progress_array[r, c, :] = color
-                    display.canvas.draw_send.send_nowait(draw_fn)
+                npts, split = opened_fvol.npts, opened_fvol.split
+                resample = npts > RESAMPLE_NPTS
+                if resample:
+                    split = split * RESAMPLE_NPTS // npts
+                    npts = RESAMPLE_NPTS
+
+                if options.fit_mode == calculation.FitMode.EXTEND:
+                    sl = slice(split)
+                elif options.fit_mode == calculation.FitMode.RETRACT:
+                    sl = slice(split, None)
+                else:
+                    raise ValueError("Unknown fit_mode: ", options.fit_mode)
+
+                async def loading_helper():
+                    async with imap_send_chan:
+                        for i in range(ncurves):
+                            z, d = await opened_fvol.get_force_curve(
+                                *np.unravel_index(i, img_shape)
+                            )
+                            if resample:
+                                z, d = await trio.to_thread.run_sync(
+                                    calculation.resample_dset, [z, d], npts, True, cancellable=True,
+                                )
+                            z = z[sl]
+                            d = d[sl]
+                            delta = z - d
+                            f = d * options.k
+                            await imap_send_chan.send((delta, f, i, optionsdict))
+
+                def draw_fn():
+                    progress_image.changed()
+                    progress_image.pchanged()
+
+                async with trio.open_nursery() as nursery:
+                    nursery.start_soon(loading_helper)
+                    property_aiter = await nursery.start(
+                        async_tools.to_process_map_unordered,
+                        calculation.calc_properties_imap,
+                        imap_recv_chan,
+                        16,  # chunksize, but sadly can't use kwarg
+                    )
+                    async for i, properties in property_aiter:
+                        if properties is None:
+                            property_map[i] = np.nan
+                            color = (1, 0, 0, 0.5)
+                        else:
+                            property_map[i] = properties
+                            color = (0, 1, 0, 0.5)
+                        pbar.update()
+                        r, c = np.unravel_index(i, img_shape)
+                        progress_array[r, c, :] = color
+                        display.canvas.draw_send.send_nowait(draw_fn)
 
         def draw_fn():
             progress_image.remove()
 
-        pbar.close()
         await display.canvas.draw_send.send(draw_fn)
-        del delta, f  # patch trio memory leak
 
         if cancel_scope.cancelled_caught:
             return
