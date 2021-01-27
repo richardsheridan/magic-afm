@@ -1541,7 +1541,8 @@ async def open_task(root):
                 total=100,
                 unit="%",
                 leave=False,
-                smoothing_time=0.5,
+                smoothing=0.1,
+                # smoothing_time=0.5,
                 miniters=1,
             )
             try:
