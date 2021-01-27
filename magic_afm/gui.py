@@ -11,7 +11,6 @@ __app_name__ = __doc__.split("\n", 1)[0]
 
 import itertools
 import sys
-from itertools import repeat
 
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     from ._version import __version__
@@ -929,7 +928,6 @@ async def force_volume_task(display, opened_fvol):
                     ncurves,
                     dtype=np.dtype([(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]),
                 )
-                imap_send_chan, imap_recv_chan = trio.open_memory_channel(0)
 
                 npts, split = opened_fvol.npts, opened_fvol.split
                 resample = npts > RESAMPLE_NPTS
@@ -944,32 +942,36 @@ async def force_volume_task(display, opened_fvol):
                 else:
                     raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
-                async def loading_helper():
-                    async with imap_send_chan:
-                        for i in range(ncurves):
-                            z, d = await opened_fvol.get_force_curve(
-                                *np.unravel_index(i, img_shape)
+                async def loading_worker(send_chan, i):
+                    async with async_tools.cpu_bound_limiter:
+                        z, d = await opened_fvol.get_force_curve(*np.unravel_index(i, img_shape))
+                        if resample:
+                            z, d = await trio.to_thread.run_sync(
+                                calculation.resample_dset, [z, d], npts, True, cancellable=True,
                             )
-                            if resample:
-                                z, d = await trio.to_thread.run_sync(
-                                    calculation.resample_dset, [z, d], npts, True, cancellable=True,
-                                )
-                            z = z[sl]
-                            d = d[sl]
-                            delta = z - d
-                            f = d * options.k
-                            await imap_send_chan.send((delta, f, i, optionsdict))
+                    z = z[sl]
+                    d = d[sl]
+                    delta = z - d
+                    f = d * options.k
+                    await send_chan.send((delta, f, i, optionsdict))
+
+                async def loading_helper(task_status):
+                    send_chan, recv_chan = trio.open_memory_channel(0)
+                    task_status.started(recv_chan)
+                    async with send_chan, trio.open_nursery() as n:
+                        for i in range(ncurves):
+                            async with async_tools.cpu_bound_limiter:
+                                n.start_soon(loading_worker, send_chan, i)
 
                 def draw_fn():
                     progress_image.changed()
                     progress_image.pchanged()
 
                 async with trio.open_nursery() as nursery:
-                    nursery.start_soon(loading_helper)
                     property_aiter = await nursery.start(
                         async_tools.to_process_map_unordered,
                         calculation.calc_properties_imap,
-                        imap_recv_chan,
+                        await nursery.start(loading_helper),
                         16,  # chunksize, but sadly can't use kwarg
                     )
                     async for i, properties in property_aiter:
