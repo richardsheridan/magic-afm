@@ -898,6 +898,7 @@ async def force_volume_task(display, opened_fvol):
         optionsdict = dataclasses.asdict(options)
         img_shape = opened_fvol.shape
         ncurves = img_shape[0] * img_shape[1]
+        chunksize = 16
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
 
@@ -942,18 +943,19 @@ async def force_volume_task(display, opened_fvol):
                 else:
                     raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
-                async def loading_worker(send_chan, i):
+                async def loading_worker(send_chan, i, task_status):
+                    task_status.started()
                     async with async_tools.cpu_bound_limiter:
                         z, d = await opened_fvol.get_force_curve(*np.unravel_index(i, img_shape))
                         if resample:
                             z, d = await trio.to_thread.run_sync(
                                 calculation.resample_dset, [z, d], npts, True, cancellable=True,
                             )
-                    z = z[sl]
-                    d = d[sl]
-                    delta = z - d
-                    f = d * options.k
-                    await send_chan.send((delta, f, i, optionsdict))
+                        z = z[sl]
+                        d = d[sl]
+                        delta = z - d
+                        f = d * options.k
+                        await send_chan.send((delta, f, i, optionsdict))
 
                 async def loading_helper(task_status):
                     send_chan, recv_chan = trio.open_memory_channel(0)
@@ -961,7 +963,7 @@ async def force_volume_task(display, opened_fvol):
                     async with send_chan, trio.open_nursery() as n:
                         for i in range(ncurves):
                             async with async_tools.cpu_bound_limiter:
-                                n.start_soon(loading_worker, send_chan, i)
+                                await n.start(loading_worker, send_chan, i)
 
                 def draw_fn():
                     progress_image.changed()
@@ -972,7 +974,7 @@ async def force_volume_task(display, opened_fvol):
                         async_tools.to_process_map_unordered,
                         calculation.calc_properties_imap,
                         await nursery.start(loading_helper),
-                        16,  # chunksize, but sadly can't use kwarg
+                        chunksize,
                     )
                     async for i, properties in property_aiter:
                         if properties is None:
