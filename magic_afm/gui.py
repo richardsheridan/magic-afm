@@ -12,6 +12,8 @@ __app_name__ = __doc__.split("\n", 1)[0]
 import itertools
 import sys
 
+import trio_parallel
+
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     from ._version import __version__
 else:
@@ -1640,8 +1642,7 @@ async def about_task(root):
                 + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
             )
             process.set(
-                "Worker Processes: "
-                + str(0 if async_tools.EXECUTOR is None else len(async_tools.EXECUTOR._processes))
+                "Idle worker processes: " + str(len(trio_parallel._worker_processes.PROC_CACHE))
             )
             await trio.sleep_until(t + interval / 1000)
 

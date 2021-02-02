@@ -26,72 +26,13 @@ from contextlib import asynccontextmanager
 from functools import partial, wraps
 from itertools import islice
 import trio
+import trio_parallel
 
 TOOLTIP_CANCEL = None, None, None
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 
 cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count())
 trs = partial(trio.to_thread.run_sync, cancellable=True)
-
-EXECUTOR = None
-
-
-async def start_global_executor():
-    global EXECUTOR
-    if EXECUTOR is None:
-        EXECUTOR = ProcessPoolExecutor(cpu_bound_limiter.total_tokens)
-        with trio.CancelScope(shield=True):
-            # submit trash to start processes
-            # afterward EXECUTOR.submit() can be considered nonblocking
-            # from cpython 3.9 need to make sure to start all processes GH19453
-            await to_thread_map_unordered(
-                partial(EXECUTOR.submit, int),
-                range(cpu_bound_limiter.total_tokens),
-                limiter=trio.CapacityLimiter(cpu_bound_limiter.total_tokens),
-            )
-            assert len(EXECUTOR._processes) == cpu_bound_limiter.total_tokens
-            import psutil
-
-            # noinspection PyUnresolvedReferences,PyProtectedMember
-            for pid in EXECUTOR._processes:
-                try:
-                    nice = psutil.BELOW_NORMAL_PRIORITY_CLASS
-                except AttributeError:
-                    nice = 3
-                psutil.Process(pid).nice(nice)
-
-
-async def to_process_run_sync(sync_fn, *args, cancellable=False, limiter=cpu_bound_limiter):
-    """Run sync_fn in a separate process
-
-    This is a simple wrapping of concurrent.futures.ProcessPoolExecutor.submit
-    that follows the API of trio.to_thread.run_sync.
-
-    If submitting many sync_fn calls a slightly more efficient method may be
-    to_process_map_unordered."""
-    await start_global_executor()
-    done_event = trio.Event()
-    trio_token = trio.lowlevel.current_trio_token()
-
-    def done_callback(cf_fut):
-        trio_token.run_sync_soon(done_event.set)
-
-    async with limiter:
-        cf_fut = EXECUTOR.submit(sync_fn, *args)
-        try:
-            cf_fut.add_done_callback(done_callback)
-            with trio.CancelScope(shield=not cancellable):
-                await done_event.wait()
-            return cf_fut.result(timeout=0)
-        except:  # noqa: E722
-            # This only does anything when an error is thrown in
-            # add_done_callback or a trio cancel comes, but only in the very
-            # rare case that it happens before the future's job is sent to a
-            # process.
-            # Running futures cannot be cancelled, so prefer cancellable=False
-            # or beware zombie processes here.
-            cf_fut.cancel()
-            raise
 
 
 def _chunk_producer(fn, job_items, chunksize):
@@ -208,7 +149,7 @@ async def to_process_map_unordered(
     Using nursery.start() on this function produces a MemoryRecieveChannel
     with no buffer to receive results as-completed."""
     return await to_sync_runner_map_unordered(
-        to_process_run_sync,
+        trio_parallel.run_sync,
         sync_fn,
         job_items,
         chunksize=chunksize,
