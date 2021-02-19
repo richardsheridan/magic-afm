@@ -230,11 +230,11 @@ class ImageStats:
 
 
 class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
-    def __init__(self, figure, master=None, resize_callback=None):
+    def __init__(self, figure, master=None):
         self._resize_cancels_pending = set()
         self.draw_send, self.draw_recv = trio.open_memory_channel(float("inf"))
 
-        super().__init__(figure, master, resize_callback)
+        super().__init__(figure, master)
 
         self._tkcanvas.configure(background="gray94")  # surely there's a better name...
 
@@ -286,8 +286,6 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         for cancel_box in self._resize_cancels_pending:
             cancel_box.content = True
         self._resize_cancels_pending.clear()
-        if self._resize_callback is not None:
-            self._resize_callback(event)
 
         # compute desired figure size in inches
         dpival = self.figure.dpi
