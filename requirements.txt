@@ -12,5 +12,5 @@ threadpoolctl==2.1.0
 tqdm==4.57.0
 # tqdm @ git+https://github.com/richardsheridan/tqdm@7bb54b5d8582cf578df6581a202410d9795969b2 # GH#1005
 trio==0.18.0
-trio-parallel==0.2.0
+trio-parallel==0.3.0
 samplerate==0.1.0

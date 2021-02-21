@@ -1628,7 +1628,7 @@ async def about_task(root):
                 + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
             )
             process.set(
-                "Idle worker processes: " + str(len(trio_parallel._worker_processes.PROC_CACHE))
+                "Idle worker processes: " + str(len(trio_parallel._impl.WORKER_CACHE))
             )
             await trio.sleep_until(t + interval / 1000)
 
