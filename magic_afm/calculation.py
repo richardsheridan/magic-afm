@@ -185,45 +185,44 @@ def resample_dset(X, npts, fourier):
     else:
         tnew = np.linspace(0, 1, npts, endpoint=False)
         told = np.linspace(0, 1, X.shape[-1], endpoint=False)
-        return np.stack([np.interp(tnew, told, x,) for x in X]).squeeze()
+        return np.stack([np.interp(tnew, told, x) for x in X]).squeeze()
 
 
 @myjit
 def secant(func, args, x0, x1):
     """Secant method from scipy optimize but stripping np.isclose for speed
-    
-Copyright (c) 2001-2002 Enthought, Inc.  2003-2019, SciPy Developers.
-All rights reserved.
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
+    Copyright (c) 2001-2002 Enthought, Inc.  2003-2019, SciPy Developers.
+    All rights reserved.
 
-1. Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer.
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions
+    are met:
 
-2. Redistributions in binary form must reproduce the above
-   copyright notice, this list of conditions and the following
-   disclaimer in the documentation and/or other materials provided
-   with the distribution.
+    1. Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
 
-3. Neither the name of the copyright holder nor the names of its
-   contributors may be used to endorse or promote products derived
-   from this software without specific prior written permission.
+    2. Redistributions in binary form must reproduce the above
+       copyright notice, this list of conditions and the following
+       disclaimer in the documentation and/or other materials provided
+       with the distribution.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+    3. Neither the name of the copyright holder nor the names of its
+       contributors may be used to endorse or promote products derived
+       from this software without specific prior written permission.
 
-"""
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+    OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+    LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+    DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+    THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+    """
     p0 = x0 * 1.0
     tol = RT_EPS
     maxiter = 50
@@ -264,38 +263,37 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 def brentq(func, args, xa, xb):
     """Transliterated from SciPy Zeros/brentq.c
 
-Copyright (c) 2001-2002 Enthought, Inc.  2003-2019, SciPy Developers.
-All rights reserved.
+    Copyright (c) 2001-2002 Enthought, Inc.  2003-2019, SciPy Developers.
+    All rights reserved.
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions
+    are met:
 
-1. Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer.
+    1. Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
 
-2. Redistributions in binary form must reproduce the above
-   copyright notice, this list of conditions and the following
-   disclaimer in the documentation and/or other materials provided
-   with the distribution.
+    2. Redistributions in binary form must reproduce the above
+       copyright notice, this list of conditions and the following
+       disclaimer in the documentation and/or other materials provided
+       with the distribution.
 
-3. Neither the name of the copyright holder nor the names of its
-   contributors may be used to endorse or promote products derived
-   from this software without specific prior written permission.
+    3. Neither the name of the copyright holder nor the names of its
+       contributors may be used to endorse or promote products derived
+       from this software without specific prior written permission.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-"""
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+    OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+    LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+    DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+    THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+    """
     xtol = RT_EPS
     maxiter = 50
     xpre = xa
@@ -372,42 +370,41 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 def mylinspace(start, stop, num, endpoint):
     """np.linspace is surprisingly intensive, so trim the fat
 
-Copyright (c) 2005-2020, NumPy Developers.
-All rights reserved.
+    Copyright (c) 2005-2020, NumPy Developers.
+    All rights reserved.
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are
-met:
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are
+    met:
 
-    * Redistributions of source code must retain the above copyright
-       notice, this list of conditions and the following disclaimer.
+        * Redistributions of source code must retain the above copyright
+           notice, this list of conditions and the following disclaimer.
 
-    * Redistributions in binary form must reproduce the above
-       copyright notice, this list of conditions and the following
-       disclaimer in the documentation and/or other materials provided
-       with the distribution.
+        * Redistributions in binary form must reproduce the above
+           copyright notice, this list of conditions and the following
+           disclaimer in the documentation and/or other materials provided
+           with the distribution.
 
-    * Neither the name of the NumPy Developers nor the names of any
-       contributors may be used to endorse or promote products derived
-       from this software without specific prior written permission.
+        * Neither the name of the NumPy Developers nor the names of any
+           contributors may be used to endorse or promote products derived
+           from this software without specific prior written permission.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-"""
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+    OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+    LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+    DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+    THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+    """
     delta = stop - start
     div = (num - 1) if endpoint else num
 
-    y = np.arange(0.0, num,)
+    y = np.arange(0.0, num)
     y *= delta / div
     y += start
     if endpoint and num > 1:
@@ -479,7 +476,7 @@ lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))  # de
 @myjit
 def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset):
     """Calculate a leonard-Jones force curve.
-    
+
     Prefactor scaled such that minimum slope is at delta=1/delta_scale"""
     nondim_position = (delta - delta_offset) / delta_scale
     # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
@@ -490,7 +487,7 @@ def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset):
 @myjit
 def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
     """Gradient of lj_force.
-    
+
     Offset is useful for root finding (reduced spring constant matching)"""
     nondim_position = (delta - delta_offset) / delta_scale
     # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
@@ -506,17 +503,17 @@ def interp_with_offset(x, xp, fp, offset):
 
 def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
     """Calculate, in reduced units, an extent Schwarz curve with long range LJ potential and snap-off physics.
-    
+
     MUCH LESS TESTED THAN RED_RETRACT
-    
+
     Following the broad example of Lin (2007) and Johnson (1997), we combine the stable branch of the
     Schwarz potential with a long range Leonard-Jones potential via finite-k snap-off physics.
-    
+
     To do this, we build two curves, one for each physical model. The LJ potential is clipped
     above where its slope equals the reduced lever spring constant and replaced with a tangent line.
     The Schwarz potential is clipped at the intersection point and replaced with negative infinities.
     Doing so makes the higher of the two curves at all points give the result.
-    
+
     Or in pithy math form we want
     maximum(NINF⌢S, LJ⌢snap)
     """
@@ -539,7 +536,11 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
         lj_limit_factor * lj_delta_scale + lj_delta_offset,
     )
     try:
-        lj_end_pos = brentq(lj_gradient, args, *bracket,)
+        lj_end_pos = brentq(
+            lj_gradient,
+            args,
+            *bracket,
+        )
     except ValueError as e:
         if str(e) != "f(a) and f(b) must have different signs":
             raise
@@ -574,15 +575,15 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
 
 def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     """Calculate, in reduced units, a retract Schwarz curve with long range LJ potential and snap-off physics.
-    
+
     Following the broad example of Lin (2007) and Johnson (1997), we combine the unstable branch
     of the Schwarz potential with a long range Leonard-Jones potential via finite-k snap-off physics.
-    
+
     To do this, we build two curves, one for each physical model. The unstable Schwarz branch is clipped
     below where its slope equals the reduced lever spring constant and replaced with a tangent line.
     The LJ potential is clipped at it's minimum (positioned by definition at (red_deltac, red_fc)) and
     replaced with infinities. Doing so makes the lower of the two curves at all points give the result.
-    
+
     Or in pithy math form we want
     minimum(snap⌢S, LJ⌢INF)
     """
@@ -667,7 +668,7 @@ def force_curve(red_curve, delta, k, radius, M, fc, tau, delta_shift, force_shif
     lj_delta_scale = lj_delta_scale / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
-    red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale,)
+    red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale)
 
     # Rescale to dimensioned units
     return (red_force * ref_force) + force_shift
@@ -694,7 +695,7 @@ def delta_curve(red_curve, force, k, radius, M, fc, tau, delta_shift, force_shif
     lj_delta_scale = lj_delta_scale / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
-    red_delta = red_curve(red_force, red_fc, -red_k, -lj_delta_scale,)
+    red_delta = red_curve(red_force, red_fc, -red_k, -lj_delta_scale)
 
     # Rescale to dimensioned units
     return (red_delta * ref_delta) + delta_shift
@@ -753,23 +754,19 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=lambda: None, p
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
-    def partial_force_curve(
-        delta, M, fc, delta_shift, force_shift, lj_delta_scale,
-    ):
+    def partial_force_curve(delta, M, fc, delta_shift, force_shift, lj_delta_scale):
         cancel_poller()
-        if np.any(np.isnan((M, fc, delta_shift, force_shift, lj_delta_scale,))):
+        if np.any(np.isnan((M, fc, delta_shift, force_shift, lj_delta_scale))):
             print("Fit likely failed: NaNs in params")
             return np.full_like(delta, np.nan)
         return force_curve(
-            red_curve, delta, k, radius, M, -fc, tau, delta_shift, force_shift, lj_delta_scale,
+            red_curve, delta, k, radius, M, -fc, tau, delta_shift, force_shift, lj_delta_scale
         )
 
     try:
         beta, cov = curve_fit(partial_force_curve, delta, force, p0=p0, bounds=bounds)
     except Exception as e:
-        traceback.print_exception(
-            type(e), e, e.__traceback__,
-        )
+        traceback.print_exception(type(e), e, e.__traceback__)
         print(p0)
         beta = np.full_like(p0, np.nan)
         cov = np.diag(beta)
@@ -778,9 +775,7 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=lambda: None, p
 
 
 def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
-    """Calculate deflection, indentation, z_true_surface given deflection data and parameters.
-    
-    """
+    """Calculate deflection, indentation, z_true_surface given deflection data and parameters."""
     M, fc, delta_shift, force_shift, lj_delta_scale, *_ = beta
 
     # sign convention mismatch
@@ -798,7 +793,7 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
 
     maxforce = force[sl].mean()
     maxdelta = delta_curve(
-        schwarz_wrap, maxforce, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale,
+        schwarz_wrap, maxforce, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale
     )
     mindelta = delta_curve(
         schwarz_wrap,
@@ -814,7 +809,7 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
     )
     zeroindforce = float(
         force_curve(
-            red_curve, delta_shift, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale,
+            red_curve, delta_shift, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale
         )
     )
 

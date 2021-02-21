@@ -72,7 +72,7 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
 
     try:
         async with await trio.open_process(
-            [str(conv_path), str(ardf_path), str(h5file_path),],
+            [str(conv_path), str(ardf_path), str(h5file_path)],
             stderr=pipe,
             stdout=pipe,
             startupinfo=STARTUPINFO(dwFlags=STARTF_USESHOWWINDOW),
@@ -265,10 +265,7 @@ class ForceMapWorker:
         # We only care about 2 channels, Defl and ZSnsr
         # Convert channels array to a map that can be used to index into ForceMap data by name
         # chanmap should always be {'Defl':1,'ZSnsr':2} but it's cheap to calculate
-        chanmap = {
-            key: index
-            for index, key in enumerate(self.force_curves.attrs["Channels"])
-        }
+        chanmap = {key: index for index, key in enumerate(self.force_curves.attrs["Channels"])}
         # We could slice with "1:" if chanmap were constant but I'm not sure if it is
         self.defl_zsnsr_row_slice = [chanmap["Defl"], chanmap["ZSnsr"]]
 
@@ -407,7 +404,9 @@ class ARH5File(BaseForceVolumeFile):
         self.k = float(self.notes["SpringConstant"])
         # what about FastScanSize and SlowScanSize?
         self.scansize = float(self.notes["ScanSize"]) * NANOMETER_UNIT_CONVERSION
-        self.defl_sens = self._defl_sens_orig = float(self.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
+        self.defl_sens = self._defl_sens_orig = (
+            float(self.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
+        )
         self.npts, self.split = worker.npts, worker.split
 
     async def aclose(self):
@@ -426,9 +425,9 @@ class ARH5File(BaseForceVolumeFile):
                 )
                 self._trace = True
             elif "0" in h5data["FFM"]:
-                worker = FFMSingleWorker(h5data["FFM"]["0"]["Raw"], h5data["FFM"]["0"]["Defl"],)
+                worker = FFMSingleWorker(h5data["FFM"]["0"]["Raw"], h5data["FFM"]["0"]["Defl"])
             else:
-                worker = FFMSingleWorker(h5data["FFM"]["Raw"], h5data["FFM"]["Defl"],)
+                worker = FFMSingleWorker(h5data["FFM"]["Raw"], h5data["FFM"]["Defl"])
         else:
             self._scandown = bool(self.notes["FMapScanDown"])
             worker = ForceMapWorker(h5data)
@@ -484,7 +483,7 @@ class BrukerWorkerBase(metaclass=abc.ABCMeta):
         assert data_length == self.shape[0] * self.shape[1] * bpp
         scandown = h["Frame direction"] == "Down"
         return (
-            np.ndarray(shape=self.shape, dtype=f"i{bpp}", buffer=self.mm, offset=offset,) * scale,
+            np.ndarray(shape=self.shape, dtype=f"i{bpp}", buffer=self.mm, offset=offset) * scale,
             scandown,
         )
 
@@ -500,7 +499,7 @@ class FFVWorker(BrukerWorkerBase):
             bpp = bruker_bpp_fix(subheader["Bytes/pixel"], self.version)
             length = int(subheader["Data length"])
             npts = length // (r * c * bpp)
-            data = np.ndarray(shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset,)
+            data = np.ndarray(shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset)
             if name == "Height Sensor":
                 self.z_ints = data
                 value = subheader["@4:Z scale"]
@@ -538,7 +537,7 @@ class QNMWorker(BrukerWorkerBase):
         offset = int(subheader["Data offset"])
         npts = length // (r * c * bpp)
 
-        self.d_ints = np.ndarray(shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset,)
+        self.d_ints = np.ndarray(shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset)
         value = subheader["@4:Z scale"]
         self.defl_hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
 

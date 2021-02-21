@@ -304,9 +304,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             self._tkphoto = tk.PhotoImage(
                 master=self._tkcanvas, width=int(width), height=int(height)
             )
-            self._tkcanvas.create_image(
-                int(width / 2), int(height / 2), image=self._tkphoto,
-            )
+            self._tkcanvas.create_image(int(width / 2), int(height / 2), image=self._tkphoto)
             self.figure.set_tight_layout(True)
             self.resize_event()  # draw_idle called in here
             self._resize_cancels_pending.discard(cancel_box)
@@ -316,9 +314,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
     def teach_canvas_to_use_trio(self, nursery, spinner_scope, async_motion_pick_fn):
         self._tkcanvas.bind("<Configure>", partial(nursery.start_soon, self.aresize))
         self.spinner_scope = spinner_scope
-        self.mpl_connect(
-            "motion_notify_event", partial(nursery.start_soon, async_motion_pick_fn),
-        )
+        self.mpl_connect("motion_notify_event", partial(nursery.start_soon, async_motion_pick_fn))
         self.mpl_connect("pick_event", partial(nursery.start_soon, async_motion_pick_fn))
 
 
@@ -391,7 +387,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
                     image = image[::-1]
                 try:
                     await trio.to_thread.run_sync(
-                        exporter, root + "_" + image_name[4:] + ext, image,
+                        exporter, root + "_" + image_name[4:] + ext, image
                     )
                 except Exception as e:
                     await trio.to_thread.run_sync(
@@ -455,12 +451,8 @@ class TkHost:
             date = datetime.datetime.now().isoformat().replace(":", ";")
             with open(f"traceback-{date}.dump", "w") as file:
                 exc = outcome_.error
-                traceback.print_exception(
-                    type(exc), exc, exc.__traceback__, file=file,
-                )
-                traceback.print_exception(
-                    type(exc), exc, exc.__traceback__,
-                )
+                traceback.print_exception(type(exc), exc, exc.__traceback__, file=file)
+                traceback.print_exception(type(exc), exc, exc.__traceback__)
         self.root.destroy()
 
 
@@ -518,7 +510,7 @@ class ForceVolumeTkDisplay:
         image_name_labelframe = ttk.Labelframe(image_opts_frame, text="Image")
         self.image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
         self.image_name_menu = ttk.Combobox(
-            image_name_labelframe, width=12, state="readonly", textvariable=self.image_name_strvar,
+            image_name_labelframe, width=12, state="readonly", textvariable=self.image_name_strvar
         )
         unbind_mousewheel(self.image_name_menu)
         self.image_name_menu.pack(fill="x")
@@ -810,7 +802,7 @@ class ForceVolumeTkDisplay:
     ):
         self.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
         self.calc_props_button.configure(
-            command=partial(nursery.start_soon, calc_prop_map_callback,)
+            command=partial(nursery.start_soon, calc_prop_map_callback)
         )
         self.colormap_strvar.trace_add(
             "write", impartial(partial(nursery.start_soon, change_cmap_callback))
@@ -949,7 +941,7 @@ async def force_volume_task(display, opened_fvol):
                         z, d = await opened_fvol.get_force_curve(*np.unravel_index(i, img_shape))
                         if resample:
                             z, d = await trio.to_thread.run_sync(
-                                calculation.resample_dset, [z, d], npts, True, cancellable=True,
+                                calculation.resample_dset, [z, d], npts, True, cancellable=True
                             )
                         z = z[sl]
                         d = d[sl]
@@ -997,7 +989,7 @@ async def force_volume_task(display, opened_fvol):
             return
 
         combobox_values = list(display.image_name_menu.cget("values"))
-        property_map = property_map.reshape((*img_shape, -1,))
+        property_map = property_map.reshape((*img_shape, -1))
 
         # Actually write out results to external world
         if options.fit_mode == calculation.FitMode.EXTEND:
@@ -1057,13 +1049,13 @@ async def force_volume_task(display, opened_fvol):
             axesimage = display.img_ax.imshow(
                 image_array,
                 origin="lower" if scandown else "upper",
-                extent=(-s, s, -s, s,),
+                extent=(-s, s, -s, s),
                 picker=True,
                 cmap=cmap,
             )
             axesimage.get_array().fill_value = np.nan
 
-            colorbar = display.fig.colorbar(axesimage, ax=display.img_ax, use_gridspec=True,)
+            colorbar = display.fig.colorbar(axesimage, ax=display.img_ax, use_gridspec=True)
             display.navbar.update()  # let navbar catch new cax in fig for tooltips
             customize_colorbar(colorbar, image_stats.q01, image_stats.q99, unit)
 
@@ -1109,9 +1101,7 @@ async def force_volume_task(display, opened_fvol):
             manip_fn = calculation.MANIPULATIONS[manip_name]
             async with spinner_scope():
                 manip_img = await trs(manip_fn, np.ma.getdata(axesimage.get_array()))
-            opened_fvol.add_image(
-                name, unit, scandown, manip_img,
-            )
+            opened_fvol.add_image(name, unit, scandown, manip_img)
             if name not in current_names:
                 current_names.append(name)
             display.reset_image_name_menu(current_names)
@@ -1206,7 +1196,7 @@ async def force_volume_task(display, opened_fvol):
                     )
                 )
                 if options.fit_mode:
-                    table = draw_data_table(point_data, display.plot_ax,)
+                    table = draw_data_table(point_data, display.plot_ax)
 
             await display.canvas.draw_send.send(draw_fn)
 
@@ -1271,7 +1261,7 @@ async def force_volume_task(display, opened_fvol):
     async with trio.open_nursery() as nursery:
 
         spinner_scope = await nursery.start(
-            async_tools.spinner_task, display.spinner_start, display.spinner_stop,
+            async_tools.spinner_task, display.spinner_start, display.spinner_stop
         )
 
         tooltip_send_chan = await nursery.start(
@@ -1339,7 +1329,7 @@ def draw_data_table(point_data, ax):
     if len(point_data) == 1:
         data = next(iter(point_data.values()))
         exp = np.log10(data.beta[0])
-        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get((-exp + 2.7) // 3, ("", 1))
+        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get((-exp + 2.7) // 3, ("", 1))
         colLabels = [
             f"$M$ ({prefix}Pa)",
             r"${dM}/{dk} \times {k}/{M}$",
@@ -1351,7 +1341,7 @@ def draw_data_table(point_data, ax):
         table = ax.table(
             [
                 [
-                    "{:.2f}±{:.2f}".format(data.beta[0] * fac, data.beta_err[0] * fac,),
+                    "{:.2f}±{:.2f}".format(data.beta[0] * fac, data.beta_err[0] * fac),
                     "{:.2e}".format(data.sens[0]),
                     "{:.2f}±{:.2f}".format(data.beta[1], data.beta_err[1]),
                     "{:.2f}".format(data.defl),
@@ -1378,7 +1368,7 @@ def draw_data_table(point_data, ax):
             ],
         )
         exp = np.log10(np.mean(m))
-        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6),}.get((-exp + 2.7) // 3, ("", 1))
+        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get((-exp + 2.7) // 3, ("", 1))
         colLabels = [
             f"$M$ ({prefix}Pa)",
             r"${dM}/{dk} \times {k}/{M}$",
@@ -1390,7 +1380,7 @@ def draw_data_table(point_data, ax):
         table = ax.table(
             [
                 [
-                    "{:.2f}±{:.2f}".format(np.mean(m) * fac, np.std(m, ddof=1) * fac,),
+                    "{:.2f}±{:.2f}".format(np.mean(m) * fac, np.std(m, ddof=1) * fac),
                     "{:.2e}±{:.2e}".format(np.mean(sens), np.std(sens, ddof=1)),
                     "{:.2f}±{:.2f}".format(np.mean(fadh), np.std(fadh, ddof=1)),
                     "{:.2f}±{:.2f}".format(np.mean(defl), np.std(defl, ddof=1)),
@@ -1431,7 +1421,7 @@ def draw_force_curve(data, plot_ax, options):
             aex(plot_ax.plot(delta[data.split :], f[data.split :], label="Retract"))
             aex(plot_ax.plot(delta[data.sl], f_fit, "--", label="Model"))
             mopts = dict(
-                marker="X", markersize=8, linestyle="", markeredgecolor="k", markerfacecolor="k",
+                marker="X", markersize=8, linestyle="", markeredgecolor="k", markerfacecolor="k"
             )
             aex(
                 plot_ax.plot(
@@ -1461,7 +1451,7 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
     delta = z - d
 
     if not options.fit_mode:
-        return ForceCurveData(split=split, z=z, d=d, f=f, delta=delta,)
+        return ForceCurveData(split=split, z=z, d=d, f=f, delta=delta)
 
     if options.fit_mode == calculation.FitMode.EXTEND:
         sl = slice(split)
@@ -1473,7 +1463,7 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
     cancel_poller()
     optionsdict = dataclasses.asdict(options)
     beta, beta_err, calc_fun = calculation.fitfun(
-        delta[sl], f[sl], **optionsdict, cancel_poller=cancel_poller,
+        delta[sl], f[sl], **optionsdict, cancel_poller=cancel_poller
     )
     f_fit = calc_fun(delta[sl], *beta)
     d_fit = f_fit / options.k
@@ -1483,7 +1473,7 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
     delta_new, f_new, k_new = calculation.perturb_k(delta, f, eps, options.k)
     optionsdict.pop("k")
     beta_perturb, _, _ = calculation.fitfun(
-        delta_new[sl], f_new[sl], k_new, **optionsdict, cancel_poller=cancel_poller,
+        delta_new[sl], f_new[sl], k_new, **optionsdict, cancel_poller=cancel_poller
     )
     sens = (beta_perturb - beta) / beta / eps
     if np.all(np.isfinite(beta)):
@@ -1513,9 +1503,7 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
 
 
 async def open_task(root):
-    """Open a file using a dialog box, then create a window for data analysis
-
-    """
+    """Open a file using a dialog box, then create a window for data analysis"""
     # Choose file
     path = await trs(
         partial(
@@ -1691,7 +1679,7 @@ async def main_task(root):
 
         file_menu = tk.Menu(menu_frame, tearoff=False)
         file_menu.add_command(
-            label="Open...", accelerator="Ctrl+O", underline=0, command=open_callback,
+            label="Open...", accelerator="Ctrl+O", underline=0, command=open_callback
         )
         file_menu.bind("<KeyRelease-o>", func=open_callback)
         root.bind_all("<Control-KeyPress-o>", func=impartial(open_callback))
@@ -1704,13 +1692,11 @@ async def main_task(root):
         menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
 
         help_menu = tk.Menu(menu_frame, tearoff=False)
-        help_menu.add_command(
-            label="Open help", accelerator="F1", underline=5, command=help_action,
-        )
+        help_menu.add_command(label="Open help", accelerator="F1", underline=5, command=help_action)
         help_menu.bind("<KeyRelease-h>", func=help_action)
         root.bind_all("<KeyRelease-F1>", func=impartial(help_action))
         help_menu.add_command(
-            label="About...", accelerator=None, underline=0, command=about_callback,
+            label="About...", accelerator=None, underline=0, command=about_callback
         )
         help_menu.bind("<KeyRelease-a>", func=about_callback)
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
@@ -1749,12 +1735,8 @@ def main():
         date = datetime.datetime.now().isoformat().replace(":", ";")
         with open(f"traceback-{date}.dump", "w") as file:
             exc = outcome_.error
-            traceback.print_exception(
-                type(exc), exc, exc.__traceback__, file=file,
-            )
-            traceback.print_exception(
-                type(exc), exc, exc.__traceback__,
-            )
+            traceback.print_exception(type(exc), exc, exc.__traceback__, file=file)
+            traceback.print_exception(type(exc), exc, exc.__traceback__)
 
 
 if __name__ == "__main__":
