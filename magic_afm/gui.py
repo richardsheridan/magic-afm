@@ -321,14 +321,109 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
     def __init__(self, canvas, window):
         self.toolitems += (("Export", "Export calculated maps", "filesave", "export_calculations"),)
+        self.toolitems += (
+            ("ForceCurves", "Export calculated force curves", "filesave", "export_force_curves"),
+        )
         self._prev_filename = ""
         super().__init__(canvas, window)
 
-    def teach_navbar_to_use_trio(self, nursery, get_image_names, get_image_by_name):
+    def teach_navbar_to_use_trio(self, nursery, get_image_names, get_image_by_name, point_data):
         self._parent_nursery = nursery
         self._get_image_names = get_image_names
         self._get_image_by_name = get_image_by_name
+        self._point_data = point_data
         self._wait_cursor_for_draw_cm = nullcontext
+
+    def export_force_curves(self):
+        # This method is bound early in init so can't use the usual trick of swapping
+        # the callback function during the teaching step
+        self._parent_nursery.start_soon(self._aexport_force_curves)
+
+    async def _aexport_force_curves(self):
+        import os
+
+        if not self._point_data:
+            return
+        is_fit = next(iter(self._point_data.values())).beta is not None
+        if is_fit:
+            h = "z (nm); d (nm); d_fit (nN)"
+        else:
+            h = "z (nm); d (nm)"
+        # fmt: off
+        export_filetypes = (
+            ("ASCII/TXT/TSV/CSV", "*.asc *.txt *.tsv *.csv"),
+            ("NPZ", "*.npz"),
+        )
+        # must take two positional arguments, fname and array
+        exporter_map = {
+            ".txt": partial(np.savetxt, fmt='%.8g', header=h, delimiter=" "),
+            ".asc": partial(np.savetxt, fmt='%.8g', header=h, delimiter=" "),
+            ".tsv": partial(np.savetxt, fmt='%.8g', header=h, delimiter="\t"),
+            ".csv": partial(np.savetxt, fmt='%.8g', header=h, delimiter=","),
+            ".npz": np.savez_compressed,
+        }
+        # fmt: on
+        defaultextension = ""
+        initialdir = os.path.expanduser(matplotlib.rcParams["savefig.directory"])
+        initialfile = os.path.basename(self._prev_filename)
+        fname = await trs(
+            partial(
+                tk.filedialog.asksaveasfilename,
+                master=self,
+                title="Export force curve",
+                filetypes=export_filetypes,
+                defaultextension=defaultextension,
+                initialdir=initialdir,
+                initialfile=initialfile,
+            )
+        )
+
+        if not fname:
+            return  # Cancelled
+
+        # Save dir for next time, unless empty str (i.e., use cwd).
+        if initialdir != "":
+            matplotlib.rcParams["savefig.directory"] = os.path.dirname(str(fname))
+        self._prev_filename = fname
+        root, ext = os.path.splitext(fname)
+        try:
+            exporter = exporter_map[ext]
+        except KeyError:
+            await trio.to_thread.run_sync(
+                partial(
+                    tkinter.messagebox.showerror,
+                    master=self,
+                    title="Export error",
+                    message=f"Unknown extension '{ext}'",
+                )
+            )
+            return
+        arrays = {}
+        for point, data in self._point_data.items():
+            if is_fit:
+                arrays[f"r{point.r:04d}c{point.c:04d}"] = [
+                    data.z[data.sl],
+                    data.d[data.sl],
+                    data.d_fit[data.sl],
+                ]
+            else:
+                arrays[f"r{point.r:04d}c{point.c:04d}"] = [data.z, data.d]
+
+        if exporter is np.savez_compressed:
+            exporter(fname, **arrays)
+        elif isinstance(exporter, partial):
+            if exporter.func is np.savetxt:
+                for name, array in arrays.items():
+                    exporter(root + "_" + name + ext, np.transpose(array))
+        else:
+            await trio.to_thread.run_sync(
+                partial(
+                    tkinter.messagebox.showerror,
+                    master=self,
+                    title="Export error",
+                    message=f"Unknown exporter '{exporter}'",
+                )
+            )
 
     def export_calculations(self):
         # This method is bound early in init so can't use the usual trick of swapping
@@ -379,9 +474,9 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             matplotlib.rcParams["savefig.directory"] = os.path.dirname(str(fname))
         self._prev_filename = fname
         root, ext = os.path.splitext(fname)
+        exporter = exporter_map.get(ext, imageio.imwrite)
         for image_name in self._get_image_names():
             if image_name.startswith("Calc"):
-                exporter = exporter_map.get(ext, imageio.imwrite)
                 image, scandown = await self._get_image_by_name(image_name)
                 if not scandown:
                     image = image[::-1]
@@ -1146,7 +1241,7 @@ async def force_volume_task(display, opened_fvol):
                 opened_fvol.sync_dist = options.sync_dist
                 opened_fvol.defl_sens = options.defl_sens
                 force_curve = await opened_fvol.get_force_curve(point.r, point.c)
-                data = await trs(
+                force_curve_data = await trs(
                     calculate_force_data,
                     *force_curve,
                     opened_fvol.split,
@@ -1178,11 +1273,13 @@ async def force_volume_task(display, opened_fvol):
                     existing_points.add(point)
                     display.plot_ax.relim()
                     display.plot_ax.set_prop_cycle(None)
-                point_data[point] = data  # unconditional so draw_force_curve gets the latest data
+                point_data[
+                    point
+                ] = force_curve_data  # unconditional so draw_force_curve gets the latest data
 
                 # Drawing Phase
                 # Based options choose plots and collect artists for deletion
-                new_artists, color = draw_force_curve(data, display.plot_ax, options)
+                new_artists, color = draw_force_curve(force_curve_data, display.plot_ax, options)
                 artists.extend(new_artists)
                 artists.extend(
                     display.img_ax.plot(
@@ -1272,6 +1369,7 @@ async def force_volume_task(display, opened_fvol):
             nursery=nursery,
             get_image_names=partial(display.image_name_menu.cget, "values"),
             get_image_by_name=opened_fvol.get_image,
+            point_data=point_data,
         )
         display.canvas.teach_canvas_to_use_trio(
             nursery=nursery,
@@ -1627,9 +1725,7 @@ async def about_task(root):
                 "Default threads:"
                 + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
             )
-            process.set(
-                "Idle worker processes: " + str(len(trio_parallel._impl.WORKER_CACHE))
-            )
+            process.set("Idle worker processes: " + str(len(trio_parallel._impl.WORKER_CACHE)))
             await trio.sleep_until(t + interval / 1000)
 
     # run using tcl event loop
