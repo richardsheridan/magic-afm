@@ -1304,7 +1304,7 @@ async def force_volume_task(display, opened_fvol):
         if mouseevent.inaxes is None:
             await tooltip_send_chan.send(TOOLTIP_CANCEL)
             return
-        elif mouseevent.inaxes is display.img_ax:
+        elif display is not None and mouseevent.inaxes is display.img_ax:
             if event.name == "motion_notify_event":
                 await tooltip_send_chan.send(
                     (event.guiEvent.x_root, event.guiEvent.y_root, display.img_ax_tip_text)
@@ -1317,7 +1317,7 @@ async def force_volume_task(display, opened_fvol):
             if shift_held and point in existing_points:
                 return
             await plot_curve_response(point, not shift_held)
-        elif mouseevent.inaxes is colorbar.ax:
+        elif colorbar is not None and mouseevent.inaxes is colorbar.ax:
             if event.name == "motion_notify_event":
                 await tooltip_send_chan.send(
                     (event.guiEvent.x_root, event.guiEvent.y_root, display.colorbar_ax_tip_text)
@@ -1348,7 +1348,7 @@ async def force_volume_task(display, opened_fvol):
                 colorbar.solids.set_clim(vmin, vmax)
 
             await display.canvas.draw_send.send(draw_fn)
-        elif mouseevent.inaxes is display.plot_ax:
+        elif display is not None and mouseevent.inaxes is display.plot_ax:
             if event.name == "motion_notify_event":
                 await tooltip_send_chan.send(
                     (event.guiEvent.x_root, event.guiEvent.y_root, display.plot_ax_tip_text)
