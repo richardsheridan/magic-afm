@@ -37,9 +37,10 @@ __license__ = "MIT"
 __date__ = "15/05/2017"
 __copyright__ = "European Synchrotron Radiation Facility, Grenoble, France"
 
-import numpy
-import logging
 import copy
+import logging
+
+import numpy
 
 _logger = logging.getLogger(__name__)
 

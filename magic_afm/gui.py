@@ -38,43 +38,48 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-import warnings
 import collections
+import ctypes
 import dataclasses
 import datetime
-import traceback
 import enum
 import tkinter as tk
 import tkinter.filedialog
 import tkinter.messagebox
-from tkinter import ttk
+import traceback
+import warnings
 from contextlib import nullcontext
 from functools import partial, wraps
-from typing import Optional, Callable, ClassVar
 from multiprocessing import freeze_support
-import ctypes
+from tkinter import ttk
+from typing import Callable, ClassVar, Optional
+
+import imageio
+import matplotlib
+import numpy as np
+import outcome
+import psutil
+import trio
+from matplotlib.backend_bases import MouseButton
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.colorbar import Colorbar
+from matplotlib.contour import ContourSet
+from matplotlib.figure import Figure
+from matplotlib.image import AxesImage
+from matplotlib.ticker import EngFormatter
+from matplotlib.transforms import Bbox, BboxTransform
+from tqdm.std import TqdmExperimentalWarning
+from tqdm.tk import tqdm_tk
+
+from . import async_tools, calculation, data_readers
+from .async_tools import LONGEST_IMPERCEPTIBLE_DELAY, TOOLTIP_CANCEL, tooltip_task, trs
+
+warnings.simplefilter("ignore", TqdmExperimentalWarning)
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
 except AttributeError:
     pass
-
-import matplotlib
-import numpy as np
-import outcome
-import trio
-from matplotlib.backend_bases import MouseButton
-from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk, FigureCanvasTkAgg
-from matplotlib.contour import ContourSet
-from matplotlib.colorbar import Colorbar
-from matplotlib.figure import Figure
-from matplotlib.image import AxesImage
-from matplotlib.ticker import EngFormatter
-from matplotlib.transforms import Bbox, BboxTransform
-from tqdm.tk import tqdm_tk
-from tqdm.std import TqdmExperimentalWarning
-import imageio
-import psutil
 
 try:
     NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
@@ -82,11 +87,6 @@ except AttributeError:
     NICE = 3
 
 psutil.Process().nice(NICE)
-
-from . import calculation, async_tools, data_readers
-from .async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY, tooltip_task, TOOLTIP_CANCEL
-
-warnings.simplefilter("ignore", TqdmExperimentalWarning)
 
 matplotlib.rcParams["savefig.dpi"] = 300
 RESAMPLE_NPTS = 512
@@ -1752,8 +1752,8 @@ def open_with_os_default(file_url_etc):
 
     from https://stackoverflow.com/a/61968360/4504950 CC BY-SA 4.0
     """
-    import subprocess
     import os
+    import subprocess
 
     try:  # should work on Windows
         os.startfile(file_url_etc)

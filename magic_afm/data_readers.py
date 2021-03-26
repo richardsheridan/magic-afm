@@ -30,7 +30,7 @@ import numpy as np
 import trio
 
 from . import calculation
-from .async_tools import trs, make_cancel_poller
+from .async_tools import make_cancel_poller, trs
 
 
 def mmap_path_read_only(str_path):

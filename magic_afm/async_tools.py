@@ -21,10 +21,10 @@ It is meant to be easy to lift individual items out into other projects.
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
-from concurrent.futures.process import ProcessPoolExecutor
 from contextlib import asynccontextmanager
 from functools import partial, wraps
 from itertools import islice
+
 import trio
 import trio_parallel
 

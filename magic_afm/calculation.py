@@ -26,8 +26,8 @@ import traceback
 
 import numpy as np
 import threadpoolctl
-from samplerate import resample
 from numpy.linalg import lstsq
+from samplerate import resample
 
 try:
     from numba import jit as myjit

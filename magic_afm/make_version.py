@@ -1,6 +1,5 @@
-import subprocess
 import pathlib
-
+import subprocess
 
 filename = pathlib.Path(__file__).parent / "_version.py"
 
