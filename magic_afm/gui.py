@@ -1038,36 +1038,30 @@ async def force_volume_task(display, opened_fvol):
                 else:
                     raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
-                async def loading_worker(send_chan, i, task_status):
-                    async with async_tools.cpu_bound_limiter:
-                        task_status.started()
-                        z, d = await opened_fvol.get_force_curve(*np.unravel_index(i, img_shape))
-                        if resample:
-                            z, d = await trio.to_thread.run_sync(
-                                calculation.resample_dset, [z, d], npts, True, cancellable=True
-                            )
-                        z = z[sl]
-                        d = d[sl]
-                        delta = z - d
-                        f = d * options.k
-                        await send_chan.send((delta, f, i, optionsdict))
-
-                async def loading_helper(task_status):
-                    send_chan, recv_chan = trio.open_memory_channel(0)
-                    task_status.started(recv_chan)
-                    async with send_chan, trio.open_nursery() as n:
-                        for i in range(ncurves):
-                            await n.start(loading_worker, send_chan, i)
+                def load_force_curve(i):
+                    z, d = opened_fvol.get_force_curve_sync(*np.unravel_index(i, img_shape))
+                    if resample:
+                        z, d = calculation.resample_dset([z, d], npts, True)
+                    z = z[sl]
+                    d = d[sl]
+                    delta = z - d
+                    f = d * options.k
+                    return delta, f, i, optionsdict
 
                 def draw_fn():
                     progress_image.changed()
                     progress_image.pchanged()
 
                 async with trio.open_nursery() as nursery:
+                    force_curve_aiter = await nursery.start(
+                        async_tools.to_thread_map_unordered,
+                        load_force_curve,
+                        range(ncurves),
+                    )
                     property_aiter = await nursery.start(
                         async_tools.to_process_map_unordered,
                         calculation.calc_properties_imap,
-                        await nursery.start(loading_helper),
+                        force_curve_aiter,
                         chunksize,
                     )
                     async for i, properties in property_aiter:

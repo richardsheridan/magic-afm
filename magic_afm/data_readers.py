@@ -186,8 +186,11 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
             image_name = image_name[:-5]
         return image_name
 
-    @abc.abstractmethod
     async def get_force_curve(self, r, c):
+        return await trs(self.get_force_curve_sync, r, c)
+
+    @abc.abstractmethod
+    def get_force_curve_sync(self, r, c):
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -216,8 +219,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
     async def aclose(self):
         pass
 
-    async def get_force_curve(self, r, c):
-        await trio.sleep(0)
+    def get_force_curve_sync(self, r, c):
         gen = np.random.default_rng(seed=(r, c))
         fext = calculation.force_curve(
             calculation.red_extend, self.delta[: self.split], 1, 10, 1, -10, 1, 0, 0, 10
@@ -433,8 +435,8 @@ class ARH5File(BaseForceVolumeFile):
             worker = ForceMapWorker(h5data)
         return worker
 
-    async def get_force_curve(self, r, c):
-        z, d = await trs(self._worker.get_force_curve, r, c)
+    def get_force_curve_sync(self, r, c):
+        z, d = self._worker.get_force_curve(r, c)
         if self.defl_sens != self._defl_sens_orig:
             d *= self.defl_sens / self._defl_sens_orig
         return z, d
@@ -645,8 +647,8 @@ class NanoscopeFile(BaseForceVolumeFile):
         with trio.CancelScope(shield=True):
             await trio.to_thread.run_sync(self._mm.close)
 
-    async def get_force_curve(self, r, c):
-        return await trs(self._worker.get_force_curve, r, c, self.defl_sens, self.sync_dist)
+    def get_force_curve_sync(self, r, c):
+        return self._worker.get_force_curve(r, c, self.defl_sens, self.sync_dist)
 
     async def get_image(self, image_name):
         if image_name in self._calc_images:
