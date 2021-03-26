@@ -74,6 +74,14 @@ from matplotlib.transforms import Bbox, BboxTransform
 from tqdm.tk import tqdm_tk
 from tqdm.std import TqdmExperimentalWarning
 import imageio
+import psutil
+
+try:
+    NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
+except AttributeError:
+    NICE = 3
+
+psutil.Process().nice(NICE)
 
 from . import calculation, async_tools, data_readers
 from .async_tools import trs, LONGEST_IMPERCEPTIBLE_DELAY, tooltip_task, TOOLTIP_CANCEL
