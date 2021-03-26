@@ -98,9 +98,9 @@ async def to_sync_runner_map_unordered(
                 send_chan.send_nowait(item)
 
     async def worker(job_item, task_status):
-        task_status.started()
         # Backpressure: hold limiter for entire task to avoid spawning too many workers
         async with limiter:
+            task_status.started()
             result = await sync_runner(
                 sync_fn, job_item, cancellable=cancellable, limiter=trio.CapacityLimiter(1)
             )
@@ -112,8 +112,7 @@ async def to_sync_runner_map_unordered(
 
     async with send_chan, trio.open_nursery() as nursery:
         async for job_item in job_items:
-            async with limiter:
-                await nursery.start(worker, job_item)
+            await nursery.start(worker, job_item)
 
     if task_status is trio.TASK_STATUS_IGNORED:
         # internal details version

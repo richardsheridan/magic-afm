@@ -1039,8 +1039,8 @@ async def force_volume_task(display, opened_fvol):
                     raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
                 async def loading_worker(send_chan, i, task_status):
-                    task_status.started()
                     async with async_tools.cpu_bound_limiter:
+                        task_status.started()
                         z, d = await opened_fvol.get_force_curve(*np.unravel_index(i, img_shape))
                         if resample:
                             z, d = await trio.to_thread.run_sync(
@@ -1057,8 +1057,7 @@ async def force_volume_task(display, opened_fvol):
                     task_status.started(recv_chan)
                     async with send_chan, trio.open_nursery() as n:
                         for i in range(ncurves):
-                            async with async_tools.cpu_bound_limiter:
-                                await n.start(loading_worker, send_chan, i)
+                            await n.start(loading_worker, send_chan, i)
 
                 def draw_fn():
                     progress_image.changed()
