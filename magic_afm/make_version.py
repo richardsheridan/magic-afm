@@ -12,7 +12,7 @@ def get():
 
 def read():
     try:
-        with filename.open("r") as f:
+        with filename.open("r", encoding="utf8") as f:
             oldversion = f.read()
     except FileNotFoundError:
         return False
@@ -21,7 +21,7 @@ def read():
 
 def write(version):
     version = "__version__ = '" + version + "'\n"
-    with filename.open("w") as f:
+    with filename.open("w", encoding="utf8") as f:
         f.write(version)
 
 

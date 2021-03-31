@@ -1830,7 +1830,7 @@ def main():
     print("Tk shutdown. Outcome:", outcome_)
     if isinstance(outcome_, outcome.Error):
         date = datetime.datetime.now().isoformat().replace(":", ";")
-        with open(f"traceback-{date}.dump", "w") as file:
+        with open(f"traceback-{date}.dump", "w", encoding="utf8") as file:
             exc = outcome_.error
             traceback.print_exception(type(exc), exc, exc.__traceback__, file=file)
             traceback.print_exception(type(exc), exc, exc.__traceback__)
