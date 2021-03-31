@@ -1623,17 +1623,16 @@ async def open_task(root):
     # choose handler based on file suffix
     suffix = path.suffix.lower()
     if suffix == ".ardf":
-        with trio.CancelScope() as cscope:
-            pbar = tqdm_tk(
-                tk_parent=root,
-                cancel_callback=cscope.cancel,
-                total=100,
-                unit="%",
-                leave=False,
-                smoothing=0.1,
-                # smoothing_time=0.5,
-                miniters=1,
-            )
+        with trio.CancelScope() as cscope, tqdm_tk(
+            tk_parent=root,
+            cancel_callback=cscope.cancel,
+            total=100,
+            unit="%",
+            leave=False,
+            smoothing=0.1,
+            # smoothing_time=0.5,
+            miniters=1,
+        ) as pbar:
             try:
                 path = await data_readers.convert_ardf(path, pbar=pbar)
             except FileNotFoundError as e:
