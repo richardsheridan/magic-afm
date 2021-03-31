@@ -31,7 +31,7 @@ import trio_parallel
 TOOLTIP_CANCEL = None, None, None
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 
-cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count())
+cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count() or 1)
 trs = partial(trio.to_thread.run_sync, cancellable=True)
 
 
@@ -84,7 +84,7 @@ async def to_sync_runner_map_unordered(
         if chunksize != 1:
             job_items = _chunk_producer(sync_fn, job_items, chunksize)
             sync_fn = _chunk_consumer
-        job_items = asyncify_iterator(job_items)
+        job_items = asyncify_iterator(job_items, limiter)
 
     async def send(item):
         # https://gitter.im/python-trio/general?at=5f7776b9cfe2f9049a1c67f9
@@ -237,11 +237,11 @@ async def spinner_task(set_spinner, set_normal, task_status):
             set_normal()
 
 
-async def asyncify_iterator(iter):
+async def asyncify_iterator(iter, limiter=None):
     sentinel = object()
 
     while True:
-        result = await trs(next, iter, sentinel)
+        result = await trs(next, iter, sentinel, limiter=limiter)
         if result is sentinel:
             return
         yield result
