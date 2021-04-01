@@ -232,7 +232,7 @@ class ImageStats:
 
 class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
     def __init__(self, figure, master=None):
-        self._resizes_pending = set()
+        self._resize_pending = None
         self.draw_send, self.draw_recv = trio.open_memory_channel(float("inf"))
 
         super().__init__(figure, master)
@@ -280,43 +280,18 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             self.figure.set_tight_layout(False)
 
     def resize(self, event):
-        # Swallows initial resize, OK because of change_image_callback
-        pass
-
-    async def aresize(self, event):
-        try:
-            while True:
-                self._resizes_pending.pop()
-        except KeyError:
-            pass
-
-        # compute desired figure size in inches
-        dpival = self.figure.dpi
-        width, height = event.width, event.height
-        winch = width / dpival
-        hinch = height / dpival
-        resize_token = object()
-        self._resizes_pending.add(resize_token)
+        # Three purposes for this override: cancel stale resizes, use draw_send,
+        # and set_tight_layout
+        self._resize_pending = event
 
         def draw_fn():
-            try:
-                self._resizes_pending.remove(resize_token)
-            except KeyError:
-                return
+            if self._resize_pending is event:
+                super(type(self), self).resize(event)
+                self.figure.set_tight_layout(True)
 
-            self.figure.set_size_inches(winch, hinch, forward=False)
-            self._tkcanvas.delete(self._tkphoto)
-            self._tkphoto = tk.PhotoImage(
-                master=self._tkcanvas, width=int(width), height=int(height)
-            )
-            self._tkcanvas.create_image(int(width / 2), int(height / 2), image=self._tkphoto)
-            self.figure.set_tight_layout(True)
-            self.resize_event()  # draw_idle called in here
-
-        await self.draw_send.send(draw_fn)
+        self.draw_send.send_nowait(draw_fn)
 
     def teach_canvas_to_use_trio(self, nursery, spinner_scope, async_motion_pick_fn):
-        self._tkcanvas.bind("<Configure>", partial(nursery.start_soon, self.aresize))
         self.spinner_scope = spinner_scope
         self.mpl_connect("motion_notify_event", partial(nursery.start_soon, async_motion_pick_fn))
         self.mpl_connect("pick_event", partial(nursery.start_soon, async_motion_pick_fn))
