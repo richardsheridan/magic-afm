@@ -108,13 +108,6 @@ COLORMAPS = [
 ]
 
 
-class Box:
-    """Hashable mutable objects with mutable content"""
-
-    def __init__(self, content):
-        self.content = content
-
-
 class TkState(enum.IntFlag):
     """AND/OR these with a tk.Event.state to see which keys were held down"""
 
@@ -239,7 +232,7 @@ class ImageStats:
 
 class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
     def __init__(self, figure, master=None):
-        self._resize_cancels_pending = set()
+        self._resizes_pending = set()
         self.draw_send, self.draw_recv = trio.open_memory_channel(float("inf"))
 
         super().__init__(figure, master)
@@ -291,20 +284,24 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         pass
 
     async def aresize(self, event):
-        for cancel_box in self._resize_cancels_pending:
-            cancel_box.content = True
-        self._resize_cancels_pending.clear()
+        try:
+            while True:
+                self._resizes_pending.pop()
+        except KeyError:
+            pass
 
         # compute desired figure size in inches
         dpival = self.figure.dpi
         width, height = event.width, event.height
         winch = width / dpival
         hinch = height / dpival
-        cancel_box = Box(content=False)
-        self._resize_cancels_pending.add(cancel_box)
+        resize_token = object()
+        self._resizes_pending.add(resize_token)
 
         def draw_fn():
-            if cancel_box.content:
+            try:
+                self._resizes_pending.remove(resize_token)
+            except KeyError:
                 return
 
             self.figure.set_size_inches(winch, hinch, forward=False)
@@ -315,7 +312,6 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             self._tkcanvas.create_image(int(width / 2), int(height / 2), image=self._tkphoto)
             self.figure.set_tight_layout(True)
             self.resize_event()  # draw_idle called in here
-            self._resize_cancels_pending.discard(cancel_box)
 
         await self.draw_send.send(draw_fn)
 
