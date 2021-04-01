@@ -10,6 +10,7 @@ __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
 import itertools
+import os
 import sys
 
 import trio_parallel
@@ -316,8 +317,6 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         self._parent_nursery.start_soon(self._aexport_force_curves)
 
     async def _aexport_force_curves(self):
-        import os
-
         if not self._point_data:
             return
         is_fit = next(iter(self._point_data.values())).beta is not None
@@ -386,11 +385,33 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
                 arrays[f"r{point.r:04d}c{point.c:04d}"] = [data.z, data.d]
 
         if exporter is np.savez_compressed:
-            exporter(fname, **arrays)
-        elif isinstance(exporter, partial):
-            if exporter.func is np.savetxt:
-                for name, array in arrays.items():
-                    exporter(root + "_" + name + ext, np.transpose(array))
+            try:
+                await trio.to_thread.run_sync(exporter, fname, **arrays)
+            except Exception as e:
+                await trio.to_thread.run_sync(
+                    partial(
+                        tkinter.messagebox.showerror,
+                        master=self,
+                        title="Export error",
+                        message=repr(e),
+                    )
+                )
+        elif isinstance(exporter, partial) and exporter.func is np.savetxt:
+            for name, array in arrays.items():
+                try:
+                    await trio.to_thread.run_sync(
+                        exporter, root + "_" + name + ext, np.transpose(array)
+                    )
+                except Exception as e:
+                    await trio.to_thread.run_sync(
+                        partial(
+                            tkinter.messagebox.showerror,
+                            master=self,
+                            title="Export error",
+                            message=repr(e),
+                        )
+                    )
+                    break
         else:
             await trio.to_thread.run_sync(
                 partial(
@@ -407,8 +428,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         self._parent_nursery.start_soon(self._aexport_calculations)
 
     async def _aexport_calculations(self):
-        ### it's also possible to export image stacks but need a way to indicate that
-        import os
+        # NOTE: it's also possible to export image stacks but need a way to indicate that
 
         # fmt: off
         export_filetypes = (
