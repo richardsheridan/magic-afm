@@ -296,8 +296,8 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
 class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
     def __init__(self, canvas, window):
-        self.toolitems += (("Export", "Export calculated maps", "filesave", "export_calculations"),)
         self.toolitems += (
+            ("Export", "Export calculated maps", "filesave", "export_calculations"),
             ("ForceCurves", "Export calculated force curves", "filesave", "export_force_curves"),
         )
         self._prev_filename = ""
