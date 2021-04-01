@@ -154,6 +154,9 @@ to the transition parameter between the long-range and short-range adhesion
 force regimes. Formally, it is the ratio of the short-range work of adhesion to
 the total work of adhesion (τ1*τ1 in [SCHWARZ]_).
 
+The deflection and piezo displacement of all currently displayed force curves can
+be exported by clicking "Export calculated force curves" to various text and binary formats.
+
 If a fit has been performed, a table is displayed above the force curve indicating
 the key inferred parameters:
 
@@ -191,8 +194,8 @@ Max/Crit markers indicate the apparent point of the "Maximum" and "Critical"
 (snap-off) force and indentation, respectively.
 
 The "calculate properties" button rapidly fits all data in the file and
-creates new images for each in the "Image" menu. All calculated images can be
-exported by clicking "Export calculated maps" to various image and data formats.
+creates new images for each in the "Image" menu. All calculated property masp can
+be exported like any other image by clicking "Export calculated maps".
 
 .. TODO: establish if you are in the magic ratio regime
 
