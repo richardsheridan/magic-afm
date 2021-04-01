@@ -240,10 +240,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         self._tkcanvas.configure(background="gray94")  # surely there's a better name...
 
     def draw_idle(self):
-        def null_draw_fn():
-            pass
-
-        self.draw_send.send_nowait(null_draw_fn)
+        self.draw_send.send_nowait(int)
 
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
         inf = float("inf")
@@ -1167,7 +1164,7 @@ async def force_volume_task(display, opened_fvol):
         if name not in opened_fvol.image_names:
             manip_fn = calculation.MANIPULATIONS[manip_name]
             async with spinner_scope():
-                manip_img = await trs(manip_fn, np.ma.getdata(axesimage.get_array()))
+                manip_img = await trs(manip_fn, axesimage.get_array().data)
             opened_fvol.add_image(name, unit, scandown, manip_img)
             if name not in current_names:
                 current_names.append(name)
