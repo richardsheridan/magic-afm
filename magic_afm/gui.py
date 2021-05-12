@@ -1003,6 +1003,7 @@ async def force_volume_task(display, opened_fvol):
                     np.zeros(img_shape + (4,), dtype="f4"), extent=axesimage.get_extent()
                 )  # transparent initial image, no need to draw
                 progress_array = progress_image.get_array()
+                old_axesimage = axesimage
                 property_map = np.empty(
                     ncurves,
                     dtype=np.dtype([(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]),
@@ -1057,6 +1058,18 @@ async def force_volume_task(display, opened_fvol):
                         pbar.update()
                         r, c = np.unravel_index(i, img_shape)
                         progress_array[r, c, :] = color
+                        if old_axesimage is not axesimage:
+                            # new image selected, get a fresh progress image
+                            # so it is on top
+                            display.canvas.draw_send.send_nowait(progress_image.remove)
+                            progress_image = display.img_ax.imshow(
+                                np.zeros(img_shape + (4,), dtype="f4"),
+                                extent=axesimage.get_extent(),
+                            )
+                            new_progress_array = progress_image.get_array()
+                            new_progress_array[:] = progress_array[:]
+                            progress_array = new_progress_array
+                            old_axesimage = axesimage
                         display.canvas.draw_send.send_nowait(draw_fn)
 
         def draw_fn():
