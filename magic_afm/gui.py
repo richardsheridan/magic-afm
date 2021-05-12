@@ -989,12 +989,7 @@ async def force_volume_task(display, opened_fvol):
             # assign pbar and progress_image ASAP in case of cancel
             with tqdm_tk(
                 total=ncurves,
-                desc="Fitting force curves...",
-                bar_format=(
-                    "{n_fmt}/{total_fmt}, {rate_noinv_fmt}\n"
-                    "{elapsed} elapsed, {remaining} ETA\n\n"
-                    "{percentage:3.0f}%"
-                ),
+                desc=f"Fitting {opened_fvol.path.name} force curves",
                 smoothing=0.01,
                 # smoothing_time=1,
                 mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 2,
