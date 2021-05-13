@@ -145,7 +145,7 @@ async def to_process_map_unordered(
     blocking or non-blocking.
 
     Awaiting this function produces an in-memory iterable of the map results.
-    Using nursery.start() on this function produces a MemoryRecieveChannel
+    Using nursery.start() on this function produces a MemoryReceiveChannel
     with no buffer to receive results as-completed."""
     return await to_sync_runner_map_unordered(
         trio_parallel.run_sync,
@@ -174,7 +174,7 @@ async def to_thread_map_unordered(
     blocking or non-blocking.
 
     Awaiting this function produces an in-memory iterable of the map results.
-    Using nursery.start() on this function produces a MemoryRecieveChannel
+    Using nursery.start() on this function produces a MemoryReceiveChannel
     with no buffer to receive results as-completed."""
 
     return await to_sync_runner_map_unordered(
@@ -189,16 +189,17 @@ async def to_thread_map_unordered(
 
 
 async def spinner_task(set_spinner, set_normal, task_status):
-    # Invariant: number of open+opening spinner_scopes equals outstanding scopes
+    # Invariant: number of open+opening spinner_scopes equals outstanding_scopes
     outstanding_scopes = 0
-    spinner_start = trio.Event()
+    ending_or_inactive_cscope = trio.CancelScope()
+    pending_or_active_cscope = trio.CancelScope()
     spinner_pending_or_active = trio.Event()
 
     @asynccontextmanager
     async def spinner_scope():
-        nonlocal outstanding_scopes
-        nonlocal spinner_start, spinner_pending_or_active
-        spinner_start.set()
+        nonlocal outstanding_scopes, pending_or_active_cscope
+        nonlocal ending_or_inactive_cscope, spinner_pending_or_active
+        ending_or_inactive_cscope.cancel()
         outstanding_scopes += 1
         with trio.CancelScope() as cancel_scope:
             try:
@@ -214,27 +215,33 @@ async def spinner_task(set_spinner, set_normal, task_status):
                 # just after calling task_status.started
                 if not outstanding_scopes:
                     # these actions must occur atomically to satisfy the invariant
+                    # because the very next task scheduled may open a spinner_scope
                     pending_or_active_cscope.cancel()
                     spinner_pending_or_active = trio.Event()
-                    spinner_start = trio.Event()
+                    ending_or_inactive_cscope = trio.CancelScope()
+                    pending_or_active_cscope = trio.CancelScope()
 
     task_status.started(spinner_scope)
     while True:
-        # Invariant: set the spinner once after a delay after spinner_start.set
-        await spinner_start.wait()
-
-        spinner_pending_or_active.set()
-        with trio.CancelScope() as pending_or_active_cscope:
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY * 5)
-            set_spinner()
+        # always fresh scope thanks to atomic state reset
+        with ending_or_inactive_cscope:
+            # Allow a short delay after a final scope exits before resetting
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+            # Another spinner_scope may have opened during this time.
+            # If so, don't change the cursor to avoid blinking unnecessarily.
+            set_normal()
             await trio.sleep_forever()
 
-        # Allow a short delay after a final scope exits before resetting
-        await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
-        # Another spinner_scope may have opened during this time.
-        # If so, don't change the cursor to avoid blinking unnecessarily
-        if not spinner_start.is_set():
-            set_normal()
+        spinner_pending_or_active.set()
+
+        # always fresh scope thanks to atomic state reset.
+        with pending_or_active_cscope:
+            # Allow a short delay after a first scope enters before setting.
+            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY * 5)
+            # spinner_scope may exit quickly during this time.
+            # If so, don't change the cursor to avoid blinking unnecessarily.
+            set_spinner()
+            await trio.sleep_forever()
 
 
 async def asyncify_iterator(iter, limiter=None):
