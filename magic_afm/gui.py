@@ -979,7 +979,7 @@ async def force_volume_task(display, opened_fvol):
     async def calc_prop_map_callback():
         options = display.options
         optionsdict = dataclasses.asdict(options)
-        img_shape = opened_fvol.shape
+        img_shape = axesimage.get_size()
         ncurves = img_shape[0] * img_shape[1]
         chunksize = 16
         if not options.fit_mode:

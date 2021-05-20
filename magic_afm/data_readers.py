@@ -211,7 +211,6 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
 
     async def ainitialize(self):
         await trio.sleep(0)
-        self.shape = (64, 64)
         self.npts = 1024
         self.split = self.npts // 2
         self.delta = (np.cos(np.linspace(0, np.pi * 2, self.npts, endpoint=False)) - 0.90) * 25
@@ -238,7 +237,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         try:
             image, _ = self._calc_images[image_name]
         except KeyError:
-            image = np.zeros(self.shape, dtype=np.float32)
+            image = np.zeros((64, 64), dtype=np.float32)
         return image, True
 
 
@@ -401,7 +400,6 @@ class ARH5File(BaseForceVolumeFile):
         self._worker = worker
         self._images = images
         self._file_image_names = image_names
-        self.shape = await trs(lambda name: images[name].shape, next(iter(image_names)))
 
         self.k = float(self.notes["SpringConstant"])
         # what about FastScanSize and SlowScanSize?
@@ -460,10 +458,9 @@ class ARH5File(BaseForceVolumeFile):
 
 
 class BrukerWorkerBase(metaclass=abc.ABCMeta):
-    def __init__(self, header, mm, shape, s):
+    def __init__(self, header, mm, s):
         self.header = header  # get_image
         self.mm = mm  # get_image
-        self.shape = shape  # get_image
         self.split = s  # get_force_curve
         self.version = header[header["first"]]["Version"].strip()  # get_image
 
@@ -482,18 +479,22 @@ class BrukerWorkerBase(metaclass=abc.ABCMeta):
         data_length = int(h["Data length"])
         offset = int(h["Data offset"])
         bpp = bruker_bpp_fix(h["Bytes/pixel"], self.version)
-        assert data_length == self.shape[0] * self.shape[1] * bpp
+        r = int(h["Number of lines"])
+        c = int(h["Samps/line"])
+        assert data_length == r * c * bpp
         scandown = h["Frame direction"] == "Down"
         return (
-            np.ndarray(shape=self.shape, dtype=f"i{bpp}", buffer=self.mm, offset=offset) * scale,
+            np.ndarray(shape=(r, c), dtype=f"i{bpp}", buffer=self.mm, offset=offset) * scale,
             scandown,
         )
 
 
 class FFVWorker(BrukerWorkerBase):
-    def __init__(self, header, mm, shape, s):
-        super().__init__(header, mm, shape, s)
-        r, c = shape
+    def __init__(self, header, mm, s):
+        super().__init__(header, mm, s)
+        arbitrary_image = next(iter(header["Image"].values()))
+        r = int(arbitrary_image["Number of lines"])
+        c = int(arbitrary_image["Samps/line"])
         data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
         for name in [data_name, "Height Sensor"]:
             subheader = header["FV"][name]
@@ -529,9 +530,11 @@ class FFVWorker(BrukerWorkerBase):
 
 
 class QNMWorker(BrukerWorkerBase):
-    def __init__(self, header, mm, shape, s):
-        super().__init__(header, mm, shape, s)
-        r, c = shape
+    def __init__(self, header, mm, s):
+        super().__init__(header, mm, s)
+        arbitrary_image = next(iter(header["Image"].values()))
+        r = int(arbitrary_image["Number of lines"])
+        c = int(arbitrary_image["Samps/line"])
         data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
         subheader = header["FV"][data_name]
         bpp = bruker_bpp_fix(subheader["Bytes/pixel"], self.version)
@@ -602,16 +605,9 @@ class NanoscopeFile(BaseForceVolumeFile):
         data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
 
         data_header = header["FV"][data_name]
-        length = int(data_header["Data length"])
-        version = header[header["first"]]["Version"].strip()
-        bpp = bruker_bpp_fix(data_header["Bytes/pixel"], version)
-        self.shape = r, c = (
-            int(header["Ciao scan list"]["Samps/line"].split()[0]),
-            int(header["Ciao scan list"]["Lines"]),
-        )
-
-        self.npts = npts = length // (bpp * r * c)
-        self.split = npts // 2
+        ext_npts, ret_npts = map(int, data_header["Samps/line"].split())
+        self.npts = ext_npts + ret_npts
+        self.split = ext_npts
         rate, unit = header["Ciao scan list"]["PFT Freq"].split()
         assert unit.lower() == "khz"
         self.rate = float(rate)
@@ -635,10 +631,10 @@ class NanoscopeFile(BaseForceVolumeFile):
 
     def _choose_worker(self, header):
         if "Height Sensor" in header["FV"]:
-            return FFVWorker(header, self._mm, self.shape, self.split), 0
+            return FFVWorker(header, self._mm, self.split), 0
         else:
             return (
-                QNMWorker(header, self._mm, self.shape, self.split),
+                QNMWorker(header, self._mm, self.split),
                 int(round(float(header["Ciao scan list"]["Sync Distance"]))),
             )
 
