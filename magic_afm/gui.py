@@ -245,7 +245,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
         inf = float("inf")
-        delay = LONGEST_IMPERCEPTIBLE_DELAY
+        delay = LONGEST_IMPERCEPTIBLE_DELAY * 10
         task_status.started()
         # One of the slowest processes. Stick everything in a thread.
         while True:
@@ -881,7 +881,7 @@ class ForceVolumeTkDisplay:
     def replot_tight(self):
         pass
 
-    async def teach_display_to_use_trio(
+    def teach_display_to_use_trio(
         self,
         nursery,
         redraw_existing_points,
@@ -907,7 +907,7 @@ class ForceVolumeTkDisplay:
         self.replot = partial(nursery.start_soon, redraw_existing_points)
         self.replot_tight = partial(nursery.start_soon, redraw_existing_points_tight)
 
-        await nursery.start(self.canvas.idle_draw_task)
+        nursery.start_soon(self.canvas.idle_draw_task)
 
     def defl_sens_callback(self, *args):
         try:
@@ -1379,7 +1379,7 @@ async def force_volume_task(display, opened_fvol):
             impartial(partial(nursery.start_soon, tooltip_send_chan.send, TOOLTIP_CANCEL)),
         )
 
-        await display.teach_display_to_use_trio(
+        display.teach_display_to_use_trio(
             nursery,
             redraw_existing_points,
             redraw_existing_points_tight,
