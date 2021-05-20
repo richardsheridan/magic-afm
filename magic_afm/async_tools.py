@@ -247,10 +247,7 @@ async def spinner_task(set_spinner, set_normal, task_status):
 async def asyncify_iterator(iter, limiter=None):
     sentinel = object()
 
-    while True:
-        result = await trs(next, iter, sentinel, limiter=limiter)
-        if result is sentinel:
-            return
+    while (result := await trs(next, iter, sentinel, limiter=limiter)) is not sentinel:
         yield result
 
 
