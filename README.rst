@@ -194,14 +194,14 @@ Max/Crit markers indicate the apparent point of the "Maximum" and "Critical"
 (snap-off) force and indentation, respectively.
 
 The "calculate properties" button rapidly fits all data in the file and
-creates new images for each in the "Image" menu. All calculated property masp can
+creates new images for each in the "Image" menu. All calculated property maps can
 be exported like any other image by clicking "Export calculated maps".
 
 .. TODO: establish if you are in the magic ratio regime
 
 Future Plans:
 
-- Viscolastic model
+- Viscoelastic model
 
 - Simultaneous extend/retract fit
 
