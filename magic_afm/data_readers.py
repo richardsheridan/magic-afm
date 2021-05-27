@@ -177,13 +177,8 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
 
     @staticmethod
     def strip_trace(image_name):
-        image_name_l = image_name.lower()
-        # python 3.9+
-        # image_name = image_name.removesuffix("retrace").removesuffix("trace")
-        if image_name_l.endswith("retrace"):
-            image_name = image_name[:-6]
-        elif image_name_l.endswith("trace"):
-            image_name = image_name[:-5]
+        for suffix in ("trace", "Trace", "retrace", "Retrace"):
+            image_name = image_name.removesuffix(suffix)
         return image_name
 
     async def get_force_curve(self, r, c):
