@@ -53,7 +53,7 @@ modulus maps in the greater AFM nanomechanics community.
 
 Installation
 ------------
-Requires cpython 3.8 or higher and several custom patched packages. The easiest
+Requires CPython 3.9 or higher. The easiest
 installation method is to clone the git repository to your local machine, and
 install from the requirements.txt into a fresh environment::
 
@@ -61,11 +61,11 @@ install from the requirements.txt into a fresh environment::
 
     python -m venv magic_afm
     magic_afm\Scripts\activate.bat (or) magic_afm\bin\activate
-    pip install -r requirements.txt
     (or)
-    conda create -n magic_afm python=3.8
+    conda create -n magic_afm python=3.9
     conda activate magic_afm
-    conda install --file requirements.txt
+
+    pip install -r requirements.txt
 
 Eventually we should supply :code:`setup.py` and a pypi package, once the
 dependencies settle.
