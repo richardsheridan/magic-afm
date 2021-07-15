@@ -1,0 +1,13 @@
+h5py>=3
+imageio
+matplotlib>=3.4.2
+# numba @ git+https://github.com/numba/numba@8ff4314e31c91ede04b7abb8ece6e0d7f0f59f87 # GH#6373
+# numba @ git+https://github.com/sk1p/numba@d2e5aa63c1b8702674920c199d2fd9cccb7f26c3 # GH#6284
+psutil==5.8.0
+pyinstaller>=4.3
+numpy>=1.2
+threadpoolctl
+tqdm>=4.56.0
+trio
+trio-parallel
+samplerate
