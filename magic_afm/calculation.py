@@ -25,7 +25,6 @@ import enum
 import traceback
 
 import numpy as np
-import threadpoolctl
 from numpy.linalg import lstsq
 from samplerate import resample
 
@@ -826,30 +825,36 @@ def perturb_k(delta, f, epsilon, k):
     return delta_new, f_new, k_new
 
 
+INITIALIZED = False
+
+
 def calc_properties_imap(delta_f_i_kwargs):
-    with threadpoolctl.threadpool_limits(1):
-        delta, force, i, kwargs = delta_f_i_kwargs
-        beta, beta_err, partial_force_curve = fitfun(delta, force, **kwargs)
-        if np.any(np.isnan(beta)):
-            return i, None
-        ind_mod = beta[0]
-        adh_force = beta[1]
-        (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(
-            force, beta, **kwargs
-        )
-        kwargs = kwargs.copy()
-        k = kwargs.pop("k")
-        eps = 1e-3
-        beta_perturb, *_ = fitfun(*perturb_k(delta, force, eps, k), p0=beta, **kwargs)
-        ind_mod_perturb = beta_perturb[0]
-        ind_mod_sens_k = (ind_mod_perturb - ind_mod) / ind_mod / eps
-        properties = (
-            ind_mod * 1e9,
-            adh_force / 1e9,
-            deflection / 1e9,
-            indentation / 1e9,
-            -z_true_surface / 1e9,
-            deflection / indentation,
-            ind_mod_sens_k,
-        )
-        return i, properties
+    global INITIALIZED
+    if not INITIALIZED:
+        import threadpoolctl
+
+        threadpoolctl.threadpool_limits(1)
+        INITIALIZED = True
+    delta, force, i, kwargs = delta_f_i_kwargs
+    beta, beta_err, partial_force_curve = fitfun(delta, force, **kwargs)
+    if np.any(np.isnan(beta)):
+        return i, None
+    ind_mod = beta[0]
+    adh_force = beta[1]
+    (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(force, beta, **kwargs)
+    kwargs = kwargs.copy()
+    k = kwargs.pop("k")
+    eps = 1e-3
+    beta_perturb, *_ = fitfun(*perturb_k(delta, force, eps, k), p0=beta, **kwargs)
+    ind_mod_perturb = beta_perturb[0]
+    ind_mod_sens_k = (ind_mod_perturb - ind_mod) / ind_mod / eps
+    properties = (
+        ind_mod * 1e9,
+        adh_force / 1e9,
+        deflection / 1e9,
+        indentation / 1e9,
+        -z_true_surface / 1e9,
+        deflection / indentation,
+        ind_mod_sens_k,
+    )
+    return i, properties
