@@ -9,11 +9,7 @@ modulus maps in the greater AFM nanomechanics community.
 __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
-import itertools
-import os
 import sys
-
-import trio_parallel
 
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     from ._version import __version__
@@ -44,6 +40,8 @@ import ctypes
 import dataclasses
 import datetime
 import enum
+import itertools
+import os
 import tkinter as tk
 import tkinter.filedialog
 import tkinter.messagebox
@@ -51,7 +49,6 @@ import traceback
 import warnings
 from contextlib import nullcontext
 from functools import partial, wraps
-from multiprocessing import freeze_support
 from tkinter import ttk
 from typing import Callable, ClassVar, Optional
 
@@ -61,6 +58,7 @@ import numpy as np
 import outcome
 import psutil
 import trio
+import trio_parallel
 from matplotlib.backend_bases import MouseButton
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.colorbar import Colorbar
@@ -289,10 +287,16 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
         self.draw_send.send_nowait(draw_fn)
 
-    def teach_canvas_to_use_trio(self, nursery, spinner_scope, async_motion_pick_fn):
+    def teach_canvas_to_use_trio(
+        self, nursery, spinner_scope, async_motion_pick_fn, tooltip_send_chan
+    ):
         self.spinner_scope = spinner_scope
         self.mpl_connect("motion_notify_event", partial(nursery.start_soon, async_motion_pick_fn))
         self.mpl_connect("pick_event", partial(nursery.start_soon, async_motion_pick_fn))
+        self.mpl_connect(
+            "figure_leave_event",
+            impartial(partial(nursery.start_soon, tooltip_send_chan.send, TOOLTIP_CANCEL)),
+        )
 
 
 class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
@@ -1357,7 +1361,6 @@ async def force_volume_task(display, opened_fvol):
         spinner_scope = await nursery.start(
             async_tools.spinner_task, display.spinner_start, display.spinner_stop
         )
-
         tooltip_send_chan = await nursery.start(
             tooltip_task, display.show_tooltip, display.hide_tooltip, 1, 2
         )
@@ -1372,13 +1375,8 @@ async def force_volume_task(display, opened_fvol):
             nursery=nursery,
             spinner_scope=spinner_scope,
             async_motion_pick_fn=mpl_pick_motion_event_callback,
+            tooltip_send_chan=tooltip_send_chan,
         )
-        # XXX: This is a hacky bugfix, maybe find some way to get this logic into ^^^
-        display.canvas.mpl_connect(
-            "figure_leave_event",
-            impartial(partial(nursery.start_soon, tooltip_send_chan.send, TOOLTIP_CANCEL)),
-        )
-
         display.teach_display_to_use_trio(
             nursery,
             redraw_existing_points,
@@ -1832,5 +1830,8 @@ def main():
 
 
 if __name__ == "__main__":
-    freeze_support()
+    import multiprocessing
+
+    multiprocessing.cpu_count()
+    multiprocessing.freeze_support()
     main()
