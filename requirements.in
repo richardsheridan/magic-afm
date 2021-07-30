@@ -5,7 +5,7 @@ matplotlib>=3.4.2
 # numba @ git+https://github.com/sk1p/numba@d2e5aa63c1b8702674920c199d2fd9cccb7f26c3 # GH#6284
 psutil==5.8.0
 pyinstaller>=4.3
-numpy>=1.2
+numpy>=1.20
 threadpoolctl
 tqdm>=4.56.0
 trio
