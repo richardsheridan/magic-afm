@@ -380,13 +380,20 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         arrays = {}
         for point, data in self._point_data.items():
             if is_fit:
-                arrays[f"r{point.r:04d}c{point.c:04d}"] = [
-                    data.z[data.sl],
-                    data.d[data.sl],
-                    data.d_fit[data.sl],
-                ]
+                arrays[f"r{point.r:04d}c{point.c:04d}"] = np.column_stack(
+                    [
+                        data.z[data.sl],
+                        data.d[data.sl],
+                        data.d_fit,
+                    ]
+                )
             else:
-                arrays[f"r{point.r:04d}c{point.c:04d}"] = [data.z, data.d]
+                arrays[f"r{point.r:04d}c{point.c:04d}"] = np.column_stack(
+                    [
+                        data.z,
+                        data.d,
+                    ]
+                )
 
         if exporter is np.savez_compressed:
             try:
@@ -404,7 +411,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             for name, array in arrays.items():
                 try:
                     await trio.to_thread.run_sync(
-                        exporter, root + "_" + name + ext, np.transpose(array)
+                        exporter, root + "_" + name + ext, array
                     )
                 except Exception as e:
                     await trio.to_thread.run_sync(
