@@ -258,7 +258,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                 await trs(self.draw)
                 # previous delay is not great predictor of next delay
                 # for now try exponential moving average
-                delay = ((trio.current_time() - t) + delay) / 2
+                delay = ((trio.current_time() - t)*3 + delay) / 2
             # Funny story, we only want tight layout behavior on resize and
             # a few other special cases, but also we want super().draw()
             # and by extension draw_idle_task to be responsible for calling
@@ -337,7 +337,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         defaultextension = ""
         initialdir = os.path.expanduser(matplotlib.rcParams["savefig.directory"])
         initialfile = os.path.basename(self._prev_filename)
-        fname = await trs(
+        fname = await trio.to_thread.run_sync(
             partial(
                 tk.filedialog.asksaveasfilename,
                 master=self,
@@ -453,7 +453,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         defaultextension = ""
         initialdir = os.path.expanduser(matplotlib.rcParams["savefig.directory"])
         initialfile = os.path.basename(self._prev_filename)
-        fname = await trs(
+        fname = await trio.to_thread.run_sync(
             partial(
                 tk.filedialog.asksaveasfilename,
                 master=self,
@@ -1597,7 +1597,7 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
 async def open_task(root):
     """Open a file using a dialog box, then create a window for data analysis"""
     # Choose file
-    path = await trs(
+    path = await trio.to_thread.run_sync(
         partial(
             tk.filedialog.askopenfilename,
             master=root,
