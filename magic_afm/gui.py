@@ -56,7 +56,6 @@ import imageio
 import matplotlib
 import numpy as np
 import outcome
-import psutil
 import trio
 import trio_parallel
 from matplotlib.backend_bases import MouseButton
@@ -79,13 +78,6 @@ try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
 except AttributeError:
     pass
-
-try:
-    NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
-except AttributeError:
-    NICE = 3
-
-psutil.Process().nice(NICE)
 
 matplotlib.rcParams["savefig.dpi"] = 300
 RESAMPLE_NPTS = 512

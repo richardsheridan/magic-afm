@@ -831,9 +831,14 @@ INITIALIZED = False
 def calc_properties_imap(delta_f_i_kwargs):
     global INITIALIZED
     if not INITIALIZED:
-        import threadpoolctl
+        import threadpoolctl, psutil
 
         threadpoolctl.threadpool_limits(1)
+        try:
+            NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
+        except AttributeError:
+            NICE = 3
+        psutil.Process().nice(NICE)
         INITIALIZED = True
     delta, force, i, kwargs = delta_f_i_kwargs
     beta, beta_err, partial_force_curve = fitfun(delta, force, **kwargs)
