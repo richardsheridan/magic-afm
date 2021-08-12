@@ -236,6 +236,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
         inf = float("inf")
         delay = LONGEST_IMPERCEPTIBLE_DELAY * 10
+        need_draw = False
         task_status.started()
         # One of the slowest processes. Stick everything in a thread.
         while True:
@@ -244,7 +245,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             # Set deadline ASAP so delay scope is accurate
             deadline = trio.current_time() + delay
             async with self.spinner_scope():
-                await trs(draw_fn)
+                need_draw = (not await trs(draw_fn)) or need_draw
                 # Batch rapid artist call requests
                 # spend roughly equal time building artists and drawing
                 with trio.move_on_at(deadline) as delay_scope:
@@ -252,13 +253,15 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                         # Cancelling this would drop the fn
                         # would be nicer to prepend back into channel but...
                         delay_scope.deadline = inf
-                        await trs(draw_fn)
+                        need_draw = (not await trs(draw_fn)) or need_draw
                         delay_scope.deadline = deadline
-                t = trio.current_time()
-                await trs(self.draw)
-                # previous delay is not great predictor of next delay
-                # for now try exponential moving average
-                delay = ((trio.current_time() - t)*3 + delay) / 2
+                if need_draw:
+                    t = trio.current_time()
+                    await trs(self.draw)
+                    # previous delay is not great predictor of next delay
+                    # for now try exponential moving average
+                    delay = ((trio.current_time() - t) * 3 + delay) / 2
+                    need_draw = False
             # Funny story, we only want tight layout behavior on resize and
             # a few other special cases, but also we want super().draw()
             # and by extension draw_idle_task to be responsible for calling
@@ -402,9 +405,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         elif isinstance(exporter, partial) and exporter.func is np.savetxt:
             for name, array in arrays.items():
                 try:
-                    await trio.to_thread.run_sync(
-                        exporter, root + "_" + name + ext, array
-                    )
+                    await trio.to_thread.run_sync(exporter, root + "_" + name + ext, array)
                 except Exception as e:
                     await trio.to_thread.run_sync(
                         partial(
@@ -967,7 +968,8 @@ class ForceVolumeTkDisplay:
 async def force_volume_task(display, opened_fvol):
     # plot_curve_event_response
     plot_curve_cancels_pending = set()
-    artists = []
+    img_artists = []
+    plot_artists = []
     table = None
     existing_points = set()
     point_data = {}
@@ -984,7 +986,7 @@ async def force_volume_task(display, opened_fvol):
         optionsdict = dataclasses.asdict(options)
         img_shape = axesimage.get_size()
         ncurves = img_shape[0] * img_shape[1]
-        chunksize = 16
+        chunksize = 8
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
 
@@ -995,7 +997,7 @@ async def force_volume_task(display, opened_fvol):
                 desc=f"Fitting {opened_fvol.path.name} force curves",
                 smoothing=0.01,
                 # smoothing_time=1,
-                mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 2,
+                mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 3,
                 unit=" fits",
                 tk_parent=display.tkwindow,
                 grab=False,
@@ -1035,9 +1037,13 @@ async def force_volume_task(display, opened_fvol):
                     f = d * options.k
                     return delta, f, i, optionsdict
 
-                def draw_fn():
-                    progress_image.changed()
-                    progress_image.pchanged()
+                def blit_img():
+                    display.img_ax.draw_artist(axesimage)
+                    display.img_ax.draw_artist(progress_image)
+                    for img_artist in img_artists:
+                        display.img_ax.draw_artist(img_artist)
+                    display.canvas.blit(display.img_ax.bbox)
+                    return True
 
                 async with trio.open_nursery() as nursery:
                     force_curve_aiter = await nursery.start(
@@ -1058,9 +1064,10 @@ async def force_volume_task(display, opened_fvol):
                         else:
                             property_map[i] = properties
                             color = (0, 1, 0, 0.5)
-                        pbar.update()
                         r, c = np.unravel_index(i, img_shape)
                         progress_array[r, c, :] = color
+                        if not pbar.update():
+                            continue
                         if old_axesimage is not axesimage:
                             # new image selected, get a fresh progress image
                             # so it is on top
@@ -1073,7 +1080,7 @@ async def force_volume_task(display, opened_fvol):
                             new_progress_array[:] = progress_array[:]
                             progress_array = new_progress_array
                             old_axesimage = axesimage
-                        display.canvas.draw_send.send_nowait(draw_fn)
+                        display.canvas.draw_send.send_nowait(blit_img)
 
         def draw_fn():
             progress_image.remove()
@@ -1166,11 +1173,14 @@ async def force_volume_task(display, opened_fvol):
     @async_tools.spawn_limit(trio.CapacityLimiter(1))
     async def redraw_existing_points():
         def draw_fn():
-            for artist in artists:
+            for artist in img_artists:
+                artist.remove()
+            for artist in plot_artists:
                 artist.remove()
             display.plot_ax.relim()
             display.plot_ax.set_prop_cycle(None)
-            artists.clear()
+            img_artists.clear()
+            plot_artists.clear()
             point_data.clear()
 
         await display.canvas.draw_send.send(draw_fn)
@@ -1264,9 +1274,12 @@ async def force_volume_task(display, opened_fvol):
                     table.remove()
                     table = None
                 if clear_previous:
-                    for artist in artists:
+                    for artist in img_artists:
                         artist.remove()
-                    artists.clear()
+                    for artist in plot_artists:
+                        artist.remove()
+                    img_artists.clear()
+                    plot_artists.clear()
                     existing_points.clear()
                     point_data.clear()
 
@@ -1280,8 +1293,8 @@ async def force_volume_task(display, opened_fvol):
                 # Drawing Phase
                 # Based options choose plots and collect artists for deletion
                 new_artists, color = draw_force_curve(force_curve_data, display.plot_ax, options)
-                artists.extend(new_artists)
-                artists.extend(
+                plot_artists.extend(new_artists)
+                img_artists.extend(
                     display.img_ax.plot(
                         point.x,
                         point.y,
