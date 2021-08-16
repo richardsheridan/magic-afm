@@ -1040,10 +1040,7 @@ async def force_volume_task(display, opened_fvol):
                     return delta, f, i, optionsdict
 
                 def blit_img():
-                    display.img_ax.draw_artist(axesimage)
-                    display.img_ax.draw_artist(progress_image)
-                    for img_artist in img_artists:
-                        display.img_ax.draw_artist(img_artist)
+                    display.img_ax.redraw_in_frame()
                     display.canvas.blit(display.img_ax.bbox)
                     return True
 
