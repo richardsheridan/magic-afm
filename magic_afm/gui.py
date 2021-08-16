@@ -1765,8 +1765,9 @@ def open_with_os_default(file_url_etc):
         os.startfile(file_url_etc)
     except AttributeError:
         try:  # should work on MacOS and most linux versions
-            subprocess.call(["open", file_url_etc])
-        except:
+            subprocess.run(["open", file_url_etc], check=True)
+        except Exception as exc:
+            traceback.print_exception(type(exc), exc, exc.__traceback__)
             print("Could not open with OS")
 
 
