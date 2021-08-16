@@ -74,10 +74,10 @@ from .async_tools import LONGEST_IMPERCEPTIBLE_DELAY, TOOLTIP_CANCEL, tooltip_ta
 
 warnings.simplefilter("ignore", TqdmExperimentalWarning)
 
-# try:
-#     ctypes.windll.shcore.SetProcessDpiAwareness(1)
-# except AttributeError:
-#     pass
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except AttributeError:
+    pass
 
 matplotlib.rcParams["savefig.dpi"] = 300
 RESAMPLE_NPTS = 512
@@ -1826,7 +1826,8 @@ def main():
     except AttributeError:
         pass
     else:
-        matplotlib.rcParams["figure.dpi"] = dpi
+        if matplotlib._version.version_tuple < (3, 5):
+            matplotlib.rcParams["figure.dpi"] = dpi
     # root.wm_iconbitmap("something.ico")
     host = TkHost(root)
     trio.lowlevel.start_guest_run(
