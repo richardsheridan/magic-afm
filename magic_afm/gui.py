@@ -248,19 +248,18 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                 need_draw = (not await trs(draw_fn)) or need_draw
                 # Batch rapid artist call requests
                 # spend roughly equal time building artists and drawing
-                with trio.move_on_at(deadline) as delay_scope:
-                    async for draw_fn in self.draw_recv:
-                        # Cancelling this would drop the fn
-                        # would be nicer to prepend back into channel but...
-                        delay_scope.deadline = inf
-                        need_draw = (not await trs(draw_fn)) or need_draw
-                        delay_scope.deadline = deadline
+                while True:
+                    with trio.move_on_at(deadline) as delay_scope:
+                        draw_fn = await self.draw_recv.receive()
+                    if delay_scope.cancelled_caught:
+                        break
+                    need_draw = (not await trs(draw_fn)) or need_draw
                 if need_draw:
                     t = trio.current_time()
                     await trs(self.draw)
                     # previous delay is not great predictor of next delay
                     # for now try exponential moving average
-                    delay = ((trio.current_time() - t) * 3 + delay) / 2
+                    delay = ((trio.current_time() - t) + delay) / 2
                     need_draw = False
             # Funny story, we only want tight layout behavior on resize and
             # a few other special cases, but also we want super().draw()
@@ -279,6 +278,9 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             if self._resize_pending is event:
                 super(type(self), self).resize(event)
                 self.figure.set_tight_layout(True)
+                return False
+            else:
+                return True
 
         self.draw_send.send_nowait(draw_fn)
 
@@ -1080,7 +1082,8 @@ async def force_volume_task(display, opened_fvol):
                             new_progress_array[:] = progress_array[:]
                             progress_array = new_progress_array
                             old_axesimage = axesimage
-                        display.canvas.draw_send.send_nowait(blit_img)
+                        else:
+                            display.canvas.draw_send.send_nowait(blit_img)
 
         def draw_fn():
             progress_image.remove()
