@@ -74,10 +74,10 @@ from .async_tools import LONGEST_IMPERCEPTIBLE_DELAY, TOOLTIP_CANCEL, tooltip_ta
 
 warnings.simplefilter("ignore", TqdmExperimentalWarning)
 
-try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)
-except AttributeError:
-    pass
+# try:
+#     ctypes.windll.shcore.SetProcessDpiAwareness(1)
+# except AttributeError:
+#     pass
 
 matplotlib.rcParams["savefig.dpi"] = 300
 RESAMPLE_NPTS = 512
@@ -228,13 +228,12 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
         super().__init__(figure, master)
 
-        self._tkcanvas.configure(background="gray94")  # surely there's a better name...
+        self._tkcanvas.configure(background="#f0f0f0")
 
     def draw_idle(self):
         self.draw_send.send_nowait(int)
 
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
-        inf = float("inf")
         delay = LONGEST_IMPERCEPTIBLE_DELAY * 10
         need_draw = False
         task_status.started()
@@ -585,7 +584,7 @@ class ForceVolumeTkDisplay:
         window.wm_title(name)
 
         # Build figure
-        self.fig = Figure((9, 2.75), frameon=False)
+        self.fig = Figure((9, 2.75), facecolor="#f0f0f0")
         self.canvas = AsyncFigureCanvasTkAgg(self.fig, window)
         self.navbar = AsyncNavigationToolbar2Tk(self.canvas, window)
         self.img_ax, self.plot_ax = img_ax, plot_ax = self.fig.subplots(
@@ -1820,9 +1819,6 @@ def main():
     else:
         matplotlib.rcParams["figure.dpi"] = dpi
     # root.wm_iconbitmap("something.ico")
-    # sabotage update command so that we crash instead of deadlocking
-    # breaks ttk.Combobox, maybe others
-    # root.tk.call('rename', 'update', 'never_update')
     host = TkHost(root)
     trio.lowlevel.start_guest_run(
         main_task,
