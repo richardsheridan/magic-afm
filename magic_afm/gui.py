@@ -552,7 +552,9 @@ class TkHost:
         thus tk.NoDefaultRoot
         """
         print(f"Trio shutdown. Outcome: {outcome_}")
-        if isinstance(outcome_, outcome.Error):
+        if isinstance(outcome_, outcome.Error) and not isinstance(
+            outcome_.error, KeyboardInterrupt
+        ):
             date = datetime.datetime.now().isoformat().replace(":", ";")
             with open(f"traceback-{date}.dump", "w") as file:
                 exc = outcome_.error
@@ -1840,7 +1842,7 @@ def main():
     )
     outcome_ = outcome.capture(root.mainloop)
     print("Tk shutdown. Outcome:", outcome_)
-    if isinstance(outcome_, outcome.Error):
+    if isinstance(outcome_, outcome.Error) and not isinstance(outcome_.error, KeyboardInterrupt):
         date = datetime.datetime.now().isoformat().replace(":", ";")
         with open(f"traceback-{date}.dump", "w", encoding="utf8") as file:
             exc = outcome_.error
