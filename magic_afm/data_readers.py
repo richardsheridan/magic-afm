@@ -23,7 +23,12 @@ asyncifies the worker's disk reads with threads, although this is not a rule.
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import abc
 import dataclasses
-from subprocess import PIPE, STARTF_USESHOWWINDOW, STARTUPINFO
+from subprocess import PIPE
+try:
+    from subprocess import STARTF_USESHOWWINDOW, STARTUPINFO
+except ImportError:
+    STARTUPINFO = lambda *a, **kw: None
+    STARTF_USESHOWWINDOW = None
 from typing import Set
 
 import numpy as np
