@@ -304,6 +304,15 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         self._prev_filename = ""
         super().__init__(canvas, window)
 
+    def save_figure(self, *args):
+        # frameon is a optimization of some sort on tkagg backend, but we don't want to enforce
+        # tk gray on exported figures, transparency is better
+        try:
+            self.canvas.figure.set_frameon(False)
+            super().save_figure(*args)
+        finally:
+            self.canvas.figure.set_frameon(True)
+
     def teach_navbar_to_use_trio(self, nursery, get_image_names, get_image_by_name, point_data):
         self._parent_nursery = nursery
         self._get_image_names = get_image_names
