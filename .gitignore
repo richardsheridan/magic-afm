@@ -3,4 +3,6 @@ build
 dist
 /magic_afm/_version.py
 /example_data/
-/.idea/
+/.idea
+*.exe
+.ipynb_checkpoints
