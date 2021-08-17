@@ -234,8 +234,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         self.draw_send.send_nowait(int)
 
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
-        delay = LONGEST_IMPERCEPTIBLE_DELAY * 10
-        need_draw = False
+        delay = LONGEST_IMPERCEPTIBLE_DELAY  # nonzero to hide initial red square
         task_status.started()
         # One of the slowest processes. Stick everything in a thread.
         while True:
@@ -244,29 +243,29 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             # Set deadline ASAP so delay scope is accurate
             deadline = trio.current_time() + delay
             async with self.spinner_scope():
-                need_draw = (not await trs(draw_fn)) or need_draw
-                # Batch rapid artist call requests
+                # if draw_fn returns a truthy value, no draw needed
+                if await trs(draw_fn):
+                    continue
+                # Batch rapid artist call requests if a draw is incoming
                 # spend roughly equal time building artists and drawing
                 while True:
                     with trio.move_on_at(deadline) as delay_scope:
                         draw_fn = await self.draw_recv.receive()
                     if delay_scope.cancelled_caught:
                         break
-                    need_draw = (not await trs(draw_fn)) or need_draw
-                if need_draw:
-                    t = trio.current_time()
-                    await trs(self.draw)
-                    # previous delay is not great predictor of next delay
-                    # for now try exponential moving average
-                    delay = ((trio.current_time() - t) + delay) / 2
-                    need_draw = False
-            # Funny story, we only want tight layout behavior on resize and
-            # a few other special cases, but also we want super().draw()
-            # and by extension draw_idle_task to be responsible for calling
-            # figure.tight_layout().
-            # So everywhere desired, send set_tight_layout(True) in draw_fn
-            # and it will be reset here.
-            self.figure.set_tight_layout(False)
+                    await trs(draw_fn)
+                t = trio.current_time()
+                await trs(self.draw)
+                # previous delay is not great predictor of next delay
+                # for now try exponential moving average
+                delay = ((trio.current_time() - t) + delay) / 2
+                # Funny story, we only want tight layout behavior on resize and
+                # a few other special cases, but also we want super().draw()
+                # and by extension draw_idle_task to be responsible for calling
+                # figure.tight_layout().
+                # So everywhere desired, send set_tight_layout(True) in draw_fn
+                # and flag need_draw, and it will be reset here.
+                self.figure.set_tight_layout(False)
 
     def resize(self, event):
         # Three purposes for this override: cancel stale resizes, use draw_send,
