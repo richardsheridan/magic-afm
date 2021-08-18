@@ -234,9 +234,18 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         self.draw_send.send_nowait(int)
 
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
+        # One of the slowest processes. Stick everything in a thread.
         delay = LONGEST_IMPERCEPTIBLE_DELAY  # nonzero to hide initial red square
         task_status.started()
-        # One of the slowest processes. Stick everything in a thread.
+        # Initial draws are extra slow due to figure creation, make sure they are batched
+        async with self.spinner_scope():
+            try:
+                while True:
+                    draw_fn = self.draw_recv.receive_nowait()
+                    await trs(draw_fn)
+            except trio.WouldBlock:
+                # don't set delay based on this, it is exceptionally lengthy
+                await trs(self.draw)
         while True:
             # Sleep until someone sends artist calls
             draw_fn = await self.draw_recv.receive()
@@ -597,17 +606,21 @@ class ForceVolumeTkDisplay:
         self.fig = Figure((9, 2.75), facecolor="#f0f0f0")
         self.canvas = AsyncFigureCanvasTkAgg(self.fig, window)
         self.navbar = AsyncNavigationToolbar2Tk(self.canvas, window)
-        self.img_ax, self.plot_ax = img_ax, plot_ax = self.fig.subplots(
-            1, 2, gridspec_kw=dict(width_ratios=[1, 1.5])
-        )
-        self.fig.subplots_adjust(top=0.85)
-        img_ax.set_anchor("W")
-        img_ax.set_facecolor((0.8, 0, 0))  # scary red for NaN values of images
-        # Need to pre-load something into these labels for change_image_callback
-        plot_ax.set_xlabel(" ")
-        plot_ax.set_ylabel(" ")
-        plot_ax.set_ylim([-1000, 1000])
-        plot_ax.set_xlim([-1000, 1000])
+
+        def initial_draw_fn():
+            self.img_ax, self.plot_ax = self.fig.subplots(
+                1, 2, gridspec_kw=dict(width_ratios=[1, 1.5])
+            )
+            self.fig.subplots_adjust(top=0.85)
+            self.img_ax.set_anchor("W")
+            self.img_ax.set_facecolor((0.8, 0, 0))  # scary red for NaN values of images
+            # Need to pre-load something into these labels for change_image_callback
+            self.plot_ax.set_xlabel(" ")
+            self.plot_ax.set_ylabel(" ")
+            self.plot_ax.set_ylim([-1000, 1000])
+            self.plot_ax.set_xlim([-1000, 1000])
+            return True  # technically needs a draw but later resize will take care of it
+        self.canvas.draw_send.send_nowait(initial_draw_fn)
 
         # Options and buttons
         self.options_frame = ttk.Frame(root)
