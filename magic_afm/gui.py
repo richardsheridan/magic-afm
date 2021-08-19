@@ -620,6 +620,7 @@ class ForceVolumeTkDisplay:
             self.plot_ax.set_ylim([-1000, 1000])
             self.plot_ax.set_xlim([-1000, 1000])
             return True  # technically needs a draw but later resize will take care of it
+
         self.canvas.draw_send.send_nowait(initial_draw_fn)
 
         # Options and buttons
@@ -1028,11 +1029,9 @@ async def force_volume_task(display, opened_fvol):
                 leave=False,
                 cancel_callback=cancel_scope.cancel,
             ) as pbar:
-                progress_image: matplotlib.image.AxesImage = display.img_ax.imshow(
-                    np.zeros(img_shape + (4,), dtype="f4"), extent=axesimage.get_extent()
-                )  # transparent initial image, no need to draw
-                progress_array = progress_image.get_array()
-                old_axesimage = axesimage
+                progress_image: Optional[matplotlib.image.AxesImage] = None
+                progress_array = np.zeros(img_shape + (4,), dtype="f4")
+                old_axesimage = object()
                 property_map = np.empty(
                     ncurves,
                     dtype=np.dtype([(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]),
@@ -1095,20 +1094,22 @@ async def force_volume_task(display, opened_fvol):
                         if old_axesimage is not axesimage:
                             # new image selected, get a fresh progress image
                             # so it is on top
-                            display.canvas.draw_send.send_nowait(progress_image.remove)
+                            if progress_image is None:
+                                display.canvas.draw_idle()
+                            else:
+                                display.canvas.draw_send.send_nowait(progress_image.remove)
                             progress_image = display.img_ax.imshow(
-                                np.zeros(img_shape + (4,), dtype="f4"),
+                                progress_array,
                                 extent=axesimage.get_extent(),
                             )
-                            new_progress_array = progress_image.get_array()
-                            new_progress_array[:] = progress_array[:]
-                            progress_array = new_progress_array
+                            progress_array = progress_image.get_array()
                             old_axesimage = axesimage
                         else:
                             display.canvas.draw_send.send_nowait(blit_img)
 
         def draw_fn():
-            progress_image.remove()
+            if progress_image is not None:
+                progress_image.remove()
 
         await display.canvas.draw_send.send(draw_fn)
 
