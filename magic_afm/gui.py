@@ -1063,7 +1063,10 @@ async def force_volume_task(display, opened_fvol):
 
                 def blit_img():
                     display.img_ax.redraw_in_frame()
-                    display.canvas.blit(display.img_ax.bbox)
+                    try:
+                        display.canvas.blit(display.img_ax.bbox)
+                    except ValueError:
+                        pass
                     return True
 
                 async with trio.open_nursery() as nursery:
