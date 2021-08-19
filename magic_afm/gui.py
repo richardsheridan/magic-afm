@@ -281,7 +281,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         # and set_tight_layout
         self._resize_pending = event
 
-        def draw_fn():
+        def resize_draw_fn():
             if self._resize_pending is event:
                 super(type(self), self).resize(event)
                 self.figure.set_tight_layout(True)
@@ -289,7 +289,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             else:
                 return True
 
-        self.draw_send.send_nowait(draw_fn)
+        self.draw_send.send_nowait(resize_draw_fn)
 
     def teach_canvas_to_use_trio(
         self, nursery, spinner_scope, async_motion_pick_fn, tooltip_send_chan
@@ -1060,7 +1060,7 @@ async def force_volume_task(display, opened_fvol):
                     f = d * options.k
                     return delta, f, i, optionsdict
 
-                def blit_img():
+                def blit_img_draw_fn():
                     display.img_ax.redraw_in_frame()
                     try:
                         display.canvas.blit(display.img_ax.bbox)
@@ -1105,13 +1105,13 @@ async def force_volume_task(display, opened_fvol):
                             progress_array = progress_image.get_array()
                             old_axesimage = axesimage
                         else:
-                            display.canvas.draw_send.send_nowait(blit_img)
+                            display.canvas.draw_send.send_nowait(blit_img_draw_fn)
 
-        def draw_fn():
+        def progress_image_cleanup_draw_fn():
             if progress_image is not None:
                 progress_image.remove()
 
-        await display.canvas.draw_send.send(draw_fn)
+        await display.canvas.draw_send.send(progress_image_cleanup_draw_fn)
 
         if cancel_scope.cancelled_caught:
             return
@@ -1141,7 +1141,7 @@ async def force_volume_task(display, opened_fvol):
         # save old clim
         clim = axesimage.get_clim()
 
-        def draw_fn():
+        def change_cmap_draw_fn():
             # prevent cbar from getting expanded
             axesimage.set_clim(image_stats.min, image_stats.max)
             # actually change cmap
@@ -1151,7 +1151,7 @@ async def force_volume_task(display, opened_fvol):
             if colorbar.frozen:
                 expand_colorbar(colorbar)
 
-        await display.canvas.draw_send.send(draw_fn)
+        await display.canvas.draw_send.send(change_cmap_draw_fn)
 
     async def change_image_callback():
         nonlocal scandown, image_stats, unit
@@ -1164,7 +1164,7 @@ async def force_volume_task(display, opened_fvol):
         scansize = opened_fvol.scansize
         s = (scansize + scansize / len(image_array)) // 2
 
-        def draw_fn():
+        def change_image_draw_fn():
             nonlocal axesimage, colorbar
             if colorbar is not None:
                 colorbar.remove()
@@ -1194,11 +1194,11 @@ async def force_volume_task(display, opened_fvol):
             # noinspection PyTypeChecker
             display.fig.set_tight_layout(True)
 
-        await display.canvas.draw_send.send(draw_fn)
+        await display.canvas.draw_send.send(change_image_draw_fn)
 
     @async_tools.spawn_limit(trio.CapacityLimiter(1))
     async def redraw_existing_points():
-        def draw_fn():
+        def points_draw_fn():
             for artist in img_artists:
                 artist.remove()
             for artist in plot_artists:
@@ -1209,7 +1209,7 @@ async def force_volume_task(display, opened_fvol):
             plot_artists.clear()
             point_data.clear()
 
-        await display.canvas.draw_send.send(draw_fn)
+        await display.canvas.draw_send.send(points_draw_fn)
         async with spinner_scope():
             for point in existing_points:
                 await plot_curve_response(point, False)
@@ -1217,11 +1217,11 @@ async def force_volume_task(display, opened_fvol):
     async def redraw_existing_points_tight():
         await redraw_existing_points()
 
-        def draw_fn():
+        def tight_points_draw_fn():
             # noinspection PyTypeChecker
             display.fig.set_tight_layout(True)
 
-        await display.canvas.draw_send.send(draw_fn)
+        await display.canvas.draw_send.send(tight_points_draw_fn)
 
     async def manipulate_callback():
         manip_name = display.manipulate_strvar.get()
@@ -1243,19 +1243,21 @@ async def force_volume_task(display, opened_fvol):
             colorbar.frozen = False
             clim = axesimage.get_clim()
 
-            def draw_fn():
+            def cb_thaw_draw_fn():
                 # make full range colorbar especially solids
                 axesimage.set_clim(image_stats.min, image_stats.max)
                 # reset customizations
                 customize_colorbar(colorbar, *clim)
 
+            await display.canvas.draw_send.send(cb_thaw_draw_fn)
+
         else:
             colorbar.frozen = True
 
-            def draw_fn():
+            def cb_freeze_draw_fn():
                 expand_colorbar(colorbar)
 
-        await display.canvas.draw_send.send(draw_fn)
+            await display.canvas.draw_send.send(cb_freeze_draw_fn)
 
     async def plot_curve_response(point: ImagePoint, clear_previous):
         existing_points.add(point)  # should be before 1st checkpoint
@@ -1292,7 +1294,7 @@ async def force_volume_task(display, opened_fvol):
                 existing_points.discard(point)
                 return
 
-            def draw_fn():
+            def plot_point_draw_fn():
                 nonlocal table
                 # Clearing Phase
                 # Clear previous artists and reset plots (faster than .clear()?)
@@ -1334,7 +1336,7 @@ async def force_volume_task(display, opened_fvol):
                 if options.fit_mode:
                     table = draw_data_table(point_data, display.plot_ax)
 
-            await display.canvas.draw_send.send(draw_fn)
+            await display.canvas.draw_send.send(plot_point_draw_fn)
 
     async def mpl_pick_motion_event_callback(event):
         mouseevent = getattr(event, "mouseevent", event)
@@ -1381,12 +1383,12 @@ async def force_volume_task(display, opened_fvol):
                 return
 
             # fallthrough for left and right clicks
-            def draw_fn():
+            def cb_limits_draw_fn():
                 colorbar.norm.vmin = vmin
                 colorbar.norm.vmax = vmax
                 colorbar.solids.set_clim(vmin, vmax)
 
-            await display.canvas.draw_send.send(draw_fn)
+            await display.canvas.draw_send.send(cb_limits_draw_fn)
         elif display is not None and mouseevent.inaxes is display.plot_ax:
             if event.name == "motion_notify_event":
                 await tooltip_send_chan.send(
