@@ -221,10 +221,10 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
     def get_force_curve_sync(self, r, c):
         gen = np.random.default_rng(seed=(r, c))
         fext = calculation.force_curve(
-            calculation.red_extend, self.delta[: self.split], 1, 10, 1, -10, 1, 0, 0, 10
+            calculation.red_extend, self.delta[: self.split], 1, 10, 1, -10, 1, 0, 0, 1
         )
         fret = calculation.force_curve(
-            calculation.red_retract, self.delta[self.split :], 1, 10, 1, -10, 1, 0, 0, 10
+            calculation.red_retract, self.delta[self.split :], 1, 10, 1, -10, 1, 0, 0, 1
         )
         d = np.concatenate((fext, fret))
         z = self.delta + d

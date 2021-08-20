@@ -654,7 +654,6 @@ def force_curve(red_curve, delta, k, radius, M, fc, tau, delta_shift, force_shif
     assert M > 0, M
     assert fc < 0, fc
     assert 0 <= tau <= 1, tau
-    assert lj_delta_scale > 0, lj_delta_scale
 
     # Calculate reduced/dimensionless values of inputs
     # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
@@ -664,7 +663,7 @@ def force_curve(red_curve, delta, k, radius, M, fc, tau, delta_shift, force_shif
     ref_delta = ref_radius * ref_radius / radius
     red_delta = (delta - delta_shift) / ref_delta
     red_k = k / ref_force * ref_delta
-    lj_delta_scale = lj_delta_scale / ref_delta
+    lj_delta_scale = np.exp(lj_delta_scale) / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
     red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale)
@@ -681,7 +680,6 @@ def delta_curve(red_curve, force, k, radius, M, fc, tau, delta_shift, force_shif
     assert M > 0, M
     assert fc < 0, fc
     assert 0 <= tau <= 1, tau
-    assert lj_delta_scale > 0, lj_delta_scale
 
     # Calculate reduced/dimensionless values of inputs
     # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
@@ -691,7 +689,7 @@ def delta_curve(red_curve, force, k, radius, M, fc, tau, delta_shift, force_shif
     ref_radius = (ref_force * radius / M) ** (1 / 3)
     ref_delta = ref_radius * ref_radius / radius
     red_k = k / ref_force * ref_delta
-    lj_delta_scale = lj_delta_scale / ref_delta
+    lj_delta_scale = np.exp(lj_delta_scale) / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
     red_delta = red_curve(red_force, red_fc, -red_k, -lj_delta_scale)
@@ -740,7 +738,7 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, 
             # (0, 1),           # tau
             (np.min(delta), np.max(delta)),  # delta_shift
             (np.min(force), np.max(force)),  # force_shift
-            (EPS, 100.0),  # lj_delta_scale
+            (-6.0, 2.0),  # lj_delta_scale
         )
     )
     p0 = np.clip(p0, *bounds)
