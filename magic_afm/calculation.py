@@ -260,6 +260,8 @@ def secant(func, args, x0, x1):
 def brentq(func, args, xa, xb):
     """Transliterated from SciPy Zeros/brentq.c
 
+    :returns x where func(x,*args) == 0 or None if the bracket does not cross 0
+
     Copyright (c) 2001-2002 Enthought, Inc.  2003-2019, SciPy Developers.
     All rights reserved.
 
@@ -305,7 +307,7 @@ def brentq(func, args, xa, xb):
         return xcur
 
     if fpre * fcur > 0:
-        raise ValueError("f(a) and f(b) must have different signs")
+        return None
 
     for i in range(maxiter):
         if fpre * fcur < 0:
@@ -532,15 +534,12 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
         red_d_min,
         lj_limit_factor * lj_delta_scale + lj_delta_offset,
     )
-    try:
-        lj_end_pos = brentq(
+    lj_end_pos = brentq(
             lj_gradient,
             args,
             *bracket,
         )
-    except ValueError as e:
-        if str(e) != "f(a) and f(b) must have different signs":
-            raise
+    if lj_end_pos is None:
         # If root finding fails, put the end pos somewhere quasi-reasonable
         if lj_gradient(red_d_min, *args) <= 0:
             lj_end_pos = red_d_min
@@ -621,17 +620,14 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
         # TODO: analytical gradient of schwarz unstable branch
         df0dd0 = np.gradient(f0, d0)
 
-        try:
-            s_end_pos = brentq(interp_with_offset, (d0, df0dd0, red_k), d0[0], d0[-1])
+        s_end_pos = brentq(interp_with_offset, (d0, df0dd0, red_k), d0[0], d0[-1])
+        if s_end_pos is not None:
+            # found a good end point
             s_end_force = np.interp(s_end_pos, d0, f0)
-        except ValueError as e:
-            # The named error happens when the bracket is quite small i.e. red_fc ~2
-            if str(e) != "f(a) and f(b) must have different signs":
-                raise
-        else:
-            # This fires if there is NOT a ValueError i.e. found a good end point
             f = np.concatenate((f0, f))
             d = np.concatenate((d0, d))
+        else:
+            s_end_pos = 0
 
     s_f = np.interp(red_delta, d, f, left=np.inf, right=0)
     s_f = np.atleast_1d(s_f).squeeze()  # don't choke on weird array shapes or scalars
@@ -736,7 +732,7 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, 
             # (0, 1),           # tau
             (np.min(delta), np.max(delta)),  # delta_shift
             (np.min(force), np.max(force)),  # force_shift
-            (-6.0, 2.0),  # lj_delta_scale
+            (-6.0, 6.0),  # lj_delta_scale
         )
     )
     p0 = np.clip(p0, *bounds)
