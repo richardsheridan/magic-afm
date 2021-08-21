@@ -29,16 +29,11 @@ from numpy.linalg import lstsq
 from samplerate import resample
 
 try:
-    from numba import jit as myjit
+    from numba import jit
 except ImportError:
-    myjit = lambda x: x
+    jit = lambda *a,**kw: (lambda x: x)
 else:
-    myjit = myjit(nopython=True, nogil=True)
     abs = np.abs
-    # can't cache because weakrefs aren't pickleable? https://github.com/numba/numba/issues/6251
-    # myjit = myjit(nopython=True, nogil=True, cache=True)
-    # doesn't fix ZeroDivisionError? https://github.com/numba/numba/issues/1256
-    # myjit = myjit(nopython=True, nogil=True, error_model="python")
 
 
 EPS = float(np.finfo(np.float64).eps)
@@ -58,7 +53,7 @@ PROPERTY_UNITS_DICT = {
 }
 
 
-@myjit
+@jit(nopython=True, nogil=True, cache=True)
 def gauss3x3(img):
     img = np.copy(img)
     rows, cols = np.shape(img)
@@ -78,7 +73,7 @@ def gauss3x3(img):
     return img
 
 
-@myjit
+@jit(nopython=True, nogil=True, cache=True)
 def median3x1(img):
     out = np.empty_like(img)
     rows, cols = np.shape(out)
@@ -94,7 +89,7 @@ def median3x1(img):
     return out
 
 
-@myjit
+@jit(nopython=True, nogil=True, cache=True)
 def median3x3(img):
     out = np.empty_like(img)
     rows, cols = np.shape(out)
@@ -116,7 +111,7 @@ def median3x3(img):
     return out
 
 
-@myjit
+@jit(nopython=True, nogil=True, cache=True)
 def fillnan(img):
     out = np.copy(img)
     rows, cols = np.shape(out)
@@ -187,7 +182,8 @@ def resample_dset(X, npts, fourier):
         return np.stack([np.interp(tnew, told, x) for x in X]).squeeze()
 
 
-@myjit
+# can't cache because UUID cache busting https://github.com/numba/numba/issues/6284
+@jit(nopython=True, nogil=True)
 def secant(func, args, x0, x1):
     """Secant method from scipy optimize but stripping np.isclose for speed
 
@@ -257,8 +253,10 @@ def secant(func, args, x0, x1):
     return p.real
 
 
+
+# can't cache because UUID cache busting https://github.com/numba/numba/issues/6284
 # noinspection PyUnboundLocalVariable
-@myjit
+@jit(nopython=True, nogil=True)
 def brentq(func, args, xa, xb):
     """Transliterated from SciPy Zeros/brentq.c
 
@@ -365,7 +363,7 @@ def brentq(func, args, xa, xb):
     return xcur
 
 
-@myjit
+@jit(nopython=True, nogil=True, cache=True)
 def mylinspace(start, stop, num, endpoint):
     """np.linspace is surprisingly intensive, so trim the fat
 
@@ -431,7 +429,7 @@ except ImportError:
         return leastsq(function, xdata, ydata, p0, sigma, constraints)
 
 
-@myjit
+@jit(nopython=True, nogil=True, cache=True)
 def schwarz_red(red_f, red_fc, stable, offset):
     """Calculate Schwarz potential indentation depth from force in reduced units.
 
@@ -455,7 +453,7 @@ def schwarz_red(red_f, red_fc, stable, offset):
     return red_delta - offset
 
 
-@myjit
+@jit(nopython=True, nogil=True, cache=True)
 def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale):
     """So that schwarz can be directly jammed into delta_curve"""
     return schwarz_red(red_force, red_fc, 1.0, 0.0)
@@ -472,7 +470,7 @@ postfactor = 1 / (prefactor ** (-bigpow) - prefactor ** (-lilpow))  # such that 
 lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))  # delta of minimum slope
 
 
-@myjit
+@jit(nopython=True, nogil=True, cache=True)
 def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset):
     """Calculate a leonard-Jones force curve.
 
@@ -483,7 +481,7 @@ def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset):
     return postfactor * force_scale * (attraction ** powrat - attraction) - force_offset
 
 
-@myjit
+@jit(nopython=True, nogil=True, cache=True)
 def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
     """Gradient of lj_force.
 
@@ -495,7 +493,7 @@ def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
     return postfactor * force_scale * (attraction - repulsion) / delta_scale - force_offset
 
 
-@myjit
+@jit(nopython=True, nogil=True, cache=True)
 def interp_with_offset(x, xp, fp, offset):
     return np.interp(x, xp, fp) - offset
 

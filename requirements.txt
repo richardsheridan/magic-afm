@@ -32,7 +32,7 @@ kiwisolver==1.3.1
     # via matplotlib
 matplotlib==3.4.2
     # via -r requirements.in
-numpy==1.21.0
+numpy==1.20.3
     # via
     #   -r requirements.in
     #   h5py
@@ -43,6 +43,8 @@ outcome==1.1.0
     # via
     #   trio
     #   trio-parallel
+packaging==21.0
+    # via -r requirements.in
 pefile==2021.5.24
     # via pyinstaller
 pillow==8.3.1
@@ -58,7 +60,9 @@ pyinstaller==4.4
 pyinstaller-hooks-contrib==2021.2
     # via pyinstaller
 pyparsing==2.4.7
-    # via matplotlib
+    # via
+    #   matplotlib
+    #   packaging
 python-dateutil==2.8.1
     # via matplotlib
 pywin32-ctypes==0.2.0
