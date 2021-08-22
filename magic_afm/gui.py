@@ -1847,7 +1847,7 @@ def main():
     except AttributeError:
         pass
     else:
-        if matplotlib._version.version_tuple < (3, 5):
+        if matplotlib.__version__.startswith("3.4"):
             matplotlib.rcParams["figure.dpi"] = dpi
     # root.wm_iconbitmap("something.ico")
     host = TkHost(root)
