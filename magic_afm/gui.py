@@ -230,9 +230,6 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
         self._tkcanvas.configure(background="#f0f0f0")
 
-    def draw_idle(self):
-        self.draw_send.send_nowait(int)
-
     async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
         # One of the slowest processes. Stick everything in a thread.
         delay = LONGEST_IMPERCEPTIBLE_DELAY  # nonzero to hide initial red square
@@ -277,19 +274,8 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                 self.figure.set_tight_layout(False)
 
     def resize(self, event):
-        # Three purposes for this override: cancel stale resizes, use draw_send,
-        # and set_tight_layout
-        self._resize_pending = event
-
-        def resize_draw_fn():
-            if self._resize_pending is event:
-                super(type(self), self).resize(event)
-                self.figure.set_tight_layout(True)
-                return False
-            else:
-                return True
-
-        self.draw_send.send_nowait(resize_draw_fn)
+        super(type(self), self).resize(event)
+        self.figure.set_tight_layout(True)
 
     def teach_canvas_to_use_trio(
         self, nursery, spinner_scope, async_motion_pick_fn, tooltip_send_chan
@@ -1062,10 +1048,7 @@ async def force_volume_task(display, opened_fvol):
 
                 def blit_img_draw_fn():
                     display.img_ax.redraw_in_frame()
-                    try:
-                        display.canvas.blit(display.img_ax.bbox)
-                    except ValueError:
-                        pass
+                    display.canvas.blit(display.img_ax.bbox)
                     return True
 
                 async with trio.open_nursery() as nursery:
@@ -1094,9 +1077,7 @@ async def force_volume_task(display, opened_fvol):
                         if old_axesimage is not axesimage:
                             # new image selected, get a fresh progress image
                             # so it is on top
-                            if progress_image is None:
-                                display.canvas.draw_idle()
-                            else:
+                            if progress_image is not None:
                                 display.canvas.draw_send.send_nowait(progress_image.remove)
                             progress_image = display.img_ax.imshow(
                                 progress_array,
