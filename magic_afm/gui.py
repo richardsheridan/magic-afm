@@ -845,14 +845,7 @@ class ForceVolumeTkDisplay:
 
     def destroy(self):
         self.options_frame.destroy()
-        self.tkwindow.withdraw()  # weird navbar hiccup on close
         self.tkwindow.destroy()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.destroy()
 
     @property
     def options(self):
@@ -1666,14 +1659,16 @@ async def open_task(root):
             suffix = path.suffix.lower()
 
     async with data_readers.SUFFIX_FVFILE_MAP[suffix](path) as opened_fv:
-        with ForceVolumeTkDisplay(root, path.name, opened_fv.parameters) as display:
-            await force_volume_task(display, opened_fv)
+        display = ForceVolumeTkDisplay(root, path.name, opened_fv.parameters)
+        await force_volume_task(display, opened_fv)
+        display.destroy()
 
 
 async def demo_task(root):
     async with data_readers.DemoForceVolumeFile("Demo") as opened_fv:
-        with ForceVolumeTkDisplay(root, "Demo", opened_fv.parameters) as display:
-            await force_volume_task(display, opened_fv)
+        display = ForceVolumeTkDisplay(root, "Demo", opened_fv.parameters)
+        await force_volume_task(display, opened_fv)
+        display.destroy()
 
 
 async def about_task(root):
