@@ -50,7 +50,7 @@ outcome==1.1.0
     #   trio-parallel
 pefile==2021.5.24
     # via pyinstaller
-pillow==8.3.1
+pillow==8.3.2
     # via
     #   imageio
     #   matplotlib

@@ -1,5 +1,6 @@
 h5py>=3
 imageio
+pillow>=8.3.2
 matplotlib>=3.4.2
 # matplotlib @ git+https://github.com/matplotlib/matplotlib@7b9e1ce18fd2d1e26c19bd1f14dec4822de40d59
 numba>=0.54.0  # OPTIONAL, included for version pinning
