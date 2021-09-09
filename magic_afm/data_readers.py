@@ -23,7 +23,9 @@ asyncifies the worker's disk reads with threads, although this is not a rule.
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import abc
 import dataclasses
+import threading
 from subprocess import PIPE
+
 try:
     from subprocess import STARTF_USESHOWWINDOW, STARTUPINFO
 except ImportError:
@@ -36,6 +38,18 @@ import trio
 
 from . import calculation
 from .async_tools import make_cancel_poller, trs
+
+CACHED_OPEN_PATHS = {}
+
+
+def eventually_evict_path(path):
+    path_lock = CACHED_OPEN_PATHS[path][-1]
+    while path_lock.acquire(timeout=10.0):
+        # someone reset our countdown
+        pass
+    # time's up, kick it out
+    del CACHED_OPEN_PATHS[path]
+    return
 
 
 def mmap_path_read_only(str_path):
@@ -382,6 +396,37 @@ class ARH5File(BaseForceVolumeFile):
         self._worker.trace = trace
         self._trace = trace
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state["_h5data"]
+        del state["_worker"]
+        del state["_images"]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        try:
+            h5data, images, worker, path_lock = CACHED_OPEN_PATHS[self.path]
+        except KeyError:
+            import h5py
+
+            h5data = h5py.File(self.path, "r")
+            images = h5data["Image"]
+            worker = self._choose_worker(h5data)
+            path_lock = threading.Lock()
+            path_lock.acquire()
+            CACHED_OPEN_PATHS[self.path] = h5data, images, worker, path_lock
+            threading.Thread(target=eventually_evict_path, args=(self.path,), daemon=True).start()
+        else:
+            # reset thread countdown
+            try:
+                path_lock.release()
+            except RuntimeError:
+                pass  # no problem if unreleased
+        self._h5data = h5data
+        self._images = images
+        self._worker = worker
+
     async def ainitialize(self):
         import h5py
 
@@ -577,6 +622,32 @@ class NanoscopeFile(BaseForceVolumeFile):
     }
     _default_heightmap_names = ("Height Sensor",)
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state["_mm"]
+        del state["_worker"]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        try:
+            mm, worker, path_lock = CACHED_OPEN_PATHS[self.path]
+        except KeyError:
+            self._mm = mm = mmap_path_read_only(str(self.path))
+            worker, _ = self._choose_worker(self.header)
+            path_lock = threading.Lock()
+            path_lock.acquire()
+            CACHED_OPEN_PATHS[self.path] = mm, worker, path_lock
+            threading.Thread(target=eventually_evict_path, args=(self.path,), daemon=True).start()
+        else:
+            # reset thread countdown
+            try:
+                path_lock.release()
+            except RuntimeError:
+                pass  # no problem if unreleased
+        self._mm = mm
+        self._worker = worker
+
     async def ainitialize(self):
         self._mm = await trio.to_thread.run_sync(mmap_path_read_only, str(self.path))
 
@@ -600,7 +671,7 @@ class NanoscopeFile(BaseForceVolumeFile):
         # \Aspect Ratio: 1:1
         # \Scan Size: 800 800 nm
 
-        self._file_image_names = header["Image"].keys()
+        self._file_image_names = set(header["Image"].keys())
 
         data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
 
