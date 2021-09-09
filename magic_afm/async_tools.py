@@ -64,11 +64,13 @@ async def to_sync_runner_map_unordered(
     limiter=cpu_bound_limiter,
     task_status=trio.TASK_STATUS_IGNORED,
 ):
+    chunky = chunksize > 1
     if task_status is trio.TASK_STATUS_IGNORED:
         buffer = float("inf")
     else:
         buffer = 0
     send_chan, recv_chan = trio.open_memory_channel(buffer)
+    to_sender, from_workers = trio.open_memory_channel(0)
     task_status.started(recv_chan)
 
     try:
@@ -77,14 +79,20 @@ async def to_sync_runner_map_unordered(
         if not str(e).endswith("object is not iterable"):
             raise e
         job_items = job_items.__aiter__()  # Duck type any async iterable
-        if chunksize != 1:
+        if chunky:
             job_items = _async_chunk_producer(sync_fn, job_items, chunksize)
             sync_fn = _chunk_consumer
     else:
-        if chunksize != 1:
+        if chunky:
             job_items = _chunk_producer(sync_fn, job_items, chunksize)
             sync_fn = _chunk_consumer
         job_items = asyncify_iterator(job_items, limiter)
+
+    async def sender():
+        # unroll chunks outside of the limiter but still apply backpressure
+        async for result in from_workers:
+            for r in result:
+                await send(r)
 
     async def send(item):
         # https://gitter.im/python-trio/general?at=5f7776b9cfe2f9049a1c67f9
@@ -104,15 +112,16 @@ async def to_sync_runner_map_unordered(
             result = await sync_runner(
                 sync_fn, job_item, cancellable=cancellable, limiter=trio.CapacityLimiter(1)
             )
-            if chunksize == 1:
-                await send(result)
-            else:
-                for r in result:
-                    await send(r)
+        if chunky:
+            await to_sender.send(result)
+        else:
+            await send(result)
 
-    async with send_chan, trio.open_nursery() as nursery:
-        async for job_item in job_items:
-            await nursery.start(worker, job_item)
+    async with send_chan, trio.open_nursery() as send_nursery:
+        send_nursery.start_soon(sender)
+        async with to_sender, trio.open_nursery() as nursery:
+            async for job_item in job_items:
+                await nursery.start(worker, job_item)
 
     if task_status is trio.TASK_STATUS_IGNORED:
         # internal details version
