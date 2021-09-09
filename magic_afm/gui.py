@@ -1011,7 +1011,7 @@ async def force_volume_task(display, opened_fvol):
                 progress_array = np.zeros(img_shape + (4,), dtype="f4")
                 old_axesimage = object()
                 property_map = np.empty(
-                    ncurves,
+                    img_shape,
                     dtype=np.dtype([(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]),
                 )
 
@@ -1039,7 +1039,7 @@ async def force_volume_task(display, opened_fvol):
                         partial(
                             load_force_curve, opened_fvol, resample, npts, sl, options.k
                         ),
-                        map(partial(np.unravel_index, shape=img_shape), range(ncurves)),
+                        np.ndindex(img_shape),
                         chunksize,
                     )
                     property_aiter = await nursery.start(
@@ -1049,12 +1049,11 @@ async def force_volume_task(display, opened_fvol):
                         chunksize,
                     )
                     async for rc, properties in property_aiter:
-                        i = np.ravel_multi_index(rc, img_shape)
                         if properties is None:
-                            property_map[i] = np.nan
+                            property_map[rc] = np.nan
                             color = (1, 0, 0, 0.5)
                         else:
-                            property_map[i] = properties
+                            property_map[rc] = properties
                             color = (0, 1, 0, 0.5)
                         r, c = rc
                         progress_array[r, c, :] = color
@@ -1084,7 +1083,6 @@ async def force_volume_task(display, opened_fvol):
             return
 
         combobox_values = list(display.image_name_menu.cget("values"))
-        property_map = property_map.reshape((*img_shape, -1))
 
         # Actually write out results to external world
         if options.fit_mode == calculation.FitMode.EXTEND:
