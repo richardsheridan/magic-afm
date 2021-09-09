@@ -820,7 +820,7 @@ def perturb_k(delta, f, epsilon, k):
 INITIALIZED = False
 
 
-def calc_properties_imap(delta_f_i_kwargs):
+def calc_properties_imap(delta_f_rc, **kwargs):
     global INITIALIZED
     if not INITIALIZED:
         import threadpoolctl, psutil
@@ -832,10 +832,10 @@ def calc_properties_imap(delta_f_i_kwargs):
             NICE = 3
         psutil.Process().nice(NICE)
         INITIALIZED = True
-    delta, force, i, kwargs = delta_f_i_kwargs
+    delta, force, rc = delta_f_rc
     beta, beta_err, partial_force_curve = fitfun(delta, force, **kwargs)
     if np.any(np.isnan(beta)):
-        return i, None
+        return rc, None
     ind_mod = beta[0]
     adh_force = beta[1]
     (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(force, beta, **kwargs)
@@ -854,4 +854,4 @@ def calc_properties_imap(delta_f_i_kwargs):
         deflection / indentation,
         ind_mod_sens_k,
     )
-    return i, properties
+    return rc, properties

@@ -987,10 +987,9 @@ async def force_volume_task(display, opened_fvol):
 
     async def calc_prop_map_callback():
         options = display.options
-        optionsdict = dataclasses.asdict(options)
         img_shape = axesimage.get_size()
         ncurves = img_shape[0] * img_shape[1]
-        chunksize = 8
+        chunksize = 4
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
 
@@ -1029,16 +1028,6 @@ async def force_volume_task(display, opened_fvol):
                 else:
                     raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
-                def load_force_curve(i):
-                    z, d = opened_fvol.get_force_curve_sync(*np.unravel_index(i, img_shape))
-                    if resample:
-                        z, d = calculation.resample_dset([z, d], npts, True)
-                    z = z[sl]
-                    d = d[sl]
-                    delta = z - d
-                    f = d * options.k
-                    return delta, f, i, optionsdict
-
                 def blit_img_draw_fn():
                     display.img_ax.redraw_in_frame()
                     display.canvas.blit(display.img_ax.bbox)
@@ -1046,24 +1035,28 @@ async def force_volume_task(display, opened_fvol):
 
                 async with trio.open_nursery() as nursery:
                     force_curve_aiter = await nursery.start(
-                        async_tools.to_thread_map_unordered,
-                        load_force_curve,
-                        range(ncurves),
+                        async_tools.to_process_map_unordered,
+                        partial(
+                            load_force_curve, opened_fvol, resample, npts, sl, options.k
+                        ),
+                        map(partial(np.unravel_index, shape=img_shape), range(ncurves)),
+                        chunksize,
                     )
                     property_aiter = await nursery.start(
                         async_tools.to_process_map_unordered,
-                        calculation.calc_properties_imap,
+                        partial(calculation.calc_properties_imap, **dataclasses.asdict(options)),
                         force_curve_aiter,
                         chunksize,
                     )
-                    async for i, properties in property_aiter:
+                    async for rc, properties in property_aiter:
+                        i = np.ravel_multi_index(rc, img_shape)
                         if properties is None:
                             property_map[i] = np.nan
                             color = (1, 0, 0, 0.5)
                         else:
                             property_map[i] = properties
                             color = (0, 1, 0, 0.5)
-                        r, c = np.unravel_index(i, img_shape)
+                        r, c = rc
                         progress_array[r, c, :] = color
                         if not pbar.update():
                             continue
@@ -1607,6 +1600,17 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
         mindelta=mindelta,
         sens=sens,
     )
+
+
+def load_force_curve(opened_fvol, resample, npts, sl, k, rc):
+    z, d = opened_fvol.get_force_curve_sync(*rc)
+    if resample:
+        z, d = calculation.resample_dset([z, d], npts, True)
+    z = z[sl]
+    d = d[sl]
+    delta = z - d
+    f = d * k
+    return delta, f, rc
 
 
 async def open_task(root):
