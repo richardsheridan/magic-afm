@@ -1009,6 +1009,8 @@ async def force_volume_task(display, opened_fvol):
             ) as pbar:
                 progress_image: Optional[matplotlib.image.AxesImage] = None
                 progress_array = np.zeros(img_shape + (4,), dtype="f4")
+                half_red = np.array((1, 0, 0, 0.5), dtype="f4")
+                half_green = np.array((0, 1, 0, 0.5), dtype="f4")
                 old_axesimage = object()
                 property_map = np.empty(
                     img_shape,
@@ -1036,9 +1038,7 @@ async def force_volume_task(display, opened_fvol):
                 async with trio.open_nursery() as nursery:
                     force_curve_aiter = await nursery.start(
                         async_tools.to_process_map_unordered,
-                        partial(
-                            load_force_curve, opened_fvol, resample, npts, sl, options.k
-                        ),
+                        partial(load_force_curve, opened_fvol, resample, npts, sl, options.k),
                         np.ndindex(img_shape),
                         chunksize,
                     )
@@ -1051,10 +1051,10 @@ async def force_volume_task(display, opened_fvol):
                     async for rc, properties in property_aiter:
                         if properties is None:
                             property_map[rc] = np.nan
-                            color = (1, 0, 0, 0.5)
+                            color = half_red
                         else:
                             property_map[rc] = properties
-                            color = (0, 1, 0, 0.5)
+                            color = half_green
                         r, c = rc
                         progress_array[r, c, :] = color
                         if not pbar.update():
