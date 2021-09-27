@@ -810,14 +810,6 @@ class ForceVolumeTkDisplay:
             Shift: plot multiple curves
             Control: plot continuously"""
         )
-        self.colorbar_ax_tip_text = c(
-            """Colorbar
-            
-            Middle or alt-left click: toggle edit mode (default: off)
-            Left click: set color scale maximum
-            Right click: set color scale minimum
-            Control: set continuously"""
-        )
         self.plot_ax_tip_text = c(
             """Force Curve
         
@@ -1103,18 +1095,9 @@ async def force_volume_task(display, opened_fvol):
 
     async def change_cmap_callback():
         colormap_name = display.colormap_strvar.get()
-        # save old clim
-        clim = axesimage.get_clim()
 
         def change_cmap_draw_fn():
-            # prevent cbar from getting expanded
-            axesimage.set_clim(image_stats.min, image_stats.max)
-            # actually change cmap
             axesimage.set_cmap(colormap_name)
-            # reset everything
-            customize_colorbar(colorbar, *clim, unit=unit)
-            if colorbar.frozen:
-                expand_colorbar(colorbar)
 
         await display.canvas.draw_send.send(change_cmap_draw_fn)
 
@@ -1151,9 +1134,6 @@ async def force_volume_task(display, opened_fvol):
             colorbar = display.fig.colorbar(axesimage, ax=display.img_ax, use_gridspec=True)
             display.navbar.update()  # let navbar catch new cax in fig for tooltips
             customize_colorbar(colorbar, image_stats.q01, image_stats.q99, unit)
-
-            # start frozen
-            colorbar.frozen = True
             expand_colorbar(colorbar)
 
             # noinspection PyTypeChecker
@@ -1202,27 +1182,6 @@ async def force_volume_task(display, opened_fvol):
                 current_names.append(name)
             display.reset_image_name_menu(current_names)
         display.image_name_menu.set(name)
-
-    async def colorbar_state_response():
-        if colorbar.frozen:
-            colorbar.frozen = False
-            clim = axesimage.get_clim()
-
-            def cb_thaw_draw_fn():
-                # make full range colorbar especially solids
-                axesimage.set_clim(image_stats.min, image_stats.max)
-                # reset customizations
-                customize_colorbar(colorbar, *clim)
-
-            await display.canvas.draw_send.send(cb_thaw_draw_fn)
-
-        else:
-            colorbar.frozen = True
-
-            def cb_freeze_draw_fn():
-                expand_colorbar(colorbar)
-
-            await display.canvas.draw_send.send(cb_freeze_draw_fn)
 
     async def plot_curve_response(point: ImagePoint, clear_previous):
         existing_points.add(point)  # should be before 1st checkpoint
@@ -1323,37 +1282,6 @@ async def force_volume_task(display, opened_fvol):
             if shift_held and point in existing_points:
                 return
             await plot_curve_response(point, not shift_held)
-        elif colorbar is not None and mouseevent.inaxes is colorbar.ax:
-            if event.name == "motion_notify_event":
-                await tooltip_send_chan.send(
-                    (event.guiEvent.x_root, event.guiEvent.y_root, display.colorbar_ax_tip_text)
-                )
-                if not control_held:
-                    return
-            if mouseevent.button == MouseButton.MIDDLE or (
-                mouseevent.guiEvent.state & TkState.ALT and mouseevent.button == MouseButton.LEFT
-            ):
-                await colorbar_state_response()
-                return
-            if colorbar.frozen:
-                return
-            if mouseevent.button == MouseButton.LEFT:
-                vmin = colorbar.norm.vmin
-                vmax = max(mouseevent.ydata, vmin)
-            elif mouseevent.button == MouseButton.RIGHT:
-                vmax = colorbar.norm.vmax
-                vmin = min(mouseevent.ydata, vmax)
-            else:
-                # discard all others
-                return
-
-            # fallthrough for left and right clicks
-            def cb_limits_draw_fn():
-                colorbar.norm.vmin = vmin
-                colorbar.norm.vmax = vmax
-                colorbar.solids.set_clim(vmin, vmax)
-
-            await display.canvas.draw_send.send(cb_limits_draw_fn)
         elif display is not None and mouseevent.inaxes is display.plot_ax:
             if event.name == "motion_notify_event":
                 await tooltip_send_chan.send(
@@ -1397,10 +1325,6 @@ async def force_volume_task(display, opened_fvol):
 
 def customize_colorbar(colorbar, vmin=None, vmax=None, unit=None):
     """Central function to reset colorbar as MPL keeps stomping on our settings"""
-    # for coordinate/value display on hover
-    colorbar.ax.set_navigate(True)
-    # for receiving events
-    colorbar.solids.set_picker(True)
     # set range of colors and ticks without changing range of colorbar axes
     if vmin is not None and vmax is not None:
         # other permutations handled internally
@@ -1419,7 +1343,6 @@ def expand_colorbar(colorbar):
         if not CS.filled:
             colorbar.add_lines(CS)
     colorbar.stale = True
-    colorbar.solids.set_picker(True)
 
 
 def draw_data_table(point_data, ax):
