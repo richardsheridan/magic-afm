@@ -1047,8 +1047,7 @@ async def force_volume_task(display, opened_fvol):
                         else:
                             property_map[rc] = properties
                             color = half_green
-                        r, c = rc
-                        progress_array[r, c, :] = color
+                        progress_array[rc] = color
                         if not pbar.update():
                             continue
                         if old_axesimage is not axesimage:
