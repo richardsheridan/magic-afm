@@ -52,10 +52,13 @@ def eventually_evict_path(path):
     return
 
 
-def mmap_path_read_only(str_path):
+def mmap_path_read_only(path):
     import mmap
+    import pathlib
 
-    with open(str_path, "rb", buffering=0) as file:
+    path = pathlib.Path(path)
+
+    with path.open(mode="rb", buffering=0) as file:
         return mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
 
 
@@ -91,7 +94,7 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
 
     try:
         async with await trio.open_process(
-            [str(conv_path), str(ardf_path), str(h5file_path)],
+            [conv_path, ardf_path, h5file_path],
             stderr=pipe,
             stdout=pipe,
             startupinfo=STARTUPINFO(dwFlags=STARTF_USESHOWWINDOW),
@@ -633,7 +636,7 @@ class NanoscopeFile(BaseForceVolumeFile):
         try:
             mm, worker, path_lock = CACHED_OPEN_PATHS[self.path]
         except KeyError:
-            self._mm = mm = mmap_path_read_only(str(self.path))
+            self._mm = mm = mmap_path_read_only(self.path)
             worker, _ = self._choose_worker(self.header)
             path_lock = threading.Lock()
             path_lock.acquire()
@@ -649,7 +652,7 @@ class NanoscopeFile(BaseForceVolumeFile):
         self._worker = worker
 
     async def ainitialize(self):
-        self._mm = await trio.to_thread.run_sync(mmap_path_read_only, str(self.path))
+        self._mm = await trio.to_thread.run_sync(mmap_path_read_only, self.path)
 
         # End of header is demarcated by a SUB byte (26 = 0x1A)
         # Longest header so far was 80 kB, stop there to avoid searching gigabytes before fail
