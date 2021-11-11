@@ -720,7 +720,6 @@ def rapid_forcecurve_estimate(delta, force, radius):
     return M_guess, fc_guess, deltamin, fzero, 1.0
 
 
-@np.errstate(all="ignore")
 def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, **kwargs):
     if p0 is None:
         p0 = rapid_forcecurve_estimate(delta, force, radius)
