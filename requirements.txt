@@ -7,18 +7,24 @@
 altgraph==0.17
     # via pyinstaller
 async-generator==1.10
-    # via trio
+    # via
+    #   trio
+    #   trio-parallel
 attrs==21.2.0
     # via
     #   outcome
     #   trio
+    #   trio-parallel
 cffi==1.14.6
     # via
     #   samplerate
     #   trio
+    #   trio-parallel
 colorama==0.4.4
     # via tqdm
 cycler==0.10.0
+    # via matplotlib
+fonttools==4.28.1
     # via matplotlib
 future==0.18.2
     # via pefile
@@ -32,7 +38,7 @@ kiwisolver==1.3.1
     # via matplotlib
 llvmlite==0.37.0
     # via numba
-matplotlib==3.4.2
+git+https://github.com/richardsheridan/matplotlib@blit-bbox-valueerror
     # via -r requirements.in
 numba==0.54.0
     # via -r requirements.in
@@ -48,10 +54,15 @@ outcome==1.1.0
     # via
     #   trio
     #   trio-parallel
+packaging==21.2
+    # via
+    #   matplotlib
+    #   setuptools-scm
 pefile==2021.5.24
     # via pyinstaller
 pillow==8.3.2
     # via
+    #   -r requirements.in
     #   imageio
     #   matplotlib
 psutil==5.8.0
@@ -63,13 +74,17 @@ pyinstaller==4.5.1
 pyinstaller-hooks-contrib==2021.2
     # via pyinstaller
 pyparsing==2.4.7
-    # via matplotlib
+    # via
+    #   matplotlib
+    #   packaging
 python-dateutil==2.8.2
     # via matplotlib
 pywin32-ctypes==0.2.0
     # via pyinstaller
 samplerate==0.1.0
     # via -r requirements.in
+setuptools-scm==6.3.2
+    # via matplotlib
 six==1.16.0
     # via
     #   cycler
@@ -80,13 +95,15 @@ sortedcontainers==2.4.0
     # via trio
 threadpoolctl==2.2.0
     # via -r requirements.in
+tomli==1.2.2
+    # via setuptools-scm
 tqdm==4.62.1
     # via -r requirements.in
 trio==0.19.0
     # via
     #   -r requirements.in
     #   trio-parallel
-trio-parallel==0.5.1
+trio-parallel==1.0.0b0
     # via -r requirements.in
 
 # The following packages are considered to be unsafe in a requirements file:

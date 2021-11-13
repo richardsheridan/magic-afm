@@ -1647,19 +1647,23 @@ async def about_task(root):
         while True:
             t = trio.current_time()
             task_stats = trio.lowlevel.current_statistics()
+            worker_stats = trio_parallel.default_context_statistics()
             task.set(
                 f"Tasks living: {task_stats.tasks_living}\n"
                 f"Tasks runnable: {task_stats.tasks_runnable}\n"
                 f"Unprocessed callbacks: {task_stats.run_sync_soon_queue_size}"
             )
             thread_cpu.set(
-                "CPU-bound threads:" + repr(async_tools.cpu_bound_limiter).split(",")[1][:-1]
+                "CPU-bound tasks:" + repr(async_tools.cpu_bound_limiter).split(",")[1][:-1]
             )
             thread_default.set(
                 "Default threads:"
                 + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
             )
-            process.set("Idle worker processes: " + str(len(trio_parallel._impl.WORKER_CACHE)))
+            process.set(
+                f"Worker processes: {worker_stats.running_workers}/"
+                f"{worker_stats.idle_workers+worker_stats.running_workers}"
+            )
             await trio.sleep_until(t + interval / 1000)
 
     # run using tcl event loop

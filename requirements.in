@@ -1,8 +1,9 @@
 h5py>=3
 imageio
 pillow>=8.3.2
-matplotlib>=3.5.0b2
+matplotlib>=3.5.0rc1
 # matplotlib @ git+https://github.com/matplotlib/matplotlib@7b9e1ce18fd2d1e26c19bd1f14dec4822de40d59
+# matplotlib @ git+https://github.com/richardsheridan/matplotlib@blit-bbox-valueerror
 numba>=0.54.0  # OPTIONAL, included for version pinning
 # numba @ git+https://github.com/richardsheridan/numba@6284-cherry  # numba/numba#6284
 psutil==5.8.0
