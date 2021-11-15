@@ -276,6 +276,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
     def resize(self, event):
         super(type(self), self).resize(event)
         self.figure.set_tight_layout(True)
+        self.get_tk_widget().after_idle(self.figure.set_tight_layout, False)
 
     def teach_canvas_to_use_trio(
         self, nursery, spinner_scope, async_motion_pick_fn, tooltip_send_chan
