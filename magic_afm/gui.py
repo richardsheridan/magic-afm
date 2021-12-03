@@ -241,6 +241,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                     draw_fn = self.draw_recv.receive_nowait()
                     await trs(draw_fn)
             except trio.WouldBlock:
+                self._maybe_resize()
                 # don't set delay based on this, it is exceptionally lengthy
                 await trs(self.draw)
         while True:
@@ -260,6 +261,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                     if delay_scope.cancelled_caught:
                         break
                     await trs(draw_fn)
+                self._maybe_resize()
                 t = trio.current_time()
                 await trs(self.draw)
                 # previous delay is not great predictor of next delay
@@ -273,10 +275,19 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                 # and flag need_draw, and it will be reset here.
                 self.figure.set_tight_layout(False)
 
+    def draw_idle(self):
+        if self._resize_pending is None:
+            self.draw_send.send_nowait(bool)
+
     def resize(self, event):
-        super(type(self), self).resize(event)
+        self.draw_idle()  # should be first in case no resize is pending yet
+        self._resize_pending = event
         self.figure.set_tight_layout(True)
-        self.get_tk_widget().after_idle(self.figure.set_tight_layout, False)
+
+    def _maybe_resize(self):
+        if self._resize_pending is not None:
+            super().resize(self._resize_pending)
+            self._resize_pending = None
 
     def teach_canvas_to_use_trio(
         self, nursery, spinner_scope, async_motion_pick_fn, tooltip_send_chan
