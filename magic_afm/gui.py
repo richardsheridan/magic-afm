@@ -604,6 +604,8 @@ class ForceVolumeTkDisplay:
         self.fig = Figure((9, 2.75), facecolor="#f0f0f0")
         self.canvas = AsyncFigureCanvasTkAgg(self.fig, window)
         self.navbar = AsyncNavigationToolbar2Tk(self.canvas, window)
+        self.img_ax = None
+        self.plot_ax = None
 
         def initial_draw_fn():
             self.img_ax, self.plot_ax = self.fig.subplots(
