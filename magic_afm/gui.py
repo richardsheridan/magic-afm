@@ -1057,11 +1057,10 @@ async def force_volume_task(display, opened_fvol):
                     async for rc, properties in property_aiter:
                         if properties is None:
                             property_map[rc] = np.nan
-                            color = half_red
+                            progress_array[rc] = half_red
                         else:
                             property_map[rc] = properties
-                            color = half_green
-                        progress_array[rc] = color
+                            progress_array[rc] = half_green
                         if not pbar.update():
                             continue
                         if old_axesimage is not axesimage:
