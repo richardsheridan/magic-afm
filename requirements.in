@@ -8,7 +8,7 @@ numba>=0.54.0  # OPTIONAL, included for version pinning
 # numba @ git+https://github.com/richardsheridan/numba@6284-cherry  # numba/numba#6284
 psutil==5.8.0
 pyinstaller>=4.3
-numpy>=1.20
+numpy>=1.21
 threadpoolctl
 tqdm>=4.56.0
 trio
