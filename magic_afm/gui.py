@@ -1640,7 +1640,7 @@ async def about_task(root):
     timely_trio_pbar = ttk.Progressbar(top, **opts)
     timely_trio_pbar.pack()
 
-    interval = 20
+    interval = 32
 
     async def pbar_runner():
         while True:
@@ -1648,17 +1648,16 @@ async def about_task(root):
             await trio.sleep(interval / 1000)
 
     async def pbar_runner_timely():
-        t = trio.current_time()
-        t0 = t
+        t0 = t = trio.current_time()
         while True:
             v = (trio.current_time() - t0) * 1000 / interval
             timely_trio_pbar["value"] = int(round(v))
-            t = t + interval / 1000
+            t += interval / 1000
             await trio.sleep_until(t)
 
     async def state_poller_task():
+        t = trio.current_time()
         while True:
-            t = trio.current_time()
             task_stats = trio.lowlevel.current_statistics()
             worker_stats = trio_parallel.default_context_statistics()
             task.set(
@@ -1677,7 +1676,8 @@ async def about_task(root):
                 f"Worker processes: {worker_stats.running_workers}/"
                 f"{worker_stats.idle_workers+worker_stats.running_workers}"
             )
-            await trio.sleep_until(t + interval / 1000)
+            t += interval / 1000
+            await trio.sleep_until(t)
 
     # run using tcl event loop
     tk_pbar.start(interval)
@@ -1783,11 +1783,3 @@ def main():
             exc = outcome_.error
             traceback.print_exception(type(exc), exc, exc.__traceback__, file=file)
             traceback.print_exception(type(exc), exc, exc.__traceback__)
-
-
-if __name__ == "__main__":
-    import multiprocessing
-
-    multiprocessing.cpu_count()
-    multiprocessing.freeze_support()
-    main()
