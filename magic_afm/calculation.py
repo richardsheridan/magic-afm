@@ -815,21 +815,7 @@ def perturb_k(delta, f, epsilon, k):
     return delta_new, f_new, k_new
 
 
-INITIALIZED = False
-
-
 def calc_properties_imap(delta_f_rc, **kwargs):
-    global INITIALIZED
-    if not INITIALIZED:
-        import threadpoolctl, psutil
-
-        threadpoolctl.threadpool_limits(1)
-        try:
-            NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
-        except AttributeError:
-            NICE = 3
-        psutil.Process().nice(NICE)
-        INITIALIZED = True
     delta, force, rc = delta_f_rc
     beta, beta_err, partial_force_curve = fitfun(delta, force, **kwargs)
     if np.any(np.isnan(beta)):

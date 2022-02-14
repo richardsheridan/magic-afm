@@ -56,8 +56,10 @@ import imageio
 import matplotlib
 import numpy as np
 import outcome
+import psutil
 import trio
 import trio_parallel
+import threadpoolctl
 
 from matplotlib.axes import Axes
 from matplotlib.backend_bases import MouseButton
@@ -1049,13 +1051,15 @@ async def force_volume_task(display, opened_fvol):
 
                 async with trio.open_nursery() as nursery:
                     force_curve_aiter = await nursery.start(
-                        async_tools.to_process_map_unordered,
+                        async_tools.to_sync_runner_map_unordered,
+                        TP_CONTEXT.run_sync,
                         partial(load_force_curve, opened_fvol, resample, npts, sl, options.k),
                         np.ndindex(img_shape),
                         chunksize,
                     )
                     property_aiter = await nursery.start(
-                        async_tools.to_process_map_unordered,
+                        async_tools.to_sync_runner_map_unordered,
+                        TP_CONTEXT.run_sync,
                         partial(calculation.calc_properties_imap, **dataclasses.asdict(options)),
                         force_curve_aiter,
                         chunksize,
@@ -1665,7 +1669,7 @@ async def about_task(root):
         t = trio.current_time()
         while True:
             task_stats = trio.lowlevel.current_statistics()
-            worker_stats = trio_parallel.default_context_statistics()
+            worker_stats = TP_CONTEXT.statistics()
             task.set(
                 f"Tasks living: {task_stats.tasks_living}\n"
                 f"Tasks runnable: {task_stats.tasks_runnable}\n"
@@ -1714,49 +1718,63 @@ def open_with_os_default(file_url_etc):
             print("Could not open with OS")
 
 
+def nice_single_threaded_workers():
+    threadpoolctl.threadpool_limits(1)
+    try:
+        NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
+    except AttributeError:
+        NICE = 3
+    psutil.Process().nice(NICE)
+
+
 async def main_task(root):
-    nursery: trio.Nursery
-    async with trio.open_nursery() as nursery:
-        # local names of actions
-        quit_callback = nursery.cancel_scope.cancel
-        open_callback = partial(nursery.start_soon, open_task, root)
-        demo_callback = partial(nursery.start_soon, demo_task, root)
-        about_callback = partial(nursery.start_soon, about_task, root)
-        help_action = partial(open_with_os_default, "https://github.com/richardsheridan/magic-afm")
+    global TP_CONTEXT
+    async with trio_parallel.open_worker_context(
+        idle_timeout=float("inf"),
+        init=nice_single_threaded_workers,
+    ) as TP_CONTEXT:
+        nursery: trio.Nursery
+        async with trio.open_nursery() as nursery:
+            # local names of actions
+            quit_callback = nursery.cancel_scope.cancel
+            open_callback = partial(nursery.start_soon, open_task, root)
+            demo_callback = partial(nursery.start_soon, demo_task, root)
+            about_callback = partial(nursery.start_soon, about_task, root)
+            help_action = partial(open_with_os_default, "https://github.com/richardsheridan/magic-afm")
 
-        # calls root.destroy by default
-        root.protocol("WM_DELETE_WINDOW", quit_callback)
+            # calls root.destroy by default
+            root.protocol("WM_DELETE_WINDOW", quit_callback)
 
-        # Build menus
-        menu_frame = tk.Menu(root, relief="groove", tearoff=False)
-        root.config(menu=menu_frame)
+            # Build menus
+            menu_frame = tk.Menu(root, relief="groove", tearoff=False)
+            root.config(menu=menu_frame)
 
-        file_menu = tk.Menu(menu_frame, tearoff=False)
-        file_menu.add_command(
-            label="Open...", accelerator="Ctrl+O", underline=0, command=open_callback
-        )
-        file_menu.bind("<KeyRelease-o>", func=open_callback)
-        root.bind_all("<Control-KeyPress-o>", func=impartial(open_callback))
-        file_menu.add_command(label="Demo", underline=0, command=demo_callback)
-        file_menu.add_command(
-            label="Quit", accelerator="Ctrl+Q", underline=0, command=quit_callback
-        )
-        file_menu.bind("<KeyRelease-q>", func=quit_callback)
-        root.bind_all("<Control-KeyPress-q>", func=impartial(quit_callback))
-        menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
+            file_menu = tk.Menu(menu_frame, tearoff=False)
+            file_menu.add_command(
+                label="Open...", accelerator="Ctrl+O", underline=0, command=open_callback
+            )
+            file_menu.bind("<KeyRelease-o>", func=open_callback)
+            root.bind_all("<Control-KeyPress-o>", func=impartial(open_callback))
+            file_menu.add_command(label="Demo", underline=0, command=demo_callback)
+            file_menu.add_command(
+                label="Quit", accelerator="Ctrl+Q", underline=0, command=quit_callback
+            )
+            file_menu.bind("<KeyRelease-q>", func=quit_callback)
+            root.bind_all("<Control-KeyPress-q>", func=impartial(quit_callback))
+            menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
 
-        help_menu = tk.Menu(menu_frame, tearoff=False)
-        help_menu.add_command(label="Open help", accelerator="F1", underline=5, command=help_action)
-        help_menu.bind("<KeyRelease-h>", func=help_action)
-        root.bind_all("<KeyRelease-F1>", func=impartial(help_action))
-        # noinspection PyTypeChecker
-        help_menu.add_command(
-            label="About...", accelerator=None, underline=0, command=about_callback
-        )
-        help_menu.bind("<KeyRelease-a>", func=about_callback)
-        menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
+            help_menu = tk.Menu(menu_frame, tearoff=False)
+            help_menu.add_command(label="Open help", accelerator="F1", underline=5, command=help_action)
+            help_menu.bind("<KeyRelease-h>", func=help_action)
+            root.bind_all("<KeyRelease-F1>", func=impartial(help_action))
+            # noinspection PyTypeChecker
+            help_menu.add_command(
+                label="About...", accelerator=None, underline=0, command=about_callback
+            )
+            help_menu.bind("<KeyRelease-a>", func=about_callback)
+            menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
-        await trio.sleep_forever()  # needed if nursery never starts a long running child
+            await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 
 def main():

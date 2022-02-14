@@ -26,7 +26,6 @@ from functools import partial, wraps
 from itertools import islice
 
 import trio
-import trio_parallel
 
 TOOLTIP_CANCEL = None, None, None
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
@@ -64,6 +63,19 @@ async def to_sync_runner_map_unordered(
     limiter=cpu_bound_limiter,
     task_status=trio.TASK_STATUS_IGNORED,
 ):
+    """Run many job items in workers.
+
+    This imitates the multiprocessing.Pool.imap_unordered API, but using
+    trio to make the behavior properly nonblocking and cancellable.
+
+    First argument should be trio.to_thread.run_sync or compatible.
+
+    Job items can be any iterable, sync or async, finite or infinite,
+    blocking or non-blocking.
+
+    Awaiting this function produces an in-memory iterable of the map results.
+    Using nursery.start() on this function produces a MemoryReceiveChannel
+    with no buffer to receive results as-completed."""
     chunky = chunksize > 1
     if task_status is trio.TASK_STATUS_IGNORED:
         buffer = float("inf")
@@ -135,66 +147,6 @@ async def to_sync_runner_map_unordered(
         # except trio.EndOfChannel:
         #     pass
         # return results
-
-
-async def to_process_map_unordered(
-    sync_fn,
-    job_items,
-    chunksize=1,
-    cancellable=False,
-    limiter=cpu_bound_limiter,
-    task_status=trio.TASK_STATUS_IGNORED,
-):
-    """Run many job items in separate processes
-
-    This imitates the multiprocessing.Pool.imap_unordered API, but using
-    trio to make the behavior properly nonblocking and cancellable.
-
-    Job items can be any iterable, sync or async, finite or infinite,
-    blocking or non-blocking.
-
-    Awaiting this function produces an in-memory iterable of the map results.
-    Using nursery.start() on this function produces a MemoryReceiveChannel
-    with no buffer to receive results as-completed."""
-    return await to_sync_runner_map_unordered(
-        trio_parallel.run_sync,
-        sync_fn,
-        job_items,
-        chunksize=chunksize,
-        cancellable=cancellable,
-        limiter=limiter,
-        task_status=task_status,
-    )
-
-
-async def to_thread_map_unordered(
-    sync_fn,
-    job_items,
-    cancellable=False,
-    limiter=cpu_bound_limiter,
-    task_status=trio.TASK_STATUS_IGNORED,
-):
-    """Run many job items in separate threads
-
-    This imitates the multiprocessing.dummy.Pool.imap_unordered API, but using
-    trio to make the behavior properly nonblocking and cancellable.
-
-    Job items can be any iterable, sync or async, finite or infinite,
-    blocking or non-blocking.
-
-    Awaiting this function produces an in-memory iterable of the map results.
-    Using nursery.start() on this function produces a MemoryReceiveChannel
-    with no buffer to receive results as-completed."""
-
-    return await to_sync_runner_map_unordered(
-        trio.to_thread.run_sync,
-        sync_fn,
-        job_items,
-        chunksize=1,
-        cancellable=cancellable,
-        limiter=limiter,
-        task_status=task_status,
-    )
 
 
 async def spinner_task(set_spinner, set_normal, task_status):
