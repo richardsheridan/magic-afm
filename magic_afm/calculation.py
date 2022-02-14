@@ -31,7 +31,7 @@ from samplerate import resample
 try:
     from numba import jit
 except ImportError:
-    jit = lambda *a,**kw: (lambda x: x)
+    jit = lambda *a, **kw: (lambda x: x)
 else:
     abs = np.abs
 
@@ -253,7 +253,6 @@ def secant(func, args, x0, x1):
     return p.real
 
 
-
 # can't cache because UUID cache busting https://github.com/numba/numba/issues/6284
 # noinspection PyUnboundLocalVariable
 @jit(nopython=True, nogil=True)
@@ -450,7 +449,7 @@ def schwarz_red(red_f, red_fc, stable, offset):
 
     red_contact_radius = ((3 * red_fc + 6) ** (1 / 2) + stable * df ** (1 / 2)) ** (2 / 3)
 
-    red_delta = red_contact_radius ** 2 - 4 * (red_contact_radius * (red_fc + 2) / 3) ** (1 / 2)
+    red_delta = red_contact_radius**2 - 4 * (red_contact_radius * (red_fc + 2) / 3) ** (1 / 2)
 
     return red_delta - offset
 
@@ -480,7 +479,7 @@ def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset):
     nondim_position = (delta - delta_offset) / delta_scale
     # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
     attraction = np.divide(1, (prefactor * nondim_position) ** lilpow)
-    return postfactor * force_scale * (attraction ** powrat - attraction) - force_offset
+    return postfactor * force_scale * (attraction**powrat - attraction) - force_offset
 
 
 @jit(nopython=True, nogil=True, cache=True)
@@ -535,10 +534,10 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
         lj_limit_factor * lj_delta_scale + lj_delta_offset,
     )
     lj_end_pos = brentq(
-            lj_gradient,
-            args,
-            *bracket,
-        )
+        lj_gradient,
+        args,
+        *bracket,
+    )
     if lj_end_pos is None:
         # If root finding fails, put the end pos somewhere quasi-reasonable
         if lj_gradient(red_d_min, *args) <= 0:
