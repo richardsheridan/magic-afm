@@ -58,12 +58,15 @@ import numpy as np
 import outcome
 import trio
 import trio_parallel
+
+from matplotlib.axes import Axes
 from matplotlib.backend_bases import MouseButton
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.colorbar import Colorbar
 from matplotlib.contour import ContourSet
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
+from matplotlib.table import Table
 from matplotlib.ticker import EngFormatter
 from matplotlib.transforms import Bbox, BboxTransform
 from tqdm.std import TqdmExperimentalWarning
@@ -831,9 +834,11 @@ class ForceVolumeTkDisplay:
         )
         self.tipwindow = tipwindow = tk.Toplevel(window)
         tipwindow.wm_withdraw()
+        # noinspection PyTypeChecker
         tipwindow.wm_overrideredirect(1)
         try:
             # For Mac OS
+            # noinspection PyUnresolvedReferences
             tipwindow.tk.call(
                 "::tk::unsupported::MacWindowStyle", "style", tipwindow._w, "help", "noActivates"
             )
@@ -856,8 +861,8 @@ class ForceVolumeTkDisplay:
     @property
     def options(self):
         return ForceCurveOptions(
-            fit_mode=self.fit_intvar.get(),
-            disp_kind=self.disp_kind_intvar.get(),
+            fit_mode=calculation.FitMode(self.fit_intvar.get()),
+            disp_kind=DispKind(self.disp_kind_intvar.get()),
             k=float(self.spring_const_strvar.get()),
             defl_sens=float(self.defl_sens_strvar.get()),
             radius=float(self.fit_radius_sbox.get()),
@@ -895,6 +900,7 @@ class ForceVolumeTkDisplay:
     def replot_tight(self):
         pass
 
+    # noinspection PyTypeChecker
     def teach_display_to_use_trio(
         self,
         nursery,
@@ -980,7 +986,7 @@ async def force_volume_task(display, opened_fvol):
     plot_curve_cancels_pending = set()
     img_artists = []
     plot_artists = []
-    table = None
+    table: Optional[Table] = None
     existing_points = set()
     point_data = {}
 
@@ -1357,7 +1363,7 @@ def expand_colorbar(colorbar):
     colorbar.stale = True
 
 
-def draw_data_table(point_data, ax):
+def draw_data_table(point_data, ax: Axes):
     assert point_data
     if len(point_data) == 1:
         data = next(iter(point_data.values()))
@@ -1371,7 +1377,7 @@ def draw_data_table(point_data, ax):
             "δ (nm)",
             "d/δ",
         ]
-        table = ax.table(
+        table: Table = ax.table(
             [
                 [
                     "{:.2f}±{:.2f}".format(data.beta[0] * fac, data.beta_err[0] * fac),
@@ -1743,6 +1749,7 @@ async def main_task(root):
         help_menu.add_command(label="Open help", accelerator="F1", underline=5, command=help_action)
         help_menu.bind("<KeyRelease-h>", func=help_action)
         root.bind_all("<KeyRelease-F1>", func=impartial(help_action))
+        # noinspection PyTypeChecker
         help_menu.add_command(
             label="About...", accelerator=None, underline=0, command=about_callback
         )
