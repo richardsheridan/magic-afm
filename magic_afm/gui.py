@@ -47,6 +47,7 @@ import tkinter.filedialog
 import tkinter.messagebox
 import traceback
 import warnings
+import webbrowser
 from contextlib import nullcontext
 from functools import partial, wraps
 from tkinter import ttk
@@ -1700,24 +1701,6 @@ async def about_task(root):
     top.destroy()
 
 
-def open_with_os_default(file_url_etc):
-    """Open a string using the OS's default program
-
-    from https://stackoverflow.com/a/61968360/4504950 CC BY-SA 4.0
-    """
-    import os
-    import subprocess
-
-    try:  # should work on Windows
-        os.startfile(file_url_etc)
-    except AttributeError:
-        try:  # should work on MacOS and most linux versions
-            subprocess.run(["open", file_url_etc], check=True)
-        except Exception as exc:
-            traceback.print_exception(type(exc), exc, exc.__traceback__)
-            print("Could not open with OS")
-
-
 def nice_single_threaded_workers():
     threadpoolctl.threadpool_limits(1)
     try:
@@ -1740,7 +1723,10 @@ async def main_task(root):
             open_callback = partial(nursery.start_soon, open_task, root)
             demo_callback = partial(nursery.start_soon, demo_task, root)
             about_callback = partial(nursery.start_soon, about_task, root)
-            help_action = partial(open_with_os_default, "https://github.com/richardsheridan/magic-afm")
+            help_action = partial(
+                webbrowser.open_new,
+                "https://github.com/richardsheridan/magic-afm",
+            )
 
             # calls root.destroy by default
             root.protocol("WM_DELETE_WINDOW", quit_callback)
