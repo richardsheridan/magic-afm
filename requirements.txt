@@ -67,7 +67,7 @@ psutil==5.8.0
     # via -r requirements.in
 pycparser==2.21
     # via cffi
-pyinstaller==4.7
+pyinstaller==4.9
     # via -r requirements.in
 pyinstaller-hooks-contrib==2022.2
     # via pyinstaller
