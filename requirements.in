@@ -1,5 +1,5 @@
 h5py>=3
-imageio<2.11 # Breaks pyinstaller, no needed features
+imageio
 pillow>=9
 matplotlib>=3.5.0rc1
 # matplotlib @ git+https://github.com/matplotlib/matplotlib@7b9e1ce18fd2d1e26c19bd1f14dec4822de40d59
