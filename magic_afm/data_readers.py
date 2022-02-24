@@ -115,9 +115,6 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
         with trio.CancelScope(shield=True):
             await h5file_path.unlink(missing_ok=True)
         raise
-    finally:
-        if pbar is not None:
-            pbar.close()
 
     return h5file_path
 
