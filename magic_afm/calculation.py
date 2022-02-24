@@ -136,6 +136,7 @@ def fillnan(img):
 def flatten(img):
     a = np.vander(np.arange(np.shape(img)[1]), 2)
     b = img.T
+    # noinspection PyUnresolvedReferences
     keep = ~np.logical_or.reduce(~np.isfinite(b), axis=1)
     try:
         x = lstsq(a[keep, :], b[keep, :], rcond=None)[0]
