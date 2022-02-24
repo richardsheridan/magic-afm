@@ -63,7 +63,7 @@ pillow==9.0.1
     #   -r requirements.in
     #   imageio
     #   matplotlib
-psutil==5.8.0
+psutil==5.9.0
     # via -r requirements.in
 pycparser==2.21
     # via cffi

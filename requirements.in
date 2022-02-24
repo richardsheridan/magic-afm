@@ -6,7 +6,7 @@ matplotlib>=3.5.0rc1
 # matplotlib @ git+https://github.com/richardsheridan/matplotlib@blit-bbox-valueerror
 numba>=0.54.0  # OPTIONAL, included for version pinning
 # numba @ git+https://github.com/richardsheridan/numba@6284-cherry  # numba/numba#6284
-psutil==5.8.0
+psutil
 pyinstaller
 numpy>=1.21
 threadpoolctl
