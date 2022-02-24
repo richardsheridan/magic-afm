@@ -57,10 +57,8 @@ import imageio
 import matplotlib
 import numpy as np
 import outcome
-import psutil
 import trio
 import trio_parallel
-import threadpoolctl
 
 from matplotlib.axes import Axes
 from matplotlib.backend_bases import MouseButton
@@ -1702,6 +1700,9 @@ async def about_task(root):
 
 
 def nice_single_threaded_workers():
+    import psutil
+    import threadpoolctl
+
     threadpoolctl.threadpool_limits(1)
     try:
         NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
