@@ -1775,9 +1775,6 @@ def main():
         dpi = ctypes.windll.user32.GetDpiForWindow(root.winfo_id())
     except AttributeError:
         pass
-    else:
-        if matplotlib.__version__.startswith("3.4"):
-            matplotlib.rcParams["figure.dpi"] = dpi
     # root.wm_iconbitmap("something.ico")
     host = TkHost(root)
     trio.lowlevel.start_guest_run(
