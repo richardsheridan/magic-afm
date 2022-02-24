@@ -11,6 +11,6 @@ pyinstaller
 numpy>=1.21
 threadpoolctl
 tqdm>=4.56.0
-trio
+trio>=0.20.0
 trio-parallel
 samplerate

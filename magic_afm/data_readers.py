@@ -24,6 +24,7 @@ asyncifies the worker's disk reads with threads, although this is not a rule.
 import abc
 import dataclasses
 import threading
+from functools import partial
 from subprocess import PIPE
 
 try:
@@ -93,16 +94,19 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
                 pbar.update(float(most_recent_numeric_output.decode()) - pbar.n)
 
     try:
-        async with await trio.open_process(
-            [conv_path, ardf_path, h5file_path],
-            stderr=pipe,
-            stdout=pipe,
-            startupinfo=STARTUPINFO(dwFlags=STARTF_USESHOWWINDOW),
-        ) as proc:
+        async with trio.open_nursery() as nursery:
+            proc = await nursery.start(
+                partial(
+                    trio.run_process,
+                    [conv_path, ardf_path, h5file_path],
+                    stderr=pipe,
+                    stdout=pipe,
+                    startupinfo=STARTUPINFO(dwFlags=STARTF_USESHOWWINDOW),
+                )
+            )
             if pbar is not None:
-                async with trio.open_nursery() as nursery:
-                    nursery.start_soon(reading_stdout)
-                    nursery.start_soon(reading_stderr)
+                nursery.start_soon(reading_stdout)
+                nursery.start_soon(reading_stderr)
     except FileNotFoundError:
         raise FileNotFoundError(
             "Please acquire ARDFtoHDF5.exe and place it in the application's root folder."
@@ -129,7 +133,6 @@ class ForceVolumeParams:
 
 
 class BaseForceVolumeFile(metaclass=abc.ABCMeta):
-
     _basic_units_map = {}
     _default_heightmap_names = ()
 
@@ -230,7 +233,9 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         await trio.sleep(0)
         self.npts = 1024
         self.split = self.npts // 2
-        self.delta = (np.cos(np.linspace(0, np.pi * 2, self.npts, endpoint=False)) - 0.90) * 25
+        self.delta = (
+            np.cos(np.linspace(0, np.pi * 2, self.npts, endpoint=False)) - 0.90
+        ) * 25
 
     async def aclose(self):
         pass
@@ -258,7 +263,9 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         return image, True
 
 
-NANOMETER_UNIT_CONVERSION = 1e9  # maybe we can intelligently read this from the file someday
+NANOMETER_UNIT_CONVERSION = (
+    1e9  # maybe we can intelligently read this from the file someday
+)
 
 
 class ForceMapWorker:
@@ -283,7 +290,9 @@ class ForceMapWorker:
         # We only care about 2 channels, Defl and ZSnsr
         # Convert channels array to a map that can be used to index into ForceMap data by name
         # chanmap should always be {'Defl':1,'ZSnsr':2} but it's cheap to calculate
-        chanmap = {key: index for index, key in enumerate(self.force_curves.attrs["Channels"])}
+        chanmap = {
+            key: index for index, key in enumerate(self.force_curves.attrs["Channels"])
+        }
         # We could slice with "1:" if chanmap were constant but I'm not sure if it is
         self.defl_zsnsr_row_slice = [chanmap["Defl"], chanmap["ZSnsr"]]
 
@@ -293,7 +302,10 @@ class ForceMapWorker:
 
         # we are happy to throw away data far from the surface to square up the data
         # Also reverse axis zero so data is ordered zsnsr,defl like we did for FFM
-        return defl_zsnsr[::-1, (s - self.minext) : (s + self.minret)] * NANOMETER_UNIT_CONVERSION
+        return (
+            defl_zsnsr[::-1, (s - self.minext) : (s + self.minret)]
+            * NANOMETER_UNIT_CONVERSION
+        )
 
     def get_force_curve(self, r, c):
         # Because of the nonuniform arrays, each indent gets its own dataset
@@ -379,7 +391,6 @@ class FFMTraceRetraceWorker:
 
 
 class ARH5File(BaseForceVolumeFile):
-
     _basic_units_map = {
         "Adhesion": "N",
         "Height": "m",
@@ -419,7 +430,9 @@ class ARH5File(BaseForceVolumeFile):
             path_lock = threading.Lock()
             path_lock.acquire()
             CACHED_OPEN_PATHS[self.path] = h5data, images, worker, path_lock
-            threading.Thread(target=eventually_evict_path, args=(self.path,), daemon=True).start()
+            threading.Thread(
+                target=eventually_evict_path, args=(self.path,), daemon=True
+            ).start()
         else:
             # reset thread countdown
             try:
@@ -444,7 +457,9 @@ class ARH5File(BaseForceVolumeFile):
             ),
         )
         worker = await trs(self._choose_worker, h5data)
-        images, image_names = await trs(lambda: (h5data["Image"], set(h5data["Image"].keys())))
+        images, image_names = await trs(
+            lambda: (h5data["Image"], set(h5data["Image"].keys()))
+        )
         self._worker = worker
         self._images = images
         self._file_image_names = image_names
@@ -473,7 +488,9 @@ class ARH5File(BaseForceVolumeFile):
                 )
                 self._trace = True
             elif "0" in h5data["FFM"]:
-                worker = FFMSingleWorker(h5data["FFM"]["0"]["Raw"], h5data["FFM"]["0"]["Defl"])
+                worker = FFMSingleWorker(
+                    h5data["FFM"]["0"]["Raw"], h5data["FFM"]["0"]["Defl"]
+                )
             else:
                 worker = FFMSingleWorker(h5data["FFM"]["Raw"], h5data["FFM"]["Defl"])
         else:
@@ -532,7 +549,8 @@ class BrukerWorkerBase(metaclass=abc.ABCMeta):
         assert data_length == r * c * bpp
         scandown = h["Frame direction"] == "Down"
         return (
-            np.ndarray(shape=(r, c), dtype=f"i{bpp}", buffer=self.mm, offset=offset) * scale,
+            np.ndarray(shape=(r, c), dtype=f"i{bpp}", buffer=self.mm, offset=offset)
+            * scale,
             scandown,
         )
 
@@ -550,12 +568,18 @@ class FFVWorker(BrukerWorkerBase):
             bpp = bruker_bpp_fix(subheader["Bytes/pixel"], self.version)
             length = int(subheader["Data length"])
             npts = length // (r * c * bpp)
-            data = np.ndarray(shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset)
+            data = np.ndarray(
+                shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset
+            )
             if name == "Height Sensor":
                 self.z_ints = data
                 value = subheader["@4:Z scale"]
-                soft_scale = float(header["Ciao scan list"]["@Sens. ZsensSens"].split()[1])
-                hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
+                soft_scale = float(
+                    header["Ciao scan list"]["@Sens. ZsensSens"].split()[1]
+                )
+                hard_scale = float(
+                    value[1 + value.find("(") : value.find(")")].split()[0]
+                )
                 self.z_scale = np.float32(soft_scale * hard_scale)
             else:
                 self.d_ints = data
@@ -590,9 +614,13 @@ class QNMWorker(BrukerWorkerBase):
         offset = int(subheader["Data offset"])
         npts = length // (r * c * bpp)
 
-        self.d_ints = np.ndarray(shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset)
+        self.d_ints = np.ndarray(
+            shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset
+        )
         value = subheader["@4:Z scale"]
-        self.defl_hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
+        self.defl_hard_scale = float(
+            value[1 + value.find("(") : value.find(")")].split()[0]
+        )
 
         image, scandown = self.get_image("Height Sensor")
         image *= NANOMETER_UNIT_CONVERSION
@@ -641,7 +669,9 @@ class NanoscopeFile(BaseForceVolumeFile):
             path_lock = threading.Lock()
             path_lock.acquire()
             CACHED_OPEN_PATHS[self.path] = mm, worker, path_lock
-            threading.Thread(target=eventually_evict_path, args=(self.path,), daemon=True).start()
+            threading.Thread(
+                target=eventually_evict_path, args=(self.path,), daemon=True
+            ).start()
         else:
             # reset thread countdown
             try:
@@ -658,7 +688,9 @@ class NanoscopeFile(BaseForceVolumeFile):
         # Longest header so far was 80 kB, stop there to avoid searching gigabytes before fail
         header_end_pos = await trs(self._mm.find, b"\x1A", 0, 80960)
         if header_end_pos < 0:
-            raise ValueError("No stop byte found, are you sure this is a Nanoscope file?")
+            raise ValueError(
+                "No stop byte found, are you sure this is a Nanoscope file?"
+            )
         self.header = header = parse_nanoscope_header(
             self._mm[:header_end_pos]  # will be cached from find call
             .decode("windows-1252")
@@ -699,7 +731,9 @@ class NanoscopeFile(BaseForceVolumeFile):
         self.k = float(data_header["Spring Constant"])
         self.defl_sens = float(header["Ciao scan list"]["@Sens. DeflSens"].split()[1])
         value = data_header["@4:Z scale"]
-        self.defl_hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
+        self.defl_hard_scale = float(
+            value[1 + value.find("(") : value.find(")")].split()[0]
+        )
 
         self._worker, self.sync_dist = await trs(self._choose_worker, header)
 
@@ -794,7 +828,9 @@ def parse_nanoscope_header(header_lines):
 
 
 def bruker_bpp_fix(bpp, version):
-    if version > "0x09200000":  # Counting on lexical ordering here, hope zeros don't change...
+    if (
+        version > "0x09200000"
+    ):  # Counting on lexical ordering here, hope zeros don't change...
         return 4
     else:
         return int(bpp)
