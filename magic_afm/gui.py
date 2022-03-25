@@ -1771,10 +1771,6 @@ def main():
     root.wm_resizable(False, False)
     root.wm_minsize(300, 20)
     root.wm_title("Magic AFM")
-    try:
-        dpi = ctypes.windll.user32.GetDpiForWindow(root.winfo_id())
-    except AttributeError:
-        pass
     # root.wm_iconbitmap("something.ico")
     host = TkHost(root)
     trio.lowlevel.start_guest_run(
