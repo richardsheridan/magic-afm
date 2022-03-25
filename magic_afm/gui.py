@@ -1761,6 +1761,9 @@ async def main_task(root):
             help_menu.bind("<KeyRelease-a>", func=about_callback)
             menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
+            for _ in range(async_tools.cpu_bound_limiter.total_tokens):
+                nursery.start_soon(partial(TP_CONTEXT.run_sync, calculation.warmup_jit, cancellable=True))
+            await trio.to_thread.run_sync(calculation.warmup_jit, cancellable=True)
             await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 
