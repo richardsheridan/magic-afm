@@ -9,7 +9,6 @@ numba>=0.54.0  # OPTIONAL, included for version pinning
 psutil
 pyinstaller
 numpy>=1.21
-threadpoolctl
 tqdm>=4.56.0
 trio>=0.20.0
 trio-parallel

@@ -1699,11 +1699,9 @@ async def about_task(root):
     top.destroy()
 
 
-def nice_single_threaded_workers():
+def nice_workers():
     import psutil
-    import threadpoolctl
 
-    threadpoolctl.threadpool_limits(1)
     try:
         NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
     except AttributeError:
@@ -1715,7 +1713,7 @@ async def main_task(root):
     global TP_CONTEXT
     async with trio_parallel.open_worker_context(
         idle_timeout=float("inf"),
-        init=nice_single_threaded_workers,
+        init=nice_workers,
     ) as TP_CONTEXT:
         nursery: trio.Nursery
         async with trio.open_nursery() as nursery:

@@ -87,8 +87,6 @@ sniffio==1.2.0
     # via trio
 sortedcontainers==2.4.0
     # via trio
-threadpoolctl==3.1.0
-    # via -r requirements.in
 tqdm==4.63.0
     # via -r requirements.in
 trio==0.20.0
