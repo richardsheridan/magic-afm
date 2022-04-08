@@ -595,6 +595,7 @@ def unbind_mousewheel(widget_with_bind):
 
 class ForceVolumeTkDisplay:
     def __init__(self, root, name, initial_values: data_readers.ForceVolumeParams, **kwargs):
+        self._traces: list[tuple[tk.Variable, str]] = []
         self._nursery = None
         self._prev_defl_sens = 1.0
         self._prev_k = 1.0
@@ -670,7 +671,7 @@ class ForceVolumeTkDisplay:
 
         disp_labelframe = ttk.Labelframe(self.options_frame, text="Force curve display")
         self.disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
-        self.disp_kind_intvar.trace_add("write", self.change_disp_kind_callback)
+        self._add_trace(self.disp_kind_intvar, self.change_disp_kind_callback)
         disp_zd_button = ttk.Radiobutton(
             disp_labelframe,
             text="d vs. z",
@@ -691,7 +692,7 @@ class ForceVolumeTkDisplay:
 
         preproc_labelframe = ttk.Labelframe(self.options_frame, text="Preprocessing")
         self.defl_sens_strvar = tk.StringVar(preproc_labelframe)
-        self.defl_sens_strvar.trace_add("write", self.defl_sens_callback)
+        self._add_trace(self.defl_sens_strvar, self.defl_sens_callback)
         defl_sens_sbox = ttk.Spinbox(
             preproc_labelframe,
             from_=0,
@@ -706,7 +707,7 @@ class ForceVolumeTkDisplay:
         defl_sens_label = ttk.Label(preproc_labelframe, text="Deflection Sens.", justify="left")
         defl_sens_label.grid(row=0, column=0, columnspan=2, sticky="W")
         self.spring_const_strvar = tk.StringVar(preproc_labelframe)
-        self.spring_const_strvar.trace_add("write", self.spring_const_callback)
+        self._add_trace(self.spring_const_strvar, self.spring_const_callback)
         spring_const_sbox = ttk.Spinbox(
             preproc_labelframe,
             from_=0,
@@ -721,7 +722,7 @@ class ForceVolumeTkDisplay:
         spring_const_label = ttk.Label(preproc_labelframe, text="Spring Constant", justify="left")
         spring_const_label.grid(row=1, column=0, columnspan=2, sticky="W")
         self.sync_dist_strvar = tk.StringVar(preproc_labelframe)
-        self.sync_dist_strvar.trace_add("write", self.sync_dist_callback)
+        self._add_trace(self.sync_dist_strvar, self.sync_dist_callback)
         sync_dist_sbox = ttk.Spinbox(
             preproc_labelframe,
             from_=-initial_values.npts,
@@ -740,7 +741,7 @@ class ForceVolumeTkDisplay:
 
         fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
         self.fit_intvar = tk.IntVar(fit_labelframe, value=calculation.FitMode.SKIP.value)
-        self.fit_intvar.trace_add("write", self.change_fit_kind_callback)
+        self._add_trace(self.fit_intvar, self.change_fit_kind_callback)
         fit_skip_button = ttk.Radiobutton(
             fit_labelframe,
             text="Skip",
@@ -766,7 +767,7 @@ class ForceVolumeTkDisplay:
         fit_radius_label = ttk.Label(fit_labelframe, text="Tip radius (nm)")
         fit_radius_label.grid(row=1, column=0, columnspan=2, sticky="W")
         self.radius_strvar = tk.StringVar(fit_labelframe)
-        self.radius_strvar.trace_add("write", self.radius_callback)
+        self._add_trace(self.radius_strvar, self.radius_callback)
         self.fit_radius_sbox = ttk.Spinbox(
             fit_labelframe,
             from_=1,
@@ -781,7 +782,7 @@ class ForceVolumeTkDisplay:
         fit_tau_label = ttk.Label(fit_labelframe, text="DMT-JKR (0-1)", justify="left")
         fit_tau_label.grid(row=2, column=0, columnspan=2, sticky="W")
         self.tau_strvar = tk.StringVar(fit_labelframe)
-        self.tau_strvar.trace_add("write", self.tau_callback)
+        self._add_trace(self.tau_strvar, self.tau_callback)
         self.fit_tau_sbox = ttk.Spinbox(
             fit_labelframe,
             from_=0,
@@ -855,7 +856,12 @@ class ForceVolumeTkDisplay:
         )
         self.tipwindow_label.pack(ipadx=2)
 
+    def _add_trace(self, tkvar, callback):
+        self._traces.append((tkvar, tkvar.trace_add("write", callback)))
+
     def destroy(self):
+        for tkvar, cbname in self._traces:
+            tkvar.trace_remove("write", cbname)
         self.options_frame.destroy()
         self.tkwindow.destroy()
 
@@ -916,15 +922,9 @@ class ForceVolumeTkDisplay:
         self.calc_props_button.configure(
             command=partial(nursery.start_soon, calc_prop_map_callback)
         )
-        self.colormap_strvar.trace_add(
-            "write", impartial(partial(nursery.start_soon, change_cmap_callback))
-        )
-        self.manipulate_strvar.trace_add(
-            "write", impartial(partial(nursery.start_soon, manipulate_callback))
-        )
-        self.image_name_strvar.trace_add(
-            "write", impartial(partial(nursery.start_soon, change_image_callback))
-        )
+        self._add_trace(self.colormap_strvar, impartial(partial(nursery.start_soon, change_cmap_callback)))
+        self._add_trace(self.manipulate_strvar, impartial(partial(nursery.start_soon, manipulate_callback)))
+        self._add_trace(self.image_name_strvar, impartial(partial(nursery.start_soon, change_image_callback)))
         self.replot = partial(nursery.start_soon, redraw_existing_points)
         self.replot_tight = partial(nursery.start_soon, redraw_existing_points_tight)
 
