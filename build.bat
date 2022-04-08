@@ -1,6 +1,6 @@
 @echo off
 call %USERPROFILE%\Miniconda3\Scripts\activate.bat
-call conda create -n mafm-build-tmp -y python=3.9
+call conda create -n mafm-build-tmp -y python=3.10
 call conda activate mafm-build-tmp
 pip install -U -r requirements.txt
 python magic_afm\make_version.py
