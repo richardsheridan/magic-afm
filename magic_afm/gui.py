@@ -284,9 +284,13 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             self.draw_send.send_nowait(bool)
 
     def resize(self, event):
-        self.draw_idle()  # should be first in case no resize is pending yet
+        def tight_points_draw_fn():
+            # noinspection PyTypeChecker
+            self.figure.set_tight_layout(True)
+
+        if self._resize_pending is None:
+            self.draw_send.send_nowait(tight_points_draw_fn)
         self._resize_pending = event
-        self.figure.set_tight_layout(True)
 
     def _maybe_resize(self):
         if self._resize_pending is not None:
