@@ -314,6 +314,19 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         self._prev_filename = ""
         super().__init__(canvas, window)
 
+    def drag_pan(self, event):
+        """Callback for dragging in pan/zoom mode."""
+
+        def drag_pan_draw_fn():
+            if self._pan_info is None:
+                return
+            for ax in self._pan_info.axes:
+                # Using the recorded button at the press is safer than the current
+                # button, as multiple buttons can get pressed during motion.
+                ax.drag_pan(self._pan_info.button, event.key, event.x, event.y)
+
+        self.canvas.draw_send.send_nowait(drag_pan_draw_fn)
+
     def save_figure(self, *args):
         # frameon is a optimization of some sort on tkagg backend, but we don't want to enforce
         # tk gray on exported figures, transparency is better
