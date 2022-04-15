@@ -224,31 +224,26 @@ def spawn_limit(limiter):
     return actual_decorator
 
 
+# noinspection PyUnreachableCode
 async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_status):
     """Manage a tooltip window visibility, position, and text."""
 
     send_chan, recv_chan = trio.open_memory_channel(float('inf'))
-    cancel_scope = trio.CancelScope()
+    task_status.started(send_chan)
     text = None  # start hidden
 
-    async def show_hide_task(task_status):
-        task_status.started()
-        while True:
-            hide_tooltip()
-            with cancel_scope:
-                if text is not None:
-                    await trio.sleep(show_delay)
-                    show_tooltip(x, y, text)
-                    await trio.sleep(hide_delay)
+    while True:
+        if text is not None:
+            with trio.move_on_after(show_delay):
+                x, y, text = await recv_chan.receive()
+                continue
+            show_tooltip(x, y, text)
+            with trio.move_on_after(hide_delay):
+                x, y, text = await recv_chan.receive()
                 hide_tooltip()
-                await trio.sleep_forever()
-
-    async with trio.open_nursery() as nursery:
-        await nursery.start(show_hide_task)
-        task_status.started(send_chan)
-        async for x, y, text in recv_chan:
-            cancel_scope.cancel()
-            cancel_scope = trio.CancelScope()
+                continue
+            hide_tooltip()
+        x, y, text = await recv_chan.receive()
 
 
 def make_cancel_poller():
