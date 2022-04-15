@@ -230,20 +230,20 @@ async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_
 
     send_chan, recv_chan = trio.open_memory_channel(float('inf'))
     task_status.started(send_chan)
-    text = None  # start hidden
+    tooltip_command = TOOLTIP_CANCEL  # a tuple of x, y, text. start hidden
 
     while True:
-        if text is not None:
+        if tooltip_command != TOOLTIP_CANCEL:
             with trio.move_on_after(show_delay):
-                x, y, text = await recv_chan.receive()
+                tooltip_command = await recv_chan.receive()
                 continue
-            show_tooltip(x, y, text)
+            show_tooltip(*tooltip_command)
             with trio.move_on_after(hide_delay):
-                x, y, text = await recv_chan.receive()
+                tooltip_command = await recv_chan.receive()
                 hide_tooltip()
                 continue
             hide_tooltip()
-        x, y, text = await recv_chan.receive()
+        tooltip_command = await recv_chan.receive()
 
 
 def make_cancel_poller():

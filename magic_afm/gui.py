@@ -1302,33 +1302,32 @@ async def force_volume_task(display, opened_fvol):
 
     async def mpl_pick_motion_event_task(task_status):
         send_chan, recv_chan = trio.open_memory_channel(float('inf'))
-        async with recv_chan:
-            task_status.started(send_chan)
-            async for event in recv_chan:
-                mouseevent = getattr(event, "mouseevent", event)
-                control_held = event.guiEvent.state & TkState.CONTROL
-                shift_held = mouseevent.guiEvent.state & TkState.SHIFT
-                if mouseevent.inaxes is None:
-                    tooltip_send_chan.send_nowait(TOOLTIP_CANCEL)
+        task_status.started(send_chan)
+        async for event in recv_chan:
+            mouseevent = getattr(event, "mouseevent", event)
+            control_held = event.guiEvent.state & TkState.CONTROL
+            shift_held = mouseevent.guiEvent.state & TkState.SHIFT
+            if mouseevent.inaxes is None:
+                tooltip_send_chan.send_nowait(TOOLTIP_CANCEL)
+                continue
+            elif display is not None and mouseevent.inaxes is display.img_ax:
+                if event.name == "motion_notify_event":
+                    tooltip_send_chan.send_nowait(
+                        (event.guiEvent.x_root, event.guiEvent.y_root, display.img_ax_tip_text)
+                    )
+                    if not control_held:
+                        continue
+                if mouseevent.button != MouseButton.LEFT:
                     continue
-                elif display is not None and mouseevent.inaxes is display.img_ax:
-                    if event.name == "motion_notify_event":
-                        tooltip_send_chan.send_nowait(
-                            (event.guiEvent.x_root, event.guiEvent.y_root, display.img_ax_tip_text)
-                        )
-                        if not control_held:
-                            continue
-                    if mouseevent.button != MouseButton.LEFT:
-                        continue
-                    point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, axesimage)
-                    if shift_held and point in existing_points:
-                        continue
-                    nursery.start_soon(plot_curve_response, point, not shift_held)
-                elif display is not None and mouseevent.inaxes is display.plot_ax:
-                    if event.name == "motion_notify_event":
-                        tooltip_send_chan.send_nowait(
-                            (event.guiEvent.x_root, event.guiEvent.y_root, display.plot_ax_tip_text)
-                        )
+                point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, axesimage)
+                if shift_held and point in existing_points:
+                    continue
+                nursery.start_soon(plot_curve_response, point, not shift_held)
+            elif display is not None and mouseevent.inaxes is display.plot_ax:
+                if event.name == "motion_notify_event":
+                    tooltip_send_chan.send_nowait(
+                        (event.guiEvent.x_root, event.guiEvent.y_root, display.plot_ax_tip_text)
+                    )
 
     nursery: trio.Nursery
     async with trio.open_nursery() as nursery:
