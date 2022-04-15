@@ -234,10 +234,9 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
         self._tkcanvas.configure(background="#f0f0f0")
 
-    async def idle_draw_task(self, task_status=trio.TASK_STATUS_IGNORED):
+    async def idle_draw_task(self):
         # One of the slowest processes. Stick everything in a thread.
         delay = LONGEST_IMPERCEPTIBLE_DELAY  # nonzero to hide initial red square
-        task_status.started()
         # Initial draws are extra slow due to figure creation, make sure they are batched
         async with self.spinner_scope():
             try:
