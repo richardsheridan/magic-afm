@@ -297,15 +297,15 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             super().resize(self._resize_pending)
             self._resize_pending = None
 
-    def teach_canvas_to_use_trio(
-        self, nursery, spinner_scope, async_motion_pick_fn, tooltip_send_chan
+    def pipe_events_to_trio(
+        self, spinner_scope, motion_send_chan, tooltip_send_chan
     ):
         self.spinner_scope = spinner_scope
-        self.mpl_connect("motion_notify_event", partial(nursery.start_soon, async_motion_pick_fn))
-        self.mpl_connect("pick_event", partial(nursery.start_soon, async_motion_pick_fn))
+        self.mpl_connect("motion_notify_event", motion_send_chan.send_nowait)
+        self.mpl_connect("pick_event", motion_send_chan.send_nowait)
         self.mpl_connect(
             "figure_leave_event",
-            impartial(partial(nursery.start_soon, tooltip_send_chan.send, TOOLTIP_CANCEL)),
+            impartial(partial(tooltip_send_chan.send_nowait, TOOLTIP_CANCEL)),
         )
 
 
@@ -1300,31 +1300,35 @@ async def force_volume_task(display, opened_fvol):
 
             await display.canvas.draw_send.send(plot_point_draw_fn)
 
-    async def mpl_pick_motion_event_callback(event):
-        mouseevent = getattr(event, "mouseevent", event)
-        control_held = event.guiEvent.state & TkState.CONTROL
-        shift_held = mouseevent.guiEvent.state & TkState.SHIFT
-        if mouseevent.inaxes is None:
-            await tooltip_send_chan.send(TOOLTIP_CANCEL)
-            return
-        elif display is not None and mouseevent.inaxes is display.img_ax:
-            if event.name == "motion_notify_event":
-                await tooltip_send_chan.send(
-                    (event.guiEvent.x_root, event.guiEvent.y_root, display.img_ax_tip_text)
-                )
-                if not control_held:
-                    return
-            if mouseevent.button != MouseButton.LEFT:
-                return
-            point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, axesimage)
-            if shift_held and point in existing_points:
-                return
-            await plot_curve_response(point, not shift_held)
-        elif display is not None and mouseevent.inaxes is display.plot_ax:
-            if event.name == "motion_notify_event":
-                await tooltip_send_chan.send(
-                    (event.guiEvent.x_root, event.guiEvent.y_root, display.plot_ax_tip_text)
-                )
+    async def mpl_pick_motion_event_task(task_status):
+        send_chan, recv_chan = trio.open_memory_channel(float('inf'))
+        async with recv_chan:
+            task_status.started(send_chan)
+            async for event in recv_chan:
+                mouseevent = getattr(event, "mouseevent", event)
+                control_held = event.guiEvent.state & TkState.CONTROL
+                shift_held = mouseevent.guiEvent.state & TkState.SHIFT
+                if mouseevent.inaxes is None:
+                    tooltip_send_chan.send_nowait(TOOLTIP_CANCEL)
+                    continue
+                elif display is not None and mouseevent.inaxes is display.img_ax:
+                    if event.name == "motion_notify_event":
+                        tooltip_send_chan.send_nowait(
+                            (event.guiEvent.x_root, event.guiEvent.y_root, display.img_ax_tip_text)
+                        )
+                        if not control_held:
+                            continue
+                    if mouseevent.button != MouseButton.LEFT:
+                        continue
+                    point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, axesimage)
+                    if shift_held and point in existing_points:
+                        continue
+                    nursery.start_soon(plot_curve_response, point, not shift_held)
+                elif display is not None and mouseevent.inaxes is display.plot_ax:
+                    if event.name == "motion_notify_event":
+                        tooltip_send_chan.send_nowait(
+                            (event.guiEvent.x_root, event.guiEvent.y_root, display.plot_ax_tip_text)
+                        )
 
     nursery: trio.Nursery
     async with trio.open_nursery() as nursery:
@@ -1335,6 +1339,7 @@ async def force_volume_task(display, opened_fvol):
         tooltip_send_chan = await nursery.start(
             tooltip_task, display.show_tooltip, display.hide_tooltip, 1, 2
         )
+        motion_send_chan = await nursery.start(mpl_pick_motion_event_task)
 
         display.navbar.teach_navbar_to_use_trio(
             nursery=nursery,
@@ -1342,11 +1347,8 @@ async def force_volume_task(display, opened_fvol):
             get_image_by_name=opened_fvol.get_image,
             point_data=point_data,
         )
-        display.canvas.teach_canvas_to_use_trio(
-            nursery=nursery,
-            spinner_scope=spinner_scope,
-            async_motion_pick_fn=mpl_pick_motion_event_callback,
-            tooltip_send_chan=tooltip_send_chan,
+        display.canvas.pipe_events_to_trio(
+            spinner_scope, motion_send_chan, tooltip_send_chan
         )
         display.teach_display_to_use_trio(
             nursery,

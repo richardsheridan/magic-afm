@@ -227,7 +227,7 @@ def spawn_limit(limiter):
 async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_status):
     """Manage a tooltip window visibility, position, and text."""
 
-    send_chan, recv_chan = trio.open_memory_channel(0)
+    send_chan, recv_chan = trio.open_memory_channel(float('inf'))
     cancel_scope = trio.CancelScope()
     text = None  # start hidden
 
