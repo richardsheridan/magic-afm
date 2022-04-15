@@ -1716,21 +1716,11 @@ async def about_task(root):
     top.destroy()
 
 
-def nice_workers():
-    import psutil
-
-    try:
-        NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
-    except AttributeError:
-        NICE = 3
-    psutil.Process().nice(NICE)
-
-
 async def main_task(root):
     global TP_CONTEXT
     async with trio_parallel.open_worker_context(
         idle_timeout=float("inf"),
-        init=nice_workers,
+        init=calculation.nice_workers,
     ) as TP_CONTEXT:
         nursery: trio.Nursery
         async with trio.open_nursery() as nursery:

@@ -883,3 +883,13 @@ def check_jit():
         if hasattr(_, "get_metadata"):
             print(_)
             print(_.get_metadata().keys())
+
+
+def nice_workers():
+    import psutil
+
+    try:
+        NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
+    except AttributeError:
+        NICE = 3
+    psutil.Process().nice(NICE)
