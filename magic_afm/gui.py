@@ -709,7 +709,7 @@ class ForceVolumeTkDisplay:
         preproc_labelframe = ttk.Labelframe(self.options_frame, text="Preprocessing")
         self.defl_sens_strvar = tk.StringVar(preproc_labelframe)
         self._add_trace(self.defl_sens_strvar, self.defl_sens_callback)
-        defl_sens_sbox = ttk.Spinbox(
+        self.defl_sens_sbox = ttk.Spinbox(
             preproc_labelframe,
             from_=0,
             to=1e3,
@@ -718,13 +718,13 @@ class ForceVolumeTkDisplay:
             width=6,
             textvariable=self.defl_sens_strvar,
         )
-        defl_sens_sbox.set(initial_values.defl_sens)
-        defl_sens_sbox.grid(row=0, column=2, sticky="E")
+        self.defl_sens_sbox.set(initial_values.defl_sens)
+        self.defl_sens_sbox.grid(row=0, column=2, sticky="E")
         defl_sens_label = ttk.Label(preproc_labelframe, text="Deflection Sens.", justify="left")
         defl_sens_label.grid(row=0, column=0, columnspan=2, sticky="W")
         self.spring_const_strvar = tk.StringVar(preproc_labelframe)
         self._add_trace(self.spring_const_strvar, self.spring_const_callback)
-        spring_const_sbox = ttk.Spinbox(
+        self.spring_const_sbox = ttk.Spinbox(
             preproc_labelframe,
             from_=0,
             to=1e3,
@@ -733,13 +733,13 @@ class ForceVolumeTkDisplay:
             width=6,
             textvariable=self.spring_const_strvar,
         )
-        spring_const_sbox.set(initial_values.k)
-        spring_const_sbox.grid(row=1, column=2, sticky="E")
+        self.spring_const_sbox.set(initial_values.k)
+        self.spring_const_sbox.grid(row=1, column=2, sticky="E")
         spring_const_label = ttk.Label(preproc_labelframe, text="Spring Constant", justify="left")
         spring_const_label.grid(row=1, column=0, columnspan=2, sticky="W")
         self.sync_dist_strvar = tk.StringVar(preproc_labelframe)
         self._add_trace(self.sync_dist_strvar, self.sync_dist_callback)
-        sync_dist_sbox = ttk.Spinbox(
+        self.sync_dist_sbox = ttk.Spinbox(
             preproc_labelframe,
             from_=-initial_values.npts,
             to=initial_values.npts,
@@ -748,8 +748,8 @@ class ForceVolumeTkDisplay:
             width=6,
             textvariable=self.sync_dist_strvar,
         )
-        sync_dist_sbox.set(initial_values.sync_dist)
-        sync_dist_sbox.grid(row=2, column=2, sticky="E")
+        self.sync_dist_sbox.set(initial_values.sync_dist)
+        self.sync_dist_sbox.grid(row=2, column=2, sticky="E")
         sync_dist_label = ttk.Label(preproc_labelframe, text="Sync Distance", justify="left")
         sync_dist_label.grid(row=2, column=0, columnspan=2, sticky="W")
         preproc_labelframe.grid(row=0, column=1, sticky="EW")
@@ -950,40 +950,45 @@ class ForceVolumeTkDisplay:
         try:
             self._prev_defl_sens = float(self.defl_sens_strvar.get())
         except ValueError:
-            self.defl_sens_strvar.set(str(self._prev_defl_sens))
+            self.defl_sens_sbox.configure(foreground='red2')
         else:
+            self.defl_sens_sbox.configure(foreground='black')
             self.replot()
 
     def spring_const_callback(self, *args):
         try:
             self._prev_k = float(self.spring_const_strvar.get())
         except ValueError:
-            self.spring_const_strvar.set(str(self._prev_k))
+            self.spring_const_sbox.configure(foreground='red2')
         else:
+            self.spring_const_sbox.configure(foreground='black')
             self.replot()
 
     def sync_dist_callback(self, *args):
         try:
             self._prev_sync_dist = int(self.sync_dist_strvar.get())
         except ValueError:
-            self.sync_dist_strvar.set(str(self._prev_sync_dist))
+            self.sync_dist_sbox.configure(foreground='red2')
         else:
+            self.sync_dist_sbox.configure(foreground='black')
             self.replot()
 
     def radius_callback(self, *args):
         try:
             self._prev_radius = float(self.radius_strvar.get())
         except ValueError:
-            self.radius_strvar.set(str(self._prev_radius))
+            self.fit_radius_sbox.configure(foreground='red2')
         else:
+            self.fit_radius_sbox.configure(foreground='black')
             self.replot()
 
     def tau_callback(self, *args):
         try:
             self._prev_tau = float(self.tau_strvar.get())
         except ValueError:
-            self.tau_strvar.set(str(self._prev_tau))
+            self.fit_tau_sbox.configure(foreground='red2')
         else:
+            self.fit_tau_sbox.configure(foreground='black')
             self.replot()
 
     def change_fit_kind_callback(self, *args):
