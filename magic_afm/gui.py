@@ -577,16 +577,18 @@ class TkHost:
         Only really ends if self.root is truly the parent of all other Tk objects!
         thus tk.NoDefaultRoot
         """
-        print(f"Trio shutdown. Outcome: {outcome_}")
-        if isinstance(outcome_, outcome.Error) and not isinstance(
-            outcome_.error, KeyboardInterrupt
-        ):
-            date = datetime.datetime.now().isoformat().replace(":", ";")
-            with open(f"traceback-{date}.dump", "w") as file:
-                exc = outcome_.error
-                traceback.print_exception(type(exc), exc, exc.__traceback__, file=file)
-                traceback.print_exception(type(exc), exc, exc.__traceback__)
-        self.root.destroy()
+        try:
+            print(f"Trio shutdown. Outcome: {outcome_}")
+            if isinstance(outcome_, outcome.Error) and not isinstance(
+                outcome_.error, KeyboardInterrupt
+            ):
+                date = datetime.datetime.now().isoformat().replace(":", ";")
+                with open(f"traceback-{date}.dump", "w") as file:
+                    exc = outcome_.error
+                    traceback.print_exception(type(exc), exc, exc.__traceback__, file=file)
+                    traceback.print_exception(type(exc), exc, exc.__traceback__)
+        finally:
+            self.root.destroy()
 
 
 def impartial(fn):
