@@ -387,6 +387,12 @@ class FFMTraceRetraceWorker:
         return z, d
 
 
+def open_h5(path):
+    import h5py
+
+    return h5py.File(path, "r")
+
+
 class ARH5File(BaseForceVolumeFile):
     _basic_units_map = {
         "Adhesion": "N",
@@ -419,9 +425,7 @@ class ARH5File(BaseForceVolumeFile):
         try:
             h5data, images, worker, path_lock = CACHED_OPEN_PATHS[self.path]
         except KeyError:
-            import h5py
-
-            h5data = h5py.File(self.path, "r")
+            h5data = open_h5(self.path)
             images = h5data["Image"]
             worker = self._choose_worker(h5data)
             path_lock = threading.Lock()
@@ -441,9 +445,7 @@ class ARH5File(BaseForceVolumeFile):
         self._worker = worker
 
     async def ainitialize(self):
-        import h5py
-
-        self._h5data = h5data = await trio.to_thread.run_sync(h5py.File, self.path, "r")
+        self._h5data = h5data = await trio.to_thread.run_sync(open_h5, self.path)
         # The notes have a very regular key-value structure, so we convert to dict for later access
         self.notes = await trs(
             dict,
