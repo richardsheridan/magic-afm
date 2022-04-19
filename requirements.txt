@@ -24,7 +24,7 @@ colorama==0.4.4
     # via tqdm
 cycler==0.11.0
     # via matplotlib
-fonttools==4.31.2
+fonttools==4.32.0
     # via matplotlib
 future==0.18.2
     # via pefile
@@ -32,9 +32,9 @@ h5py==3.6.0
     # via -r requirements.in
 idna==3.3
     # via trio
-imageio==2.16.1
+imageio==2.17.0
     # via -r requirements.in
-kiwisolver==1.4.0
+kiwisolver==1.4.2
     # via matplotlib
 llvmlite==0.38.0
     # via numba
@@ -42,7 +42,7 @@ matplotlib==3.5.1
     # via -r requirements.in
 numba==0.55.1
     # via -r requirements.in
-numpy==1.21.5
+numpy==1.21.6
     # via
     #   -r requirements.in
     #   h5py
@@ -58,7 +58,7 @@ packaging==21.3
     # via matplotlib
 pefile==2021.9.3
     # via pyinstaller
-pillow==9.0.1
+pillow==9.1.0
     # via
     #   -r requirements.in
     #   imageio
@@ -67,11 +67,11 @@ psutil==5.9.0
     # via -r requirements.in
 pycparser==2.21
     # via cffi
-pyinstaller==4.10
+pyinstaller==5.0
     # via -r requirements.in
-pyinstaller-hooks-contrib==2022.2
+pyinstaller-hooks-contrib==2022.4
     # via pyinstaller
-pyparsing==3.0.7
+pyparsing==3.0.8
     # via
     #   matplotlib
     #   packaging
@@ -87,7 +87,7 @@ sniffio==1.2.0
     # via trio
 sortedcontainers==2.4.0
     # via trio
-tqdm==4.63.0
+tqdm==4.64.0
     # via -r requirements.in
 trio==0.20.0
     # via
