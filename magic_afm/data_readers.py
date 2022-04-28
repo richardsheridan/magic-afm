@@ -477,7 +477,7 @@ class ARH5File(BaseForceVolumeFile):
 
     def _choose_worker(self, h5data):
         if "FFM" in h5data:
-            self._scandown = bool(self.notes["ScanDown"])
+            self.scandown = bool(self.notes["ScanDown"])
             if "1" in h5data["FFM"]:
                 worker = FFMTraceRetraceWorker(
                     h5data["FFM"]["0"]["Raw"],
@@ -493,7 +493,7 @@ class ARH5File(BaseForceVolumeFile):
             else:
                 worker = FFMSingleWorker(h5data["FFM"]["Raw"], h5data["FFM"]["Defl"])
         else:
-            self._scandown = bool(self.notes["FMapScanDown"])
+            self.scandown = bool(self.notes["FMapScanDown"])
             worker = ForceMapWorker(h5data)
         return worker
 
@@ -515,7 +515,7 @@ class ARH5File(BaseForceVolumeFile):
             image, _ = self._calc_images[image_name]
         else:
             image = await trs(self._sync_get_image, image_name)
-        return image, self._scandown
+        return image, self.scandown
 
     def _sync_get_image(self, image_name):
         return self._images[image_name][:]
@@ -716,6 +716,7 @@ class NanoscopeFile(BaseForceVolumeFile):
         rate, unit = header["Ciao scan list"]["PFT Freq"].split()
         assert unit.lower() == "khz"
         self.rate = float(rate)
+        self.scandown = "down" in data_header["Frame direction"].lower()
 
         scansize, units = header["Ciao scan list"]["Scan Size"].split()
         if units == "nm":
