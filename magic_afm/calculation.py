@@ -50,6 +50,7 @@ PROPERTY_UNITS_DICT = {
     "TrueHeight": "m",  # Hi z -> lo h
     "IndentationRatio": None,
     "SensIndMod_k": None,
+    "SumSquaredError": None,
 }
 
 
@@ -417,7 +418,7 @@ try:
 except ImportError:
     from ._vendored_lstsq import leastsq
 
-    def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
+    def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None, full_output=None):
         """Wrap to match api of scipy.optimize.curve_fit"""
         if bounds is None:
             constraints = None
@@ -428,7 +429,7 @@ except ImportError:
                     constraints.append((1, None, None))
                 else:
                     constraints.append((2, lo, hi))
-        return leastsq(function, xdata, ydata, p0, sigma, constraints)
+        return leastsq(function, xdata, ydata, p0, sigma, constraints, full_output=full_output)
 
 
 @jit(nopython=True, nogil=True, cache=True)
@@ -754,14 +755,18 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, 
         )
 
     try:
-        beta, cov = curve_fit(partial_force_curve, delta, force, p0=p0, bounds=bounds)
+        beta, cov, infodict, *_ = curve_fit(
+            partial_force_curve, delta, force, p0=p0, bounds=bounds, full_output=True
+        )
+        sse = np.sum((infodict['fvec']-force)**2)
     except Exception as e:
         traceback.print_exception(type(e), e, e.__traceback__)
         print(p0)
         beta = np.full_like(p0, np.nan)
         cov = np.diag(beta)
+        sse = np.nan
 
-    return beta, np.sqrt(np.diag(cov)), partial_force_curve
+    return beta, np.sqrt(np.diag(cov)), sse, partial_force_curve
 
 
 def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
@@ -818,7 +823,7 @@ def perturb_k(delta, f, epsilon, k):
 
 def calc_properties_imap(delta_f_rc, **kwargs):
     delta, force, rc = delta_f_rc
-    beta, beta_err, partial_force_curve = fitfun(delta, force, **kwargs)
+    beta, beta_err, sse, partial_force_curve = fitfun(delta, force, **kwargs)
     if np.any(np.isnan(beta)):
         return rc, None
     ind_mod = beta[0]
@@ -838,6 +843,7 @@ def calc_properties_imap(delta_f_rc, **kwargs):
         -z_true_surface / 1e9,
         deflection / indentation,
         ind_mod_sens_k,
+        sse,
     )
     return rc, properties
 

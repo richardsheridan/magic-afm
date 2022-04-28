@@ -161,13 +161,13 @@ If a fit has been performed, a table is displayed above the force curve indicati
 the key inferred parameters:
 
 M
-    Indentation Modulus M=4/3*E/(1-ν*ν)
+    indentation modulus M=4/3*E/(1-ν*ν)
 
 dM/dk x k/M
     relative sensitivity of M to the spring constant
 
 F_adh
-    Force of adhesion
+    force of adhesion
 
 d
     cantilever deflection
@@ -177,6 +177,9 @@ d
 
 d/δ
     indentation ratio
+
+SSE
+    sum of squared errors
 
 Using this table you observe the best fit value and uncertainty for parameters
 at any point in the map. Mainly, this helps diagnose issues and confirm robust

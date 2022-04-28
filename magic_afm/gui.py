@@ -157,6 +157,7 @@ class ForceCurveData:
     z_tru: Optional[np.ndarray] = None
     mindelta: Optional[np.ndarray] = None
     sens: Optional[np.ndarray] = None
+    sse: Optional[np.ndarray] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1403,6 +1404,7 @@ def draw_data_table(point_data, ax: Axes):
             "d (nm)",
             "δ (nm)",
             "d/δ",
+            "SSE",
         ]
         table: Table = ax.table(
             [
@@ -1413,6 +1415,7 @@ def draw_data_table(point_data, ax: Axes):
                     "{:.2f}".format(data.defl),
                     "{:.2f}".format(data.ind),
                     "{:.2f}".format(data.defl / data.ind),
+                    "{:.2f}".format(data.sse),
                 ],
             ],
             loc="top",
@@ -1528,7 +1531,7 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
 
     cancel_poller()
     optionsdict = dataclasses.asdict(options)
-    beta, beta_err, calc_fun = calculation.fitfun(
+    beta, beta_err, sse, calc_fun = calculation.fitfun(
         delta[sl], f[sl], **optionsdict, cancel_poller=cancel_poller
     )
     f_fit = calc_fun(delta[sl], *beta)
@@ -1538,9 +1541,9 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
     eps = 1e-3
     delta_new, f_new, k_new = calculation.perturb_k(delta, f, eps, options.k)
     optionsdict.pop("k")
-    beta_perturb, _, _ = calculation.fitfun(
+    beta_perturb = calculation.fitfun(
         delta_new[sl], f_new[sl], k_new, **optionsdict, cancel_poller=cancel_poller
-    )
+    )[0]
     sens = (beta_perturb - beta) / beta / eps
     if np.all(np.isfinite(beta)):
         deflection, indentation, z_true_surface, mindelta = calculation.calc_def_ind_ztru(
@@ -1565,6 +1568,7 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
         z_tru=z_true_surface,
         mindelta=mindelta,
         sens=sens,
+        sse=sse,
     )
 
 
