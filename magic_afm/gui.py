@@ -320,9 +320,12 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
 
     def drag_pan(self, event):
         """Callback for dragging in pan/zoom mode."""
+        self._drag_pan_event = event
 
         def drag_pan_draw_fn():
             if self._pan_info is None:
+                return
+            if self._drag_pan_event is not event:
                 return
             for ax in self._pan_info.axes:
                 # Using the recorded button at the press is safer than the current
