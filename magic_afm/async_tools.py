@@ -124,10 +124,10 @@ async def to_sync_runner_map_unordered(
             result = await sync_runner(
                 sync_fn, job_item, cancellable=cancellable, limiter=trio.CapacityLimiter(1)
             )
-        if chunky:
-            await to_sender.send(result)
-        else:
-            await send(result)
+            if chunky:
+                await to_sender.send(result)
+            else:
+                await send(result)
 
     async with send_chan, trio.open_nursery() as send_nursery:
         send_nursery.start_soon(sender)
