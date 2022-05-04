@@ -33,7 +33,7 @@ try:
 except ImportError:
     jit = lambda *a, **kw: (lambda x: x)
 else:
-    abs = np.abs
+    abs = np.fabs
 
 
 EPS = float(np.finfo(np.float64).eps)
@@ -318,7 +318,7 @@ def brentq(func, args, xa, xb):
             fblk = fpre
             spre = scur = xcur - xpre
 
-        if np.fabs(fblk) < np.fabs(fcur):
+        if abs(fblk) < abs(fcur):
             xpre = xcur
             xcur = xblk
             xblk = xpre
@@ -328,10 +328,10 @@ def brentq(func, args, xa, xb):
             fblk = fpre
 
         sbis = (xblk - xcur) / 2
-        if fcur == 0 or np.fabs(sbis) < xtol:
+        if fcur == 0 or abs(sbis) < xtol:
             return xcur
 
-        if np.fabs(spre) > xtol and np.fabs(fcur) < np.fabs(fpre):
+        if abs(spre) > xtol and abs(fcur) < abs(fpre):
             if xpre == xblk:
                 # interpolate
                 stry = -fcur * (xcur - xpre) / (fcur - fpre)
@@ -341,7 +341,7 @@ def brentq(func, args, xa, xb):
                 dblk = (fblk - fcur) / (xblk - xcur)
                 stry = -fcur * (fblk * dblk - fpre * dpre) / (dblk * dpre * (fblk - fpre))
 
-            if 2 * np.fabs(stry) < min(np.fabs(spre), 3 * np.fabs(sbis) - xtol):
+            if 2 * abs(stry) < min(abs(spre), 3 * abs(sbis) - xtol):
                 # good short step
                 spre = scur
                 scur = stry
@@ -356,7 +356,7 @@ def brentq(func, args, xa, xb):
 
         xpre = xcur
         fpre = fcur
-        if np.fabs(scur) > xtol:
+        if abs(scur) > xtol:
             xcur += scur
         else:
             xcur += xtol if sbis > 0 else -xtol
