@@ -434,6 +434,7 @@ def leastsq(
                 if flambda > 1000:
                     flag = 1
                     iiter = 0
+                    last_evaluation = yfit
             else:
                 flag = 1
                 fittedpar = newpar.__copy__()
