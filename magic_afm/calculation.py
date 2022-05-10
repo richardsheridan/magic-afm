@@ -412,24 +412,23 @@ def mylinspace(start, stop, num, endpoint):
     return y
 
 
-try:
-    # Use scipy if available
-    from scipy.optimize import curve_fit
-except ImportError:
-    from ._vendored_lstsq import leastsq
+from ._vendored_lstsq import leastsq
 
-    def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None, full_output=None):
-        """Wrap to match api of scipy.optimize.curve_fit"""
-        if bounds is None:
-            constraints = None
-        else:
-            constraints = []
-            for lo, hi in bounds.T.tolist():
-                if lo == 0.0 and hi == np.inf:
-                    constraints.append((1, None, None))
-                else:
-                    constraints.append((2, lo, hi))
-        return leastsq(function, xdata, ydata, p0, sigma, constraints, full_output=full_output)
+
+def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
+    """Wrap to match api of scipy.optimize.curve_fit
+
+    This is faster (?!) and has no scipy dependency."""
+    if bounds is None:
+        constraints = None
+    else:
+        constraints = []
+        for lo, hi in bounds.T.tolist():
+            if lo == 0.0 and hi == np.inf:
+                constraints.append((1, None, None))
+            else:
+                constraints.append((2, lo, hi))
+    return leastsq(function, xdata, ydata, p0, sigma, constraints, full_output=True)
 
 
 @jit(nopython=True, nogil=True, cache=True)
@@ -755,18 +754,17 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, 
         )
 
     try:
-        beta, cov, infodict, *_ = curve_fit(
-            partial_force_curve, delta, force, p0=p0, bounds=bounds, full_output=True
-        )
-        sse = np.sum((infodict['fvec']-force)**2)
+        beta, cov, infodict, *_ = curve_fit(partial_force_curve, delta, force, p0=p0, bounds=bounds)
+        sse = infodict["chisq"]
+        beta_err = infodict["uncertainties"]
     except Exception as e:
         traceback.print_exception(type(e), e, e.__traceback__)
         print(p0)
         beta = np.full_like(p0, np.nan)
-        cov = np.diag(beta)
+        beta_err = np.diag(beta)
         sse = np.nan
 
-    return beta, np.sqrt(np.diag(cov)), sse, partial_force_curve
+    return beta, beta_err, sse, partial_force_curve
 
 
 def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
