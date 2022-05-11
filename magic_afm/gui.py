@@ -1781,16 +1781,19 @@ async def main_task(root):
             help_menu.bind("<KeyRelease-a>", func=about_callback)
             menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
+            # Depending on the system, workers can take up to 30 seconds to finish
+            # loading and compiling numba jit stuff. I tried various permutations to
+            # warm up the workers and this one seems best for both cached and fresh cases.
+            tprs = partial(
+                TP_CONTEXT.run_sync,
+                limiter=async_tools.cpu_bound_limiter,
+                cancellable=True,
+            )
             for _ in range(async_tools.cpu_bound_limiter.total_tokens):
-                nursery.start_soon(
-                    partial(
-                        TP_CONTEXT.run_sync,
-                        calculation.warmup_jit,
-                        limiter=async_tools.cpu_bound_limiter,
-                        cancellable=True,
-                    )
-                )
-            await trio.to_thread.run_sync(calculation.warmup_jit, cancellable=True)
+                nursery.start_soon(tprs, bool)  # start workers while compiling
+            await trs(calculation.warmup_jit)  # don't race workers to compile first
+            for _ in range(async_tools.cpu_bound_limiter.total_tokens):
+                nursery.start_soon(tprs, calculation.warmup_jit)  # only compile cache=false
             await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 
