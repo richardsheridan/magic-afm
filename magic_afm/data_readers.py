@@ -461,7 +461,7 @@ class ARH5File(BaseForceVolumeFile):
         )
         self._worker = worker
         self._images = images
-        self._file_image_names = image_names
+        self._file_image_names.update(image_names)
 
         self.k = float(self.notes["SpringConstant"])
         # what about FastScanSize and SlowScanSize?
@@ -704,7 +704,7 @@ class NanoscopeFile(BaseForceVolumeFile):
         # \Aspect Ratio: 1:1
         # \Scan Size: 800 800 nm
 
-        self._file_image_names = set(header["Image"].keys())
+        self._file_image_names.update(header["Image"].keys())
 
         data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
 
