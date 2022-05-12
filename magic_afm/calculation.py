@@ -761,7 +761,7 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, 
         traceback.print_exception(type(e), e, e.__traceback__)
         print(p0)
         beta = np.full_like(p0, np.nan)
-        beta_err = np.diag(beta)
+        beta_err = beta
         sse = np.nan
 
     return beta, beta_err, sse, partial_force_curve
