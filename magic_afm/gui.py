@@ -517,9 +517,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         exporter = exporter_map.get(ext, imageio.imwrite)
         for image_name in self._get_image_names():
             if image_name.startswith("Calc"):
-                image, scandown = await self._get_image_by_name(image_name)
-                if not scandown:
-                    image = image[::-1]
+                image = await self._get_image_by_name(image_name)
                 try:
                     await trio.to_thread.run_sync(
                         exporter, root + "_" + image_name[4:] + ext, image
@@ -1021,7 +1019,6 @@ async def force_volume_task(display, opened_fvol):
     # set in change_image_callback
     colorbar: Optional[Colorbar] = None
     axesimage: Optional[AxesImage] = None
-    scandown: Optional[bool] = None
     image_stats: Optional[ImageStats] = None
     unit: Optional[str] = None
 
@@ -1134,7 +1131,6 @@ async def force_volume_task(display, opened_fvol):
             opened_fvol.add_image(
                 image_name="Calc" + extret + name,
                 units=calculation.PROPERTY_UNITS_DICT[name],
-                scandown=scandown,
                 image=property_map[name].squeeze(),
             )
             if "Calc" + extret + name not in combobox_values:
@@ -1151,10 +1147,10 @@ async def force_volume_task(display, opened_fvol):
         await display.canvas.draw_send.send(change_cmap_draw_fn)
 
     async def change_image_callback():
-        nonlocal scandown, image_stats, unit
+        nonlocal image_stats, unit
         image_name = display.image_name_strvar.get()
         cmap = display.colormap_strvar.get()
-        image_array, scandown = await opened_fvol.get_image(image_name)
+        image_array = await opened_fvol.get_image(image_name)
         image_stats = ImageStats.from_array(image_array)
         unit = opened_fvol.get_image_units(image_name)
 
@@ -1173,7 +1169,7 @@ async def force_volume_task(display, opened_fvol):
 
             axesimage = display.img_ax.imshow(
                 image_array,
-                origin="upper" if scandown else "lower",
+                origin="lower",
                 extent=(-s, s, -s, s),
                 picker=True,
                 cmap=cmap,
@@ -1226,7 +1222,7 @@ async def force_volume_task(display, opened_fvol):
             manip_fn = calculation.MANIPULATIONS[manip_name]
             async with spinner_scope():
                 manip_img = await trs(manip_fn, axesimage.get_array().data)
-            opened_fvol.add_image(name, unit, scandown, manip_img)
+            opened_fvol.add_image(name, unit, manip_img)
             if name not in current_names:
                 current_names.append(name)
             display.reset_image_name_menu(current_names)

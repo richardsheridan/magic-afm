@@ -143,6 +143,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         self.k = None
         self.defl_sens = None
         self.npts = None
+        self.scandown = True
         self.split = None
         self.sync_dist = 0
 
@@ -192,8 +193,8 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         image_name = self.strip_trace(image_name)
         return self._units_map.get(image_name, "V")
 
-    def add_image(self, image_name, units, scandown, image):
-        self._calc_images[image_name] = image, scandown
+    def add_image(self, image_name, units, image):
+        self._calc_images[image_name] = image
         image_name = self.strip_trace(image_name)
         self._units_map[image_name] = units
 
@@ -224,7 +225,6 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         self.scansize = 100
         self.k = 1
         self.defl_sens = 1
-        self.scandown = True
 
     async def ainitialize(self):
         await trio.sleep(0)
@@ -257,7 +257,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
             image, _ = self._calc_images[image_name]
         except KeyError:
             image = np.zeros((64, 64), dtype=np.float32)
-        return image, True
+        return image
 
 
 NANOMETER_UNIT_CONVERSION = (
@@ -477,7 +477,7 @@ class ARH5File(BaseForceVolumeFile):
 
     def _choose_worker(self, h5data):
         if "FFM" in h5data:
-            self.scandown = bool(self.notes["ScanDown"])
+            # self.scandown = bool(self.notes["ScanDown"])
             if "1" in h5data["FFM"]:
                 worker = FFMTraceRetraceWorker(
                     h5data["FFM"]["0"]["Raw"],
@@ -493,7 +493,7 @@ class ARH5File(BaseForceVolumeFile):
             else:
                 worker = FFMSingleWorker(h5data["FFM"]["Raw"], h5data["FFM"]["Defl"])
         else:
-            self.scandown = bool(self.notes["FMapScanDown"])
+            # self.scandown = bool(self.notes["FMapScanDown"])
             worker = ForceMapWorker(h5data)
         return worker
 
@@ -512,10 +512,10 @@ class ARH5File(BaseForceVolumeFile):
     async def get_image(self, image_name):
         if image_name in self._calc_images:
             await trio.sleep(0)
-            image, _ = self._calc_images[image_name]
+            image = self._calc_images[image_name]
         else:
             image = await trs(self._sync_get_image, image_name)
-        return image, self.scandown
+        return image
 
     def _sync_get_image(self, image_name):
         return self._images[image_name][:]
@@ -546,11 +546,10 @@ class BrukerWorkerBase(metaclass=abc.ABCMeta):
         r = int(h["Number of lines"])
         c = int(h["Samps/line"])
         assert data_length == r * c * bpp
-        scandown = h["Frame direction"] == "Down"
+        # scandown = h["Frame direction"] == "Down"
         return (
             np.ndarray(shape=(r, c), dtype=f"i{bpp}", buffer=self.mm, offset=offset)
-            * scale,
-            scandown,
+            * scale
         )
 
 
@@ -621,7 +620,7 @@ class QNMWorker(BrukerWorkerBase):
             value[1 + value.find("(") : value.find(")")].split()[0]
         )
 
-        image, scandown = self.get_image("Height Sensor")
+        image = self.get_image("Height Sensor")
         image *= NANOMETER_UNIT_CONVERSION
         self.height_for_z = image
         amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
@@ -716,7 +715,6 @@ class NanoscopeFile(BaseForceVolumeFile):
         rate, unit = header["Ciao scan list"]["PFT Freq"].split()
         assert unit.lower() == "khz"
         self.rate = float(rate)
-        self.scandown = "down" in data_header["Frame direction"].lower()
 
         scansize, units = header["Ciao scan list"]["Scan Size"].split()
         if units == "nm":
@@ -727,6 +725,7 @@ class NanoscopeFile(BaseForceVolumeFile):
             factor = 1000.0
 
         self.scansize = float(scansize) * factor
+        self.scandown = {"Down": True, "Up": False}[header["FV"]["Deflection Error"]["Frame direction"]]
 
         self.k = float(data_header["Spring Constant"])
         self.defl_sens = float(header["Ciao scan list"]["@Sens. DeflSens"].split()[1])
@@ -757,10 +756,10 @@ class NanoscopeFile(BaseForceVolumeFile):
     async def get_image(self, image_name):
         if image_name in self._calc_images:
             await trio.sleep(0)
-            image, scandown = self._calc_images[image_name]
+            image = self._calc_images[image_name]
         else:
-            image, scandown = await trs(self._worker.get_image, image_name)
-        return image, scandown
+            image = await trs(self._worker.get_image, image_name)
+        return image
 
 
 # noinspection PyUnboundLocalVariable
