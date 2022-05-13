@@ -875,6 +875,7 @@ class ForceVolumeTkDisplay:
             background="white",
         )
         self.tipwindow_label.pack(ipadx=2)
+        self._opts = self.options
 
     def _add_trace(self, tkvar, callback):
         self._traces.append((tkvar, tkvar.trace_add("write", callback)))
@@ -887,15 +888,19 @@ class ForceVolumeTkDisplay:
 
     @property
     def options(self):
-        return ForceCurveOptions(
-            fit_mode=calculation.FitMode(self.fit_intvar.get()),
-            disp_kind=DispKind(self.disp_kind_intvar.get()),
-            k=float(self.spring_const_strvar.get()),
-            defl_sens=float(self.defl_sens_strvar.get()),
-            radius=float(self.fit_radius_sbox.get()),
-            tau=float(self.fit_tau_sbox.get()),
-            sync_dist=int(self.sync_dist_strvar.get()),
-        )
+        try:
+            self._opts = ForceCurveOptions(
+                fit_mode=calculation.FitMode(self.fit_intvar.get()),
+                disp_kind=DispKind(self.disp_kind_intvar.get()),
+                k=float(self.spring_const_strvar.get()),
+                defl_sens=float(self.defl_sens_strvar.get()),
+                radius=float(self.fit_radius_sbox.get()),
+                tau=float(self.fit_tau_sbox.get()),
+                sync_dist=int(self.sync_dist_strvar.get()),
+            )
+        except Exception as e:
+            warnings.warn(str(e))
+        return self._opts
 
     def spinner_start(self):
         self.tkwindow.configure(cursor="watch")
