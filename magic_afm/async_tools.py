@@ -39,15 +39,18 @@ def _chunk_producer(fn, job_items, chunksize):
         yield fn, x
 
 
-async def _async_chunk_producer(fn, job_items, chunksize):
+async def _async_chunk_producer(fn, job_items, chunksize, *, task_status):
     x = []
-    async for job_item in job_items:
-        x.append(job_item)
-        if len(x) == chunksize:
-            yield fn, tuple(x)
-            x.clear()
-    if x:
-        yield fn, tuple(x)
+    send_chan, recv_chan = trio.open_memory_channel(0)
+    task_status.started(recv_chan)
+    async with send_chan:
+        async for job_item in job_items:
+            x.append(job_item)
+            if len(x) == chunksize:
+                await send_chan.send((fn, tuple(x)))
+                x.clear()
+        if x:
+            await send_chan.send((fn, tuple(x)))
 
 
 def _chunk_consumer(chunk):
@@ -82,58 +85,53 @@ async def to_sync_runner_map_unordered(
     else:
         buffer = 0
     send_chan, recv_chan = trio.open_memory_channel(buffer)
-    to_sender, from_workers = trio.open_memory_channel(0)
     task_status.started(recv_chan)
-
-    try:
-        job_items = iter(job_items)  # Duck type any iterable
-    except TypeError as e:
-        if not str(e).endswith("object is not iterable"):
-            raise e
-        job_items = job_items.__aiter__()  # Duck type any async iterable
-        if chunky:
-            job_items = _async_chunk_producer(sync_fn, job_items, chunksize)
-            sync_fn = _chunk_consumer
-    else:
-        if chunky:
-            job_items = _chunk_producer(sync_fn, job_items, chunksize)
-            sync_fn = _chunk_consumer
-        job_items = asyncify_iterator(job_items, limiter)
-
-    async def sender():
-        # unroll chunks outside of the limiter but still apply backpressure
-        async for result in from_workers:
-            for r in result:
-                await send(r)
 
     async def send(item):
         # https://gitter.im/python-trio/general?at=5f7776b9cfe2f9049a1c67f9
         try:
             await send_chan.send(item)
         except trio.Cancelled:
-            if cancellable:
-                raise
-            else:
+            if not cancellable:
                 send_chan._state.max_buffer_size += 1
                 send_chan.send_nowait(item)
+            raise
 
-    async def worker(job_item, task_status):
-        # Backpressure: hold limiter for entire task to avoid spawning too many workers
-        async with limiter:
-            task_status.started()
+    async def worker():
+        async for job_item in job_items:
             result = await sync_runner(
-                sync_fn, job_item, cancellable=cancellable, limiter=trio.CapacityLimiter(1)
+                sync_fn, job_item, cancellable=cancellable, limiter=limiter
             )
             if chunky:
-                await to_sender.send(result)
+                for r in result:
+                    await send(r)
             else:
                 await send(result)
 
-    async with send_chan, trio.open_nursery() as send_nursery:
-        send_nursery.start_soon(sender)
-        async with to_sender, trio.open_nursery() as nursery:
-            async for job_item in job_items:
-                await nursery.start(worker, job_item)
+    async with send_chan, trio.open_nursery() as nursery:
+
+        try:
+            job_items = iter(job_items)  # Duck type any iterable
+        except TypeError as e:
+            if not str(e).endswith("object is not iterable"):
+                raise e
+            job_items = job_items.__aiter__()  # Duck type any async iterable
+            if chunky:
+                job_items = await nursery.start(
+                    _async_chunk_producer,
+                    sync_fn,
+                    job_items,
+                    chunksize
+                )
+                sync_fn = _chunk_consumer
+        else:
+            if chunky:
+                job_items = _chunk_producer(sync_fn, job_items, chunksize)
+                sync_fn = _chunk_consumer
+            job_items = await nursery.start(asyncify_iterator, job_items, limiter)
+
+        for _ in range(limiter.total_tokens):
+            nursery.start_soon(worker)
 
     if task_status is trio.TASK_STATUS_IGNORED:
         # internal details version
@@ -205,11 +203,13 @@ async def spinner_task(set_spinner, set_normal, task_status):
             await trio.sleep_forever()
 
 
-async def asyncify_iterator(iter, limiter=None):
+async def asyncify_iterator(iter, limiter=None, *, task_status):
     sentinel = object()
-
-    while (result := await trs(next, iter, sentinel, limiter=limiter)) is not sentinel:
-        yield result
+    send_chan, recv_chan = trio.open_memory_channel(0)
+    task_status.started(recv_chan)
+    with send_chan:
+        while (result := await trs(next, iter, sentinel, limiter=limiter)) is not sentinel:
+            await send_chan.send(result)
 
 
 def spawn_limit(limiter):
