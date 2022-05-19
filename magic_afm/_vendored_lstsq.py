@@ -719,18 +719,8 @@ def chisq_alpha_beta(
         yfit = last_evaluation
     deltay = y - yfit
     help0 = weight * deltay
-    for i in range(n_free):
-        derivi = numpy.resize(deriv[i, :], (1, nr))
-        help1 = numpy.resize(numpy.sum((help0 * derivi), 1), (1, 1))
-        if i == 0:
-            beta = help1
-        else:
-            beta = numpy.concatenate((beta, help1), 1)
-        help1 = numpy.inner(deriv, weight * derivi)
-        if i == 0:
-            alpha = help1
-        else:
-            alpha = numpy.concatenate((alpha, help1), 1)
+    alpha = deriv @ (weight*deriv).T
+    beta = help0[numpy.newaxis, :] @ deriv.T
     chisq = (help0 * deltay).sum()
     if full_output:
         ddict = {}
