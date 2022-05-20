@@ -21,7 +21,7 @@ It is meant to be easy to lift individual items out into other projects.
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from functools import partial, wraps
 from itertools import islice
 
@@ -80,12 +80,17 @@ async def to_sync_runner_map_unordered(
     Using nursery.start() on this function produces a MemoryReceiveChannel
     with no buffer to receive results as-completed."""
     chunky = chunksize > 1
+    buffer = []
     if task_status is trio.TASK_STATUS_IGNORED:
-        buffer = float("inf")
+
+        async def send(item):
+            buffer.append(item)
+
+        send_chan = nullcontext
     else:
-        buffer = 0
-    send_chan, recv_chan = trio.open_memory_channel(buffer)
-    task_status.started(recv_chan)
+        send_chan, recv_chan = trio.open_memory_channel(0)
+        task_status.started(recv_chan)
+        send = send_chan.send
 
     async def worker():
         async for job_item in job_items:
@@ -94,24 +99,20 @@ async def to_sync_runner_map_unordered(
             )
             if chunky:
                 for r in result:
-                    await send_chan.send(r)
+                    await send(r)
             else:
-                await send_chan.send(result)
+                await send(result)
 
     async with send_chan, trio.open_nursery() as nursery:
-
         try:
             job_items = iter(job_items)  # Duck type any iterable
         except TypeError as e:
             if not str(e).endswith("object is not iterable"):
                 raise e
-            job_items = job_items.__aiter__()  # Duck type any async iterable
+            job_items = aiter(job_items)  # Duck type any async iterable
             if chunky:
                 job_items = await nursery.start(
-                    _async_chunk_producer,
-                    sync_fn,
-                    job_items,
-                    chunksize
+                    _async_chunk_producer, sync_fn, job_items, chunksize
                 )
                 sync_fn = _chunk_consumer
         else:
@@ -123,18 +124,7 @@ async def to_sync_runner_map_unordered(
         for _ in range(limiter.total_tokens):
             nursery.start_soon(worker)
 
-    if task_status is trio.TASK_STATUS_IGNORED:
-        # internal details version
-        return recv_chan._state.data
-
-        # Public API version
-        # results = []
-        # try:
-        #     while True:
-        #         results.append(recv_chan.receive_nowait())
-        # except trio.EndOfChannel:
-        #     pass
-        # return results
+    return buffer
 
 
 async def spinner_task(set_spinner, set_normal, task_status):
