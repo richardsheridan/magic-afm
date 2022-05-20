@@ -87,16 +87,6 @@ async def to_sync_runner_map_unordered(
     send_chan, recv_chan = trio.open_memory_channel(buffer)
     task_status.started(recv_chan)
 
-    async def send(item):
-        # https://gitter.im/python-trio/general?at=5f7776b9cfe2f9049a1c67f9
-        try:
-            await send_chan.send(item)
-        except trio.Cancelled:
-            if not cancellable:
-                send_chan._state.max_buffer_size += 1
-                send_chan.send_nowait(item)
-            raise
-
     async def worker():
         async for job_item in job_items:
             result = await sync_runner(
@@ -104,9 +94,9 @@ async def to_sync_runner_map_unordered(
             )
             if chunky:
                 for r in result:
-                    await send(r)
+                    await send_chan.send(r)
             else:
-                await send(result)
+                await send_chan.send(result)
 
     async with send_chan, trio.open_nursery() as nursery:
 
