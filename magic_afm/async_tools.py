@@ -57,6 +57,15 @@ def _chunk_consumer(chunk):
     return tuple(map(*chunk))
 
 
+async def _asyncify_iterator(iter, limiter=None, *, task_status):
+    sentinel = object()
+    send_chan, recv_chan = trio.open_memory_channel(0)
+    task_status.started(recv_chan)
+    with send_chan:
+        while (result := await trs(next, iter, sentinel, limiter=limiter)) is not sentinel:
+            await send_chan.send(result)
+
+
 async def to_sync_runner_map_unordered(
     sync_runner,
     sync_fn,
@@ -119,7 +128,7 @@ async def to_sync_runner_map_unordered(
             if chunky:
                 job_items = _chunk_producer(sync_fn, job_items, chunksize)
                 sync_fn = _chunk_consumer
-            job_items = await nursery.start(asyncify_iterator, job_items, limiter)
+            job_items = await nursery.start(_asyncify_iterator, job_items, limiter)
 
         for _ in range(limiter.total_tokens):
             nursery.start_soon(worker)
@@ -181,15 +190,6 @@ async def spinner_task(set_spinner, set_normal, task_status):
             # If so, don't change the cursor to avoid blinking unnecessarily.
             set_spinner()
             await trio.sleep_forever()
-
-
-async def asyncify_iterator(iter, limiter=None, *, task_status):
-    sentinel = object()
-    send_chan, recv_chan = trio.open_memory_channel(0)
-    task_status.started(recv_chan)
-    with send_chan:
-        while (result := await trs(next, iter, sentinel, limiter=limiter)) is not sentinel:
-            await send_chan.send(result)
 
 
 def spawn_limit(limiter):
