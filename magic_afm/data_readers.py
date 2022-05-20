@@ -254,7 +254,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
     async def get_image(self, image_name):
         await trio.sleep(0)
         try:
-            image, _ = self._calc_images[image_name]
+            image = self._calc_images[image_name]
         except KeyError:
             image = np.zeros((64, 64), dtype=np.float32)
         return image
