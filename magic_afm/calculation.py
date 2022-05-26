@@ -897,3 +897,14 @@ def nice_workers():
     except AttributeError:
         NICE = 3
     psutil.Process().nice(NICE)
+
+
+def load_force_curve(opened_fvol, resample, npts, sl, k, rc):
+    z, d = opened_fvol.get_force_curve_sync(*rc)
+    if resample:
+        z, d = resample_dset([z, d], npts, True)
+    z = z[sl]
+    d = d[sl]
+    delta = z - d
+    f = d * k
+    return delta, f, rc

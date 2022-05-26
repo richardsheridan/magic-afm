@@ -9,6 +9,12 @@ modulus maps in the greater AFM nanomechanics community.
 __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
+# noinspection PyUnreachableCode
+if __debug__:
+    from multiprocessing import parent_process
+
+    assert parent_process() is None, "importing gui code in a worker"
+
 import sys
 
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -1077,18 +1083,27 @@ async def force_volume_task(display, opened_fvol):
                     display.canvas.blit(display.img_ax.bbox)
                     return True
 
-                async with trio.open_nursery() as nursery:
-                    force_curve_aiter = await nursery.start(
+                async with trio.open_nursery() as pipeline_nursery:
+                    force_curve_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
                         TP_CONTEXT.run_sync,
-                        partial(load_force_curve, opened_fvol, resample, npts, sl, options.k),
+                        partial(
+                            calculation.load_force_curve,
+                            opened_fvol,
+                            resample,
+                            npts,
+                            sl,
+                            options.k,
+                        ),
                         np.ndindex(img_shape),
                         chunksize,
                     )
-                    property_aiter = await nursery.start(
+                    d = dataclasses.asdict(options)
+                    del d["disp_kind"]
+                    property_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
                         TP_CONTEXT.run_sync,
-                        partial(calculation.calc_properties_imap, **dataclasses.asdict(options)),
+                        partial(calculation.calc_properties_imap, **d),
                         force_curve_aiter,
                         chunksize,
                     )
@@ -1575,17 +1590,6 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
         sens=sens,
         sse=sse,
     )
-
-
-def load_force_curve(opened_fvol, resample, npts, sl, k, rc):
-    z, d = opened_fvol.get_force_curve_sync(*rc)
-    if resample:
-        z, d = calculation.resample_dset([z, d], npts, True)
-    z = z[sl]
-    d = d[sl]
-    delta = z - d
-    f = d * k
-    return delta, f, rc
 
 
 async def open_task(root):
