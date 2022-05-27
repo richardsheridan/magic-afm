@@ -1041,9 +1041,9 @@ async def force_volume_task(display, opened_fvol):
         if not options.fit_mode:
             raise ValueError("Property map button should have been disabled")
 
-        async with spinner_scope() as cancel_scope:
+        async with spinner_scope():
             # assign pbar and progress_image ASAP in case of cancel
-            with tqdm_tk(
+            with trio.CancelScope() as cancel_scope, tqdm_tk(
                 total=ncurves,
                 desc=f"Fitting {opened_fvol.path.name} force curves",
                 smoothing=0.01,

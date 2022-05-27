@@ -149,25 +149,24 @@ async def spinner_task(set_spinner, set_normal, task_status):
         nonlocal ending_or_inactive_cscope, spinner_pending_or_active
         ending_or_inactive_cscope.cancel()
         outstanding_scopes += 1
-        with trio.CancelScope() as cancel_scope:
-            try:
-                await spinner_pending_or_active.wait()
-                # Invariant: spinner_pending_or_active set while any scopes entered
-                # Invariant: pending_or_active_cscope entered while any scopes entered
-                # (the former ensures the latter)
-                yield cancel_scope
-            finally:
-                assert outstanding_scopes > 0
-                outstanding_scopes -= 1
-                # Invariant: if zero, event states are equivalent to initial state
-                # just after calling task_status.started
-                if not outstanding_scopes:
-                    # these actions must occur atomically to satisfy the invariant
-                    # because the very next task scheduled may open a spinner_scope
-                    pending_or_active_cscope.cancel()
-                    spinner_pending_or_active = trio.Event()
-                    ending_or_inactive_cscope = trio.CancelScope()
-                    pending_or_active_cscope = trio.CancelScope()
+        try:
+            await spinner_pending_or_active.wait()
+            # Invariant: spinner_pending_or_active set while any scopes entered
+            # Invariant: pending_or_active_cscope entered while any scopes entered
+            # (the former ensures the latter)
+            yield
+        finally:
+            assert outstanding_scopes > 0
+            outstanding_scopes -= 1
+            # Invariant: if zero, event states are equivalent to initial state
+            # just after calling task_status.started
+            if not outstanding_scopes:
+                # these actions must occur atomically to satisfy the invariant
+                # because the very next task scheduled may open a spinner_scope
+                pending_or_active_cscope.cancel()
+                spinner_pending_or_active = trio.Event()
+                ending_or_inactive_cscope = trio.CancelScope()
+                pending_or_active_cscope = trio.CancelScope()
 
     task_status.started(spinner_scope)
     while True:
