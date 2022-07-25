@@ -1096,7 +1096,7 @@ async def force_volume_task(display, opened_fvol):
                             options.k,
                         ),
                         np.ndindex(img_shape),
-                        chunksize,
+                        chunksize * 8,
                     )
                     d = dataclasses.asdict(options)
                     del d["disp_kind"]
@@ -1363,7 +1363,7 @@ async def force_volume_task(display, opened_fvol):
             async_tools.spinner_task, display.spinner_start, display.spinner_stop
         )
         tooltip_send_chan = await nursery.start(
-            tooltip_task, display.show_tooltip, display.hide_tooltip, 1, 2
+            tooltip_task, display.show_tooltip, display.hide_tooltip, 2, 3
         )
         motion_send_chan = await nursery.start(mpl_pick_motion_event_task)
 
