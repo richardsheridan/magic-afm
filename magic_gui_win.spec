@@ -1,8 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules
 
-hiddenimports = []
-hiddenimports += collect_submodules('imageio')
+
 block_cipher = None
 
 
@@ -12,7 +11,7 @@ a = Analysis(['magic_gui.py'],
                  ('./_samplerate_data/libsamplerate-32bit.dll',r'./samplerate/_samplerate_data'),
              ],
              datas=[('README.rst','.')],
-             hiddenimports=hiddenimports,
+             hiddenimports=[],
              hookspath=[],
              runtime_hooks=[],
              excludes=[],
