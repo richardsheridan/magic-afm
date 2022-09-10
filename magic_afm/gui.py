@@ -83,6 +83,7 @@ from . import async_tools, calculation, data_readers
 from .async_tools import LONGEST_IMPERCEPTIBLE_DELAY, TOOLTIP_CANCEL, tooltip_task, trs
 
 warnings.simplefilter("ignore", TqdmExperimentalWarning)
+tqdm_tk.monitor_interval = 0
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
