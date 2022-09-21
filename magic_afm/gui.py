@@ -17,7 +17,8 @@ if __debug__:
 
 import sys
 
-if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+FROZEN = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
+if FROZEN:
     from ._version import __version__
 else:
     from . import make_version
@@ -542,7 +543,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
 
 
 class TkHost:
-    def __init__(self, root):
+    def __init__(self, root: tk.Tk):
         self.root = root
         self._q = collections.deque()
         self._tk_func_name = root.register(self._tk_func)
@@ -591,11 +592,19 @@ class TkHost:
             if isinstance(outcome_, outcome.Error) and not isinstance(
                 outcome_.error, KeyboardInterrupt
             ):
+                exc = outcome_.error
+                args = type(exc), exc, exc.__traceback__
+                tb_str = "".join(traceback.format_exception(*args))
                 date = datetime.datetime.now().isoformat().replace(":", ";")
-                with open(f"traceback-{date}.dump", "w") as file:
-                    exc = outcome_.error
-                    traceback.print_exception(type(exc), exc, exc.__traceback__, file=file)
-                    traceback.print_exception(type(exc), exc, exc.__traceback__)
+                fname = f"traceback-{date}.dump"
+                open(fname, "w").write(tb_str)
+                traceback.print_exception(*args)
+                if FROZEN:
+                    tk.messagebox.showerror(
+                        "Fatal Error",
+                        f"{tb_str}\nTraceback written to {fname}",
+                        parent=self.root,
+                    )
         finally:
             self.root.destroy()
 
