@@ -283,21 +283,20 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                 # a few other special cases, but also we want super().draw()
                 # and by extension draw_idle_task to be responsible for calling
                 # figure.tight_layout().
-                # So everywhere desired, send set_tight_layout(True) in draw_fn
+                # So everywhere desired, send set_layout_engine("tight") in draw_fn
                 # and flag need_draw, and it will be reset here.
-                self.figure.set_tight_layout(False)
+                self.figure.set_layout_engine("none")
 
     def draw_idle(self):
         if self._resize_pending is None:
             self.draw_send.send_nowait(bool)
 
     def resize(self, event):
-        def tight_points_draw_fn():
-            # noinspection PyTypeChecker
-            self.figure.set_tight_layout(True)
+        def tight_resize_draw_fn():
+            self.figure.set_layout_engine("tight")
 
         if self._resize_pending is None:
-            self.draw_send.send_nowait(tight_points_draw_fn)
+            self.draw_send.send_nowait(tight_resize_draw_fn)
         self._resize_pending = event
 
     def _maybe_resize(self):
@@ -1211,8 +1210,7 @@ async def force_volume_task(display, opened_fvol):
             customize_colorbar(colorbar, image_stats.q01, image_stats.q99, unit)
             expand_colorbar(colorbar)
 
-            # noinspection PyTypeChecker
-            display.fig.set_tight_layout(True)
+            display.fig.set_layout_engine("tight")
 
         await display.canvas.draw_send.send(change_image_draw_fn)
 
@@ -1238,8 +1236,7 @@ async def force_volume_task(display, opened_fvol):
         await redraw_existing_points()
 
         def tight_points_draw_fn():
-            # noinspection PyTypeChecker
-            display.fig.set_tight_layout(True)
+            display.fig.set_layout_engine("tight")
 
         await display.canvas.draw_send.send(tight_points_draw_fn)
 
