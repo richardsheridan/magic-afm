@@ -1105,7 +1105,7 @@ async def force_volume_task(display, opened_fvol):
                 async with trio.open_nursery() as pipeline_nursery:
                     force_curve_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
-                        TP_CONTEXT.run_sync,
+                        trio_parallel.run_sync,
                         partial(
                             calculation.load_force_curve,
                             opened_fvol,
@@ -1121,7 +1121,7 @@ async def force_volume_task(display, opened_fvol):
                     del d["disp_kind"]
                     property_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
-                        TP_CONTEXT.run_sync,
+                        trio_parallel.run_sync,
                         partial(calculation.calc_properties_imap, **d, split=split),
                         force_curve_aiter,
                         chunksize,
@@ -1752,7 +1752,7 @@ async def about_task(root):
         t = trio.current_time()
         while True:
             task_stats = trio.lowlevel.current_statistics()
-            worker_stats = TP_CONTEXT.statistics()
+            worker_stats = trio_parallel.default_context_statistics()
             task.set(
                 f"Tasks living: {task_stats.tasks_living}\n"
                 f"Tasks runnable: {task_stats.tasks_runnable}\n"
@@ -1788,69 +1788,68 @@ async def about_task(root):
 
 
 async def main_task(root):
-    global TP_CONTEXT
-    async with trio_parallel.open_worker_context(
-        idle_timeout=float("inf"),
-        init=calculation.nice_workers,
-    ) as TP_CONTEXT:
-        nursery: trio.Nursery
-        async with trio.open_nursery() as nursery:
-            # local names of actions
-            quit_callback = nursery.cancel_scope.cancel
-            open_callback = partial(nursery.start_soon, open_task, root)
-            demo_callback = partial(nursery.start_soon, demo_task, root)
-            about_callback = partial(nursery.start_soon, about_task, root)
-            help_action = partial(
-                webbrowser.open_new,
-                "https://github.com/richardsheridan/magic-afm",
-            )
+    nursery: trio.Nursery
+    async with trio.open_nursery() as nursery:
+        # local names of actions
+        quit_callback = nursery.cancel_scope.cancel
+        open_callback = partial(nursery.start_soon, open_task, root)
+        demo_callback = partial(nursery.start_soon, demo_task, root)
+        about_callback = partial(nursery.start_soon, about_task, root)
+        help_action = partial(
+            webbrowser.open_new,
+            "https://github.com/richardsheridan/magic-afm",
+        )
 
-            # calls root.destroy by default
-            root.protocol("WM_DELETE_WINDOW", quit_callback)
+        # calls root.destroy by default
+        root.protocol("WM_DELETE_WINDOW", quit_callback)
 
-            # Build menus
-            menu_frame = tk.Menu(root, relief="groove", tearoff=False)
-            root.config(menu=menu_frame)
+        # Build menus
+        menu_frame = tk.Menu(root, relief="groove", tearoff=False)
+        root.config(menu=menu_frame)
 
-            file_menu = tk.Menu(menu_frame, tearoff=False)
-            file_menu.add_command(
-                label="Open...", accelerator="Ctrl+O", underline=0, command=open_callback
-            )
-            file_menu.bind("<KeyRelease-o>", func=open_callback)
-            root.bind_all("<Control-KeyPress-o>", func=impartial(open_callback))
-            file_menu.add_command(label="Demo", underline=0, command=demo_callback)
-            file_menu.add_command(
-                label="Quit", accelerator="Ctrl+Q", underline=0, command=quit_callback
-            )
-            file_menu.bind("<KeyRelease-q>", func=quit_callback)
-            root.bind_all("<Control-KeyPress-q>", func=impartial(quit_callback))
-            menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
+        file_menu = tk.Menu(menu_frame, tearoff=False)
+        file_menu.add_command(
+            label="Open...", accelerator="Ctrl+O", underline=0, command=open_callback
+        )
+        file_menu.bind("<KeyRelease-o>", func=open_callback)
+        root.bind_all("<Control-KeyPress-o>", func=impartial(open_callback))
+        file_menu.add_command(label="Demo", underline=0, command=demo_callback)
+        file_menu.add_command(
+            label="Quit", accelerator="Ctrl+Q", underline=0, command=quit_callback
+        )
+        file_menu.bind("<KeyRelease-q>", func=quit_callback)
+        root.bind_all("<Control-KeyPress-q>", func=impartial(quit_callback))
+        menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
 
-            help_menu = tk.Menu(menu_frame, tearoff=False)
-            help_menu.add_command(label="Open help", accelerator="F1", underline=5, command=help_action)
-            help_menu.bind("<KeyRelease-h>", func=help_action)
-            root.bind_all("<KeyRelease-F1>", func=impartial(help_action))
-            # noinspection PyTypeChecker
-            help_menu.add_command(
-                label="About...", accelerator=None, underline=0, command=about_callback
-            )
-            help_menu.bind("<KeyRelease-a>", func=about_callback)
-            menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
+        help_menu = tk.Menu(menu_frame, tearoff=False)
+        help_menu.add_command(label="Open help", accelerator="F1", underline=5, command=help_action)
+        help_menu.bind("<KeyRelease-h>", func=help_action)
+        root.bind_all("<KeyRelease-F1>", func=impartial(help_action))
+        # noinspection PyTypeChecker
+        help_menu.add_command(
+            label="About...", accelerator=None, underline=0, command=about_callback
+        )
+        help_menu.bind("<KeyRelease-a>", func=about_callback)
+        menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
-            # Depending on the system, workers can take up to 30 seconds to finish
-            # loading and compiling numba jit stuff. I tried various permutations to
-            # warm up the workers and this one seems best for both cached and fresh cases.
-            tprs = partial(
-                TP_CONTEXT.run_sync,
-                limiter=async_tools.cpu_bound_limiter,
-                cancellable=True,
-            )
-            for _ in range(async_tools.cpu_bound_limiter.total_tokens):
-                nursery.start_soon(tprs, bool)  # start workers while compiling
-            await trs(calculation.warmup_jit)  # don't race workers to compile first
-            for _ in range(async_tools.cpu_bound_limiter.total_tokens):
-                nursery.start_soon(tprs, calculation.warmup_jit)  # only compile cache=false
-            await trio.sleep_forever()  # needed if nursery never starts a long running child
+        trio_parallel.configure_default_context(
+            idle_timeout=float("inf"),
+            init=calculation.nice_workers,
+        )
+        # Depending on the system, workers can take up to 30 seconds to finish
+        # loading and compiling numba jit stuff. I tried various permutations to
+        # warm up the workers and this one seems best for both cached and fresh cases.
+        tprs = partial(
+            trio_parallel.run_sync,
+            limiter=async_tools.cpu_bound_limiter,
+            cancellable=True,
+        )
+        for _ in range(async_tools.cpu_bound_limiter.total_tokens):
+            nursery.start_soon(tprs, bool)  # start workers while compiling
+        await trs(calculation.warmup_jit)  # don't race workers to compile first
+        for _ in range(async_tools.cpu_bound_limiter.total_tokens):
+            nursery.start_soon(tprs, calculation.warmup_jit)  # only compile cache=false
+        await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 
 def main():
