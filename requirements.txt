@@ -4,7 +4,7 @@
 #
 #    pip-compile --allow-unsafe requirements.in
 #
-altgraph==0.17.2
+altgraph==0.17.3
     # via pyinstaller
 async-generator==1.10
     # via trio
@@ -24,7 +24,9 @@ contourpy==1.0.5
     # via matplotlib
 cycler==0.11.0
     # via matplotlib
-fonttools==4.37.3
+exceptiongroup==1.0.0rc9
+    # via trio
+fonttools==4.37.4
     # via matplotlib
 future==0.18.2
     # via pefile
@@ -92,7 +94,7 @@ tblib==1.7.0
     # via trio-parallel
 tqdm==4.64.1
     # via -r requirements.in
-trio==0.21.0
+trio==0.22.0
     # via
     #   -r requirements.in
     #   trio-parallel
