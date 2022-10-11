@@ -544,6 +544,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
 class TkHost:
     def __init__(self, root: tk.Tk):
         self.root = root
+        self._outcome: Optional[outcome.Outcome] = None
         self._q = collections.deque()
         self._tk_func_name = root.register(self._tk_func)
 
@@ -586,26 +587,26 @@ class TkHost:
         Only really ends if self.root is truly the parent of all other Tk objects!
         thus tk.NoDefaultRoot
         """
+        self._outcome = outcome_
+        self.root.destroy()
+
+    def run(self, async_fn, *args):
+        trio.lowlevel.start_guest_run(
+            async_fn,
+            *args,
+            run_sync_soon_threadsafe=self.run_sync_soon_threadsafe,
+            run_sync_soon_not_threadsafe=self.run_sync_soon_not_threadsafe,
+            done_callback=self.done_callback,
+        )
         try:
-            print(f"Trio shutdown. Outcome: {outcome_}")
-            if isinstance(outcome_, outcome.Error) and not isinstance(
-                outcome_.error, KeyboardInterrupt
-            ):
-                exc = outcome_.error
-                args = type(exc), exc, exc.__traceback__
-                tb_str = "".join(traceback.format_exception(*args))
-                date = datetime.datetime.now().isoformat().replace(":", ";")
-                fname = f"traceback-{date}.dump"
-                open(fname, "w").write(tb_str)
-                traceback.print_exception(*args)
-                if FROZEN:
-                    tk.messagebox.showerror(
-                        "Fatal Error",
-                        f"{tb_str}\nTraceback written to {fname}",
-                        parent=self.root,
-                    )
-        finally:
-            self.root.destroy()
+            self.root.mainloop()
+        except BaseException as e:
+            if isinstance(self._outcome, outcome.Error):
+                raise e from self._outcome.error
+            else:
+                raise e
+        else:
+            return self._outcome.unwrap()
 
 
 def impartial(fn):
@@ -1818,18 +1819,12 @@ def main():
     root.wm_title("Magic AFM")
     # root.wm_iconbitmap("something.ico")
     host = TkHost(root)
-    trio.lowlevel.start_guest_run(
-        main_task,
-        root,
-        run_sync_soon_threadsafe=host.run_sync_soon_threadsafe,
-        run_sync_soon_not_threadsafe=host.run_sync_soon_not_threadsafe,
-        done_callback=host.done_callback,
-    )
-    outcome_ = outcome.capture(root.mainloop)
-    print("Tk shutdown. Outcome:", outcome_)
-    if isinstance(outcome_, outcome.Error) and not isinstance(outcome_.error, KeyboardInterrupt):
+    try:
+        host.run(main_task, root)
+    except KeyboardInterrupt:
+        pass
+    except BaseException as exc:
         date = datetime.datetime.now().isoformat().replace(":", ";")
         with open(f"traceback-{date}.dump", "w", encoding="utf8") as file:
-            exc = outcome_.error
             traceback.print_exception(type(exc), exc, exc.__traceback__, file=file)
-            traceback.print_exception(type(exc), exc, exc.__traceback__)
+        raise exc
