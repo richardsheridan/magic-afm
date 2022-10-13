@@ -785,24 +785,31 @@ class ForceVolumeTkDisplay:
             value=calculation.FitMode.SKIP.value,
             variable=self.fit_intvar,
         )
-        fit_skip_button.grid(row=0, column=0)
+        fit_skip_button.grid(row=1, column=0, sticky="W")
         fit_ext_button = ttk.Radiobutton(
             fit_labelframe,
             text="Extend",
             value=calculation.FitMode.EXTEND.value,
             variable=self.fit_intvar,
         )
-        fit_ext_button.grid(row=0, column=1)
+        fit_ext_button.grid(row=0, column=0, sticky="W")
         fit_ret_button = ttk.Radiobutton(
             fit_labelframe,
             text="Retract",
             value=calculation.FitMode.RETRACT.value,
             variable=self.fit_intvar,
         )
-        fit_ret_button.grid(row=0, column=2)
+        fit_ret_button.grid(row=0, column=1, sticky="W")
+        fit_ret_button = ttk.Radiobutton(
+            fit_labelframe,
+            text="Both",
+            value=calculation.FitMode.BOTH.value,
+            variable=self.fit_intvar,
+        )
+        fit_ret_button.grid(row=1, column=1, sticky="W")
 
         fit_radius_label = ttk.Label(fit_labelframe, text="Tip radius (nm)")
-        fit_radius_label.grid(row=1, column=0, columnspan=2, sticky="W")
+        fit_radius_label.grid(row=2, column=0, columnspan=2, sticky="W")
         self.radius_strvar = tk.StringVar(fit_labelframe)
         self._add_trace(self.radius_strvar, self.radius_callback)
         self.fit_radius_sbox = ttk.Spinbox(
@@ -815,9 +822,9 @@ class ForceVolumeTkDisplay:
             textvariable=self.radius_strvar,
         )
         self.fit_radius_sbox.set(20.0)
-        self.fit_radius_sbox.grid(row=1, column=2, sticky="E")
+        self.fit_radius_sbox.grid(row=2, column=2, sticky="E")
         fit_tau_label = ttk.Label(fit_labelframe, text="DMT-JKR (0-1)", justify="left")
-        fit_tau_label.grid(row=2, column=0, columnspan=2, sticky="W")
+        fit_tau_label.grid(row=3, column=0, columnspan=2, sticky="W")
         self.tau_strvar = tk.StringVar(fit_labelframe)
         self._add_trace(self.tau_strvar, self.tau_callback)
         self.fit_tau_sbox = ttk.Spinbox(
@@ -830,12 +837,12 @@ class ForceVolumeTkDisplay:
             textvariable=self.tau_strvar,
         )
         self.fit_tau_sbox.set(0.0)
-        self.fit_tau_sbox.grid(row=2, column=2, sticky="E")
+        self.fit_tau_sbox.grid(row=3, column=2, sticky="E")
 
         self.calc_props_button = ttk.Button(
             fit_labelframe, text="Calculate Property Maps", state="disabled"
         )
-        self.calc_props_button.grid(row=3, column=0, columnspan=3)
+        self.calc_props_button.grid(row=4, column=0, columnspan=3)
         fit_labelframe.grid(row=1, column=1, rowspan=3, sticky="EW")
 
         self.options_frame.grid(row=1, column=0, sticky="NSEW")
@@ -1086,6 +1093,8 @@ async def force_volume_task(display, opened_fvol):
                     sl = slice(split)
                 elif options.fit_mode == calculation.FitMode.RETRACT:
                     sl = slice(split, None)
+                elif options.fit_mode == calculation.FitMode.BOTH:
+                    sl = slice(None)
                 else:
                     raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
@@ -1114,7 +1123,7 @@ async def force_volume_task(display, opened_fvol):
                     property_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
                         TP_CONTEXT.run_sync,
-                        partial(calculation.calc_properties_imap, **d),
+                        partial(calculation.calc_properties_imap, **d, split=split),
                         force_curve_aiter,
                         chunksize,
                     )
@@ -1156,8 +1165,10 @@ async def force_volume_task(display, opened_fvol):
         # Actually write out results to external world
         if options.fit_mode == calculation.FitMode.EXTEND:
             extret = "Ext"
-        else:
+        elif options.fit_mode == calculation.FitMode.RETRACT:
             extret = "Ret"
+        else:
+            extret = "Both"
         for name in calculation.PROPERTY_UNITS_DICT:
             opened_fvol.add_image(
                 image_name="Calc" + extret + name,
@@ -1555,13 +1566,15 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
         sl = slice(split)
     elif options.fit_mode == calculation.FitMode.RETRACT:
         sl = slice(split, None)
+    elif options.fit_mode == calculation.FitMode.BOTH:
+        sl = slice(None)
     else:
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
     cancel_poller()
     optionsdict = dataclasses.asdict(options)
     beta, beta_err, sse, calc_fun = calculation.fitfun(
-        delta[sl], f[sl], **optionsdict, cancel_poller=cancel_poller
+        delta[sl], f[sl], **optionsdict, cancel_poller=cancel_poller, split=split
     )
     f_fit = calc_fun(delta[sl], *beta)
     d_fit = f_fit / options.k
@@ -1571,12 +1584,12 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
     delta_new, f_new, k_new = calculation.perturb_k(delta, f, eps, options.k)
     optionsdict.pop("k")
     beta_perturb = calculation.fitfun(
-        delta_new[sl], f_new[sl], k_new, **optionsdict, cancel_poller=cancel_poller
+        delta_new[sl], f_new[sl], k_new, **optionsdict, cancel_poller=cancel_poller, split=split
     )[0]
     sens = (beta_perturb - beta) / beta / eps
     if np.all(np.isfinite(beta)):
         deflection, indentation, z_true_surface, mindelta = calculation.calc_def_ind_ztru(
-            f[sl], beta, **dataclasses.asdict(options)
+            f[sl], beta, **dataclasses.asdict(options), split=split
         )
     else:
         deflection, indentation, z_true_surface, mindelta = np.nan, np.nan, np.nan, np.nan

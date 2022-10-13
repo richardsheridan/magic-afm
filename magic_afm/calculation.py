@@ -697,6 +697,7 @@ class FitMode(enum.IntEnum):
     SKIP = 0  # needs to be inty and falsy
     EXTEND = enum.auto()
     RETRACT = enum.auto()
+    BOTH = enum.auto()
 
 
 def rapid_forcecurve_estimate(delta, force, radius):
@@ -741,6 +742,13 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, 
         red_curve = red_extend
     elif fit_mode == FitMode.RETRACT:
         red_curve = red_retract
+    elif fit_mode == FitMode.BOTH:
+        split = kwargs["split"]
+        def red_curve(delta, *args):
+            return np.concatenate((
+                red_extend(delta[:split], *args),
+                red_retract(delta[split:], *args),
+            ))
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
@@ -775,16 +783,17 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
     fc = -fc
 
     assert fit_mode
+    n_pts_max = len(force) // 25
     if fit_mode == FitMode.EXTEND:
-        red_curve = red_extend
-        sl = slice(-len(force) // 25, None)
+        maxforce = force[-n_pts_max:].mean()
     elif fit_mode == FitMode.RETRACT:
-        red_curve = red_retract
-        sl = slice(len(force) // 25)
+        maxforce = force[:n_pts_max].mean()
+    elif fit_mode == FitMode.BOTH:
+        split = kwargs["split"]
+        maxforce = force[split-n_pts_max//2:split+n_pts_max//2].mean()
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
-    maxforce = force[sl].mean()
     maxdelta = delta_curve(
         schwarz_wrap, maxforce, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale
     )
@@ -800,9 +809,10 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
         force_shift,
         lj_delta_scale,
     )
+    # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
     zeroindforce = float(
         force_curve(
-            red_curve, delta_shift, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale
+            red_retract, delta_shift, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale
         )
     )
 
