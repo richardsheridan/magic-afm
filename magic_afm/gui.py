@@ -1676,6 +1676,25 @@ async def demo_task(root):
         display.destroy()
 
 
+class MyInstrument(trio.abc.Instrument):
+    t = 0
+    tau = 1.0
+    sleep_time = tau / 2
+    wake_time = tau / 2
+
+    def before_io_wait(self, timeout):
+        t = trio.current_time()
+        a = 1 / (1+self.tau/(self.wake_time + self.sleep_time))
+        self.wake_time = (t - self.t) * a + (1 - a) * self.wake_time
+        self.t = t
+
+    def after_io_wait(self, timeout):
+        t = trio.current_time()
+        a = 1 / (1+self.tau/(self.wake_time + self.sleep_time))
+        self.sleep_time = (t - self.t) * a + (1 - a) * self.sleep_time
+        self.t = t
+
+
 async def about_task(root):
     """Display and control the About menu
 
@@ -1731,7 +1750,8 @@ async def about_task(root):
             task.set(
                 f"Tasks living: {task_stats.tasks_living}\n"
                 f"Tasks runnable: {task_stats.tasks_runnable}\n"
-                f"Unprocessed callbacks: {task_stats.run_sync_soon_queue_size}"
+                f"Unprocessed callbacks: {task_stats.run_sync_soon_queue_size}\n"
+                f"Sleep %: {100 * inst.sleep_time / (inst.sleep_time + inst.wake_time):.1f}"
             )
             thread_cpu.set(
                 "CPU-bound tasks:" + repr(async_tools.cpu_bound_limiter).split(",")[1][:-1]
@@ -1747,6 +1767,8 @@ async def about_task(root):
             t += interval / 1000
             await trio.sleep_until(t)
 
+    inst = MyInstrument()
+    trio.lowlevel.add_instrument(inst)
     # run using tcl event loop
     tk_pbar.start(interval)
     # run using trio
@@ -1755,6 +1777,7 @@ async def about_task(root):
         nursery.start_soon(state_poller_task)
         nursery.start_soon(pbar_runner)
         nursery.start_soon(pbar_runner_timely)
+    trio.lowlevel.remove_instrument(inst)
     top.destroy()
 
 
