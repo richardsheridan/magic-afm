@@ -960,8 +960,7 @@ class ForceVolumeTkDisplay:
     def teach_display_to_use_trio(
         self,
         nursery,
-        redraw_existing_points,
-        redraw_existing_points_tight,
+        redraw_send_chan,
         calc_prop_map_callback,
         change_cmap_callback,
         manipulate_callback,
@@ -974,8 +973,8 @@ class ForceVolumeTkDisplay:
         self._add_trace(self.colormap_strvar, impartial(partial(nursery.start_soon, change_cmap_callback)))
         self._add_trace(self.manipulate_strvar, impartial(partial(nursery.start_soon, manipulate_callback)))
         self._add_trace(self.image_name_strvar, impartial(partial(nursery.start_soon, change_image_callback)))
-        self.replot = partial(nursery.start_soon, redraw_existing_points)
-        self.replot_tight = partial(nursery.start_soon, redraw_existing_points_tight)
+        self.replot = partial(redraw_send_chan.send_nowait, False)
+        self.replot_tight = partial(redraw_send_chan.send_nowait, True)
 
         nursery.start_soon(self.canvas.idle_draw_task)
 
@@ -1227,9 +1226,10 @@ async def force_volume_task(display, opened_fvol):
 
         await display.canvas.draw_send.send(change_image_draw_fn)
 
-    @async_tools.spawn_limit(trio.CapacityLimiter(1))
-    async def redraw_existing_points():
-        def points_draw_fn():
+    async def redraw_existing_points_task(task_status):
+        redraw_send, redraw_recv = trio.open_memory_channel(float("inf"))
+
+        def clear_points_draw_fn():
             for artist in img_artists:
                 artist.remove()
             for artist in plot_artists:
@@ -1240,18 +1240,24 @@ async def force_volume_task(display, opened_fvol):
             plot_artists.clear()
             point_data.clear()
 
-        await display.canvas.draw_send.send(points_draw_fn)
-        async with spinner_scope():
-            for point in existing_points:
-                await plot_curve_response(point, False)
-
-    async def redraw_existing_points_tight():
-        await redraw_existing_points()
-
         def tight_points_draw_fn():
             display.fig.set_layout_engine("tight")
 
-        await display.canvas.draw_send.send(tight_points_draw_fn)
+        task_status.started(redraw_send)
+        while True:
+            msg = await redraw_recv.receive()
+            # only do work for most recent request
+            while True:
+                try:
+                    msg = redraw_recv.receive_nowait() or msg
+                except trio.WouldBlock:
+                    break
+            await display.canvas.draw_send.send(clear_points_draw_fn)
+            async with spinner_scope():
+                for point in existing_points.copy():  # avoid crash on concurrent clear
+                    await plot_curve_response(point, False)
+                if msg:
+                    await display.canvas.draw_send.send(tight_points_draw_fn)
 
     async def manipulate_callback():
         manip_name = display.manipulate_strvar.get()
@@ -1386,6 +1392,7 @@ async def force_volume_task(display, opened_fvol):
             tooltip_task, display.show_tooltip, display.hide_tooltip, 2, 3
         )
         motion_send_chan = await nursery.start(mpl_pick_motion_event_task)
+        redraw_send_chan = await nursery.start(redraw_existing_points_task)
 
         display.navbar.teach_navbar_to_use_trio(
             nursery=nursery,
@@ -1398,8 +1405,7 @@ async def force_volume_task(display, opened_fvol):
         )
         display.teach_display_to_use_trio(
             nursery,
-            redraw_existing_points,
-            redraw_existing_points_tight,
+            redraw_send_chan,
             calc_prop_map_callback,
             change_cmap_callback,
             manipulate_callback,

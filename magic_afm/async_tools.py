@@ -191,18 +191,6 @@ async def spinner_task(set_spinner, set_normal, task_status):
             await trio.sleep_forever()
 
 
-def spawn_limit(limiter):
-    def actual_decorator(async_fn):
-        @wraps(async_fn)
-        async def spawn_limit_wrapper(*args, **kwargs):
-            async with limiter:
-                return await async_fn(*args, **kwargs)
-
-        return spawn_limit_wrapper
-
-    return actual_decorator
-
-
 # noinspection PyUnreachableCode
 async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_status):
     """Manage a tooltip window visibility, position, and text."""
