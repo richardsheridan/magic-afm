@@ -533,24 +533,30 @@ class BrukerWorkerBase(metaclass=abc.ABCMeta):
         raise NotImplementedError
 
     def get_image(self, image_name):
-        soft_scale = self.header["Ciao scan list"]["@Sens. ZsensSens"].split()[1]
-        soft_scale = float(soft_scale)
         h = self.header["Image"][image_name]
 
         value = h["@2:Z scale"]
-        hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
-        scale = np.float32(hard_scale * soft_scale / NANOMETER_UNIT_CONVERSION)
+        bpp = bruker_bpp_fix(h["Bytes/pixel"], self.version)
+        hard_scale = float(value.split()[-2]) / (2 ** (bpp * 8))
+        hard_offset = float(h["@2:Z offset"].split()[-2]) / (2 ** (bpp * 8))
+        soft_scale_name = "@" + value[1 + value.find("[") : value.find("]")]
+        try:
+            soft_scale_string = self.header["Ciao scan list"][soft_scale_name]
+        except KeyError:
+            soft_scale_string = self.header["Scanner list"][soft_scale_name]
+        soft_scale = float(soft_scale_string.split()[1]) / NANOMETER_UNIT_CONVERSION
+        scale = np.float32(hard_scale * soft_scale)
         data_length = int(h["Data length"])
         offset = int(h["Data offset"])
-        bpp = bruker_bpp_fix(h["Bytes/pixel"], self.version)
         r = int(h["Number of lines"])
         c = int(h["Samps/line"])
         assert data_length == r * c * bpp
         # scandown = h["Frame direction"] == "Down"
-        return (
-            np.ndarray(shape=(r, c), dtype=f"i{bpp}", buffer=self.mm, offset=offset)
-            * scale
+        z_ints = np.ndarray(
+            shape=(r, c), dtype=f"i{bpp}", buffer=self.mm, offset=offset
         )
+        z_floats = z_ints * scale + np.float32(hard_offset * soft_scale)
+        return z_floats
 
 
 class FFVWorker(BrukerWorkerBase):
@@ -620,7 +626,10 @@ class QNMWorker(BrukerWorkerBase):
             value[1 + value.find("(") : value.find(")")].split()[0]
         )
 
-        image = self.get_image("Height Sensor")
+        try:
+            image = self.get_image("Height Sensor")
+        except KeyError:
+            image = self.get_image("Height")
         image *= NANOMETER_UNIT_CONVERSION
         self.height_for_z = image
         amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
@@ -648,8 +657,9 @@ class QNMWorker(BrukerWorkerBase):
 class NanoscopeFile(BaseForceVolumeFile):
     _basic_units_map = {
         "Height Sensor": "m",
+        "Height": "m",
     }
-    _default_heightmap_names = ("Height Sensor",)
+    _default_heightmap_names = ("Height Sensor", "Height")
 
     def __getstate__(self):
         state = self.__dict__.copy()
