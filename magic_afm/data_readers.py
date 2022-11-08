@@ -55,11 +55,8 @@ def eventually_evict_path(path):
 
 def mmap_path_read_only(path):
     import mmap
-    import pathlib
 
-    path = pathlib.Path(path)
-
-    with path.open(mode="rb", buffering=0) as file:
+    with open(path, mode="rb", buffering=0) as file:
         return mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
 
 
