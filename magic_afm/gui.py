@@ -42,7 +42,6 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-import collections
 import ctypes
 import dataclasses
 import datetime
@@ -546,11 +545,11 @@ class TkHost:
     def __init__(self, root: tk.Tk):
         self.root = root
         self._outcome: Optional[outcome.Outcome] = None
-        self._q = collections.deque()
+        self._guest_tick = bool
         self._tk_func_name = root.register(self._tk_func)
 
     def _tk_func(self):
-        self._q.popleft()()
+        self._guest_tick()
 
     def run_sync_soon_threadsafe(self, func):
         """Use Tcl "after" command to schedule a function call
@@ -566,8 +565,8 @@ class TkHost:
         where definitely thread unsafe `eval <https://github.com/python/cpython/blob/a5d6aba318ead9cc756ba750a70da41f5def3f8f/Modules/_tkinter.c#L1567-L1585>`_
         is used to send thread safe signals between tcl interpreters.
         """
-        # self.root.after(0, func) # does a fairly intensive wrapping to each func
-        self._q.append(func)
+        # self.root.after("idle", func) # does a fairly intensive wrapping to each func
+        self._guest_tick = func
         self.root.call("after", "idle", self._tk_func_name)
 
     def run_sync_soon_not_threadsafe(self, func):
@@ -579,7 +578,7 @@ class TkHost:
         The incantation `"after idle after 0" <https://wiki.tcl-lang.org/page/after#096aeab6629eae8b244ae2eb2000869fbe377fa988d192db5cf63defd3d8c061>`_ avoids blocking the normal event queue with
         an unending stream of idle tasks.
         """
-        self._q.append(func)
+        self._guest_tick = func
         self.root.call("after", "idle", "after", 0, self._tk_func_name)
 
     def done_callback(self, outcome_):
