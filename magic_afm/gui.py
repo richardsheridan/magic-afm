@@ -56,6 +56,7 @@ import warnings
 import webbrowser
 from contextlib import nullcontext
 from functools import partial, wraps
+from math import exp
 from tkinter import ttk
 from typing import Callable, ClassVar, Optional
 
@@ -1689,14 +1690,14 @@ class MyInstrument(trio.abc.Instrument):
 
     def before_io_wait(self, timeout):
         t = trio.current_time()
-        a = 1 / (1+self.tau/(self.wake_time + self.sleep_time))
-        self.wake_time = (t - self.t) * a + (1 - a) * self.wake_time
+        b = exp(-(self.wake_time + self.sleep_time) / self.tau)  # b = 1 - alpha
+        self.wake_time = (t - self.t) * (1 - b) + b * self.wake_time
         self.t = t
 
     def after_io_wait(self, timeout):
         t = trio.current_time()
-        a = 1 / (1+self.tau/(self.wake_time + self.sleep_time))
-        self.sleep_time = (t - self.t) * a + (1 - a) * self.sleep_time
+        b = exp(-(self.wake_time + self.sleep_time) / self.tau)  # b = 1 - alpha
+        self.sleep_time = (t - self.t) * (1 - b) + b * self.sleep_time
         self.t = t
 
 
