@@ -68,7 +68,7 @@ import trio
 import trio_parallel
 
 from matplotlib.axes import Axes
-from matplotlib.backend_bases import MouseButton
+from matplotlib.backend_bases import MouseButton, ResizeEvent
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.colorbar import Colorbar
 from matplotlib.contour import ContourSet
@@ -93,6 +93,7 @@ except AttributeError:
 
 matplotlib.rcParams["savefig.dpi"] = 300
 RESAMPLE_NPTS = 512
+LAYOUT_ENGINE = "constrained"
 
 COLORMAPS = [
     "viridis",
@@ -242,6 +243,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         super().__init__(figure, master)
 
         self._tkcanvas.configure(background="#f0f0f0")
+        self._tkcanvas_image_region = "1"
 
     async def idle_draw_task(self):
         # One of the slowest processes. Stick everything in a thread.
@@ -282,28 +284,43 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                 delay = ((trio.current_time() - t) + delay) / 2
                 # Funny story, we only want tight layout behavior on resize and
                 # a few other special cases, but also we want super().draw()
-                # and by extension draw_idle_task to be responsible for calling
-                # figure.tight_layout().
-                # So everywhere desired, send set_layout_engine("tight") in draw_fn
-                # and flag need_draw, and it will be reset here.
+                # and by extension draw_idle_task to be responsible for running
+                # the layout engine.
+                # So everywhere desired, send set_layout_engine(LAYOUT_ENGINE)
+                # in draw_fn and flag need_draw, and it will be reset here.
                 self.figure.set_layout_engine("none")
 
     def draw_idle(self):
-        if self._resize_pending is None:
-            self.draw_send.send_nowait(bool)
+        self.draw_send.send_nowait(bool)
 
     def resize(self, event):
         def tight_resize_draw_fn():
-            self.figure.set_layout_engine("tight")
+            self.figure.set_layout_engine(LAYOUT_ENGINE)
 
         if self._resize_pending is None:
             self.draw_send.send_nowait(tight_resize_draw_fn)
         self._resize_pending = event
 
     def _maybe_resize(self):
-        if self._resize_pending is not None:
-            super().resize(self._resize_pending)
-            self._resize_pending = None
+        if self._resize_pending is None:
+            return
+
+        width, height = self._resize_pending.width, self._resize_pending.height
+        self._resize_pending = None
+
+        # compute desired figure size in inches
+        dpival = self.figure.dpi
+        winch = width / dpival
+        hinch = height / dpival
+        self.figure.set_size_inches(winch, hinch, forward=False)
+
+        # copy old data to avoid blinking before _tkagg.blit fires
+        self._tkphoto = self._tkphoto.copy()
+        self._tkphoto.configure(height=height, width=width)
+        self._tkcanvas.delete(self._tkcanvas_image_region)
+        self._tkcanvas_image_region = self._tkcanvas.create_image(
+            width // 2, height // 2, image=self._tkphoto)
+        ResizeEvent("resize_event", self)._process()
 
     def pipe_events_to_trio(
         self, spinner_scope, motion_send_chan, tooltip_send_chan
@@ -643,7 +660,7 @@ class ForceVolumeTkDisplay:
         window.wm_title(name)
 
         # Build figure
-        self.fig = Figure((9, 2.75), facecolor="#f0f0f0")
+        self.fig = Figure((9, 2.75), facecolor="#f0f0f0", layout=LAYOUT_ENGINE)
         self.canvas = AsyncFigureCanvasTkAgg(self.fig, window)
         self.navbar = AsyncNavigationToolbar2Tk(self.canvas, window)
         self.img_ax = None
@@ -651,9 +668,8 @@ class ForceVolumeTkDisplay:
 
         def initial_draw_fn():
             self.img_ax, self.plot_ax = self.fig.subplots(
-                1, 2, gridspec_kw=dict(width_ratios=[1, 1.5])
+                1, 2, width_ratios=[1, 1.5]
             )
-            self.fig.subplots_adjust(top=0.85)
             self.img_ax.set_anchor("W")
             self.img_ax.set_facecolor((0.8, 0, 0))  # scary red for NaN values of images
             # Need to pre-load something into these labels for change_image_callback
@@ -1222,7 +1238,7 @@ async def force_volume_task(display, opened_fvol):
             customize_colorbar(colorbar, image_stats.q01, image_stats.q99, unit)
             expand_colorbar(colorbar)
 
-            display.fig.set_layout_engine("tight")
+            display.fig.set_layout_engine(LAYOUT_ENGINE)
 
         await display.canvas.draw_send.send(change_image_draw_fn)
 
@@ -1241,7 +1257,7 @@ async def force_volume_task(display, opened_fvol):
             point_data.clear()
 
         def tight_points_draw_fn():
-            display.fig.set_layout_engine("tight")
+            display.fig.set_layout_engine(LAYOUT_ENGINE)
 
         task_status.started(redraw_send)
         while True:
