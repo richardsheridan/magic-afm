@@ -336,6 +336,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
 class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
     def __init__(self, canvas, window):
+        self.toolitems = tuple(x for x in self.toolitems if x[-1] != "configure_subplots")
         self.toolitems += (
             ("Export", "Export calculated maps", "filesave", "export_calculations"),
             ("ForceCurves", "Export calculated force curves", "filesave", "export_force_curves"),
