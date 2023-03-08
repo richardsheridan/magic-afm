@@ -630,8 +630,9 @@ class QNMWorker(BrukerWorkerBase):
         image *= NANOMETER_UNIT_CONVERSION
         self.height_for_z = image
         amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
-        self.z_basis = -amp * np.cos(
-            np.linspace(0, 2 * np.pi, npts, endpoint=False, dtype=np.float32)
+        phase = s / npts * 2 * np.pi
+        self.z_basis = amp * np.cos(
+            np.linspace(phase, phase + 2 * np.pi, npts, endpoint=False, dtype=np.float32)
         )
 
     def get_force_curve(self, r, c, defl_sens, sync_dist):
@@ -646,7 +647,7 @@ class QNMWorker(BrukerWorkerBase):
         d = np.roll(d, s - sync_dist)  # TODO roll across two adjacent indents
 
         # need to infer z from amp/height
-        z = self.z_basis - self.height_for_z[r, c]
+        z = self.z_basis + self.height_for_z[r, c]
 
         return z, d
 
@@ -716,9 +717,8 @@ class NanoscopeFile(BaseForceVolumeFile):
         data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
 
         data_header = header["FV"][data_name]
-        ext_npts, ret_npts = map(int, data_header["Samps/line"].split())
-        self.npts = ext_npts + ret_npts
-        self.split = ext_npts
+        self.split, *_ = map(int, data_header["Samps/line"].split())
+        self.npts = int(header["Ciao force list"]["force/line"].split()[0])
         rate, unit = header["Ciao scan list"]["PFT Freq"].split()
         assert unit.lower() == "khz"
         self.rate = float(rate)
@@ -749,7 +749,11 @@ class NanoscopeFile(BaseForceVolumeFile):
         else:
             return (
                 QNMWorker(header, self._mm, self.split),
-                int(round(float(header["Ciao scan list"]["Sync Distance"]))),
+                int(round(float(
+                    header["Ciao scan list"]["Sync Distance QNM"]
+                    if "Sync Distance QNM" in header["Ciao scan list"]
+                    else header["Ciao scan list"]["Sync Distance"]
+                ))),
             )
 
     async def aclose(self):
