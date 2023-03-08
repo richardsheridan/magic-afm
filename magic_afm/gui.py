@@ -985,7 +985,7 @@ class ForceVolumeTkDisplay:
     ):
         self.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
         self.calc_props_button.configure(
-            command=partial(nursery.start_soon, calc_prop_map_callback)
+            command=lambda: nursery.start_soon(calc_prop_map_callback, self.options)
         )
         self._add_trace(self.colormap_strvar, impartial(partial(nursery.start_soon, change_cmap_callback)))
         self._add_trace(self.manipulate_strvar, impartial(partial(nursery.start_soon, manipulate_callback)))
@@ -1052,7 +1052,10 @@ class ForceVolumeTkDisplay:
         self.replot_tight()
 
 
-async def force_volume_task(display, opened_fvol):
+async def force_volume_task(
+        display: ForceVolumeTkDisplay,
+        opened_fvol: data_readers.BaseForceVolumeFile
+):
     # plot_curve_event_response
     plot_curve_cancels_pending = set()
     img_artists = []
@@ -1067,13 +1070,11 @@ async def force_volume_task(display, opened_fvol):
     image_stats: Optional[ImageStats] = None
     unit: Optional[str] = None
 
-    async def calc_prop_map_callback():
-        options = display.options
+    async def calc_prop_map_callback(options: ForceCurveOptions):
+        assert options.fit_mode
         img_shape = axesimage.get_size()
         ncurves = img_shape[0] * img_shape[1]
         chunksize = 4
-        if not options.fit_mode:
-            raise ValueError("Property map button should have been disabled")
 
         async with spinner_scope():
             # assign pbar and progress_image ASAP in case of cancel
@@ -1271,8 +1272,9 @@ async def force_volume_task(display, opened_fvol):
                     break
             await display.canvas.draw_send.send(clear_points_draw_fn)
             async with spinner_scope():
+                options = display.options
                 for point in existing_points.copy():  # avoid crash on concurrent clear
-                    await plot_curve_response(point, False)
+                    await plot_curve_response(point, options, False)
                 if msg:
                     await display.canvas.draw_send.send(tight_points_draw_fn)
 
@@ -1291,7 +1293,11 @@ async def force_volume_task(display, opened_fvol):
             display.reset_image_name_menu(current_names)
         display.image_name_menu.set(name)
 
-    async def plot_curve_response(point: ImagePoint, clear_previous):
+    async def plot_curve_response(
+            point: ImagePoint,
+            options: ForceCurveOptions,
+            clear_previous: bool,
+    ):
         existing_points.add(point)  # should be before 1st checkpoint
 
         # XXX: only needed on first plot. Maybe later make optional?
@@ -1307,7 +1313,6 @@ async def force_volume_task(display, opened_fvol):
 
                 # Calculation phase
                 # Do a few long-running jobs, likely to be canceled
-                options = display.options
                 opened_fvol.sync_dist = options.sync_dist
                 opened_fvol.defl_sens = options.defl_sens
                 force_curve = await opened_fvol.get_force_curve(point.r, point.c)
@@ -1392,7 +1397,7 @@ async def force_volume_task(display, opened_fvol):
                 point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, axesimage)
                 if shift_held and point in existing_points:
                     continue
-                nursery.start_soon(plot_curve_response, point, not shift_held)
+                nursery.start_soon(plot_curve_response, point, display.options, not shift_held)
             elif display is not None and mouseevent.inaxes is display.plot_ax:
                 if event.name == "motion_notify_event":
                     tooltip_send_chan.send_nowait(
