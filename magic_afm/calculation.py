@@ -158,15 +158,20 @@ def planefit(img):
     return img - (a @ x).reshape(img.shape)
 
 
+def offset(img):
+    return img - np.nanmin(img)
+
+
 MANIPULATIONS = dict(
-    [
+    (
         ("Flatten", flatten),
         ("PlaneFit", planefit),
+        ("Offset", offset),
         ("Median3x1", median3x1),
         ("Median3x3", median3x3),
         ("Gauss3x3", gauss3x3),
         ("FillNaNs", fillnan),
-    ]
+    )
 )
 
 
