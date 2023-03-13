@@ -80,6 +80,10 @@ on demand. (NOTE: This will duplicate all each file's data on your hard drive!)
 
 Usage
 -----
+
+Running
+^^^^^^^
+
 All platforms, when running from source::
 
      python magic_gui.py
@@ -93,19 +97,27 @@ This will open a data window and populate a number of options in the main window
 Many files and windows can be open simultaneously; the main window options will
 display/affect the attributes of the *last selected* data window.
 
+Viewing Images
+^^^^^^^^^^^^^^
+
 By default a height map is shown, when it is available inside the data file.
 Other precalculated images can be displayed using the "Image" drop-down box. The
-"Colormap" menu allows you to select from a few pre-defined colormaps. Images
-can be flattened or smoothed in the "Manipulations" window. The manipulated images
-are added to the image menu with "Calc<Ext/Ret><Manip>" where <Manip> is the
-selected operation and <Ext/Ret> indicates whether the parameter was estimated
-from the extend or retract data. The available image manipulations are:
+"Colormap" menu allows you to select from pre-defined colormaps. The
+"logarithmic scale" checkbox can provide contrast when image
+data varies over many orders of magnitude. Images can be flattened, offset, or
+smoothed in the "Manipulations" window. The manipulated images are added to the
+image menu with "Calc<Ext/Ret><Manip>" where <Manip> is the selected operation
+and <Ext/Ret> indicates whether the parameter was estimated from the extend or
+retract data. The available image manipulations are:
 
 Flatten
    A linear fit to each row of the image is subtracted from that row
 
 PlaneFit
    A 2D linear fit to the image is subtracted from that image
+
+Offset
+   The minimum value present in the image is subtracted from that image
 
 Median3x1
    Each pixel is replaced by the median value of that pixel and its vertical
@@ -128,6 +140,9 @@ FillNaNs
 All calculated images can be exported by clicking "Export calculated maps" to various
 image and data formats.
 
+Viewing Force Curves
+^^^^^^^^^^^^^^^^^^^^
+
 Force curves are displayed by left-clicking the image in the data window.
 Shift+click allows multiple curves to be plotted. Ctrl+drag plots
 continuously as the mouse moves over the image. A cross
@@ -144,6 +159,9 @@ metadata but can be adjusted on the fly, updating the display immediately.
 photodetector signal to obtain the cantilever deflection in nm (sometimes called
 InvOLS.) "Spring Constant" refers to the static cantilever spring constant
 measured at the position of the probe tip.
+
+Fitting Data
+^^^^^^^^^^^^
 
 Fitting can be toggled between the default nothing (Skip), the approach curve (Extend) or
 the retract curve (Retract). The fit parameters are not read from the file and
@@ -206,7 +224,7 @@ Future Plans:
 
 - Viscoelastic model
 
-- Simultaneous extend/retract fit
+- CLI for batch fit
 
 API
 ---
