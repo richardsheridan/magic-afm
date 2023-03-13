@@ -71,6 +71,7 @@ from matplotlib.axes import Axes
 from matplotlib.backend_bases import MouseButton, ResizeEvent
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.colorbar import Colorbar
+from matplotlib.colors import Normalize, LogNorm
 from matplotlib.contour import ContourSet
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
@@ -686,6 +687,7 @@ class ForceVolumeTkDisplay:
         self.options_frame = ttk.Frame(root)
 
         image_opts_frame = ttk.Frame(self.options_frame)
+
         image_name_labelframe = ttk.Labelframe(image_opts_frame, text="Image")
         self.image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
         self.image_name_menu = ttk.Combobox(
@@ -695,6 +697,7 @@ class ForceVolumeTkDisplay:
         self.image_name_menu.pack(fill="x")
         self.reset_image_name_menu(initial_values.image_names)
         image_name_labelframe.pack(fill="x")
+
         colormap_labelframe = ttk.Labelframe(image_opts_frame, text="Colormap")
         self.colormap_strvar = tk.StringVar(colormap_labelframe, value="viridis")
         colormap_menu = ttk.Combobox(
@@ -707,6 +710,12 @@ class ForceVolumeTkDisplay:
         unbind_mousewheel(colormap_menu)
         colormap_menu.pack(fill="x")
         colormap_labelframe.pack(fill="x")
+        self.log_scale_intvar = tk.IntVar(image_name_labelframe, value=False)
+        log_scale_checkbtn = ttk.Checkbutton(
+            image_opts_frame, variable=self.log_scale_intvar, text="logarithmic scale"
+        )
+        log_scale_checkbtn.pack(fill="x")
+
         manipulate_labelframe = ttk.Labelframe(image_opts_frame, text="Manipulations")
         self.manipulate_strvar = tk.StringVar(
             manipulate_labelframe, value=next(iter(calculation.MANIPULATIONS))
@@ -990,6 +999,7 @@ class ForceVolumeTkDisplay:
         self._add_trace(self.colormap_strvar, impartial(partial(nursery.start_soon, change_cmap_callback)))
         self._add_trace(self.manipulate_strvar, impartial(partial(nursery.start_soon, manipulate_callback)))
         self._add_trace(self.image_name_strvar, impartial(partial(nursery.start_soon, change_image_callback)))
+        self._add_trace(self.log_scale_intvar, impartial(partial(nursery.start_soon, change_image_callback)))
         self.replot = partial(redraw_send_chan.send_nowait, False)
         self.replot_tight = partial(redraw_send_chan.send_nowait, True)
 
@@ -1213,6 +1223,27 @@ async def force_volume_task(
         image_stats = ImageStats.from_array(image_array)
         unit = opened_fvol.get_image_units(image_name)
 
+        positive = image_stats.q01 > 0
+        log_scale = display.log_scale_intvar.get()
+        norm = Normalize
+
+        if log_scale:
+            if positive:
+                norm = LogNorm
+            else:
+                await trio.to_thread.run_sync(
+                    partial(
+                        tkinter.messagebox.showwarning,
+                        master=display.tkwindow,
+                        title="Logarithmic scale warning",
+                        message=(
+                            "Many negative values in image; "
+                            "logarithmic scaling ignored.\n"
+                            "Consider applying image manipulations."
+                        ),
+                    )
+                )
+
         scansize = opened_fvol.scansize
         s = (scansize + scansize / len(image_array)) // 2
 
@@ -1231,13 +1262,16 @@ async def force_volume_task(
                 origin="lower",
                 extent=(-s, s, -s, s),
                 picker=True,
+                norm=norm(vmin=image_stats.q01, vmax=image_stats.q99),
                 cmap=cmap,
             )
             axesimage.get_array().fill_value = np.nan
 
             colorbar = display.fig.colorbar(axesimage, ax=display.img_ax, use_gridspec=True)
             display.navbar.update()  # let navbar catch new cax in fig for tooltips
-            customize_colorbar(colorbar, image_stats.q01, image_stats.q99, unit)
+            if unit is not None:
+                colorbar.formatter = EngFormatter(unit, places=1)
+                colorbar.update_ticks()
             expand_colorbar(colorbar)
 
             display.fig.set_layout_engine(LAYOUT_ENGINE)
@@ -1435,18 +1469,6 @@ async def force_volume_task(
         )
         # This causes the initial plotting of figures after next checkpoint
         display.image_name_strvar.set(opened_fvol.initial_image_name)
-
-
-def customize_colorbar(colorbar, vmin=None, vmax=None, unit=None):
-    """Central function to reset colorbar as MPL keeps stomping on our settings"""
-    # set range of colors and ticks without changing range of colorbar axes
-    if vmin is not None and vmax is not None:
-        # other permutations handled internally
-        colorbar.solids.set_clim(vmin, vmax)
-    # pretty engineering units display
-    if unit is not None:
-        colorbar.formatter = EngFormatter(unit, places=1)
-        colorbar.update_ticks()
 
 
 def expand_colorbar(colorbar):
