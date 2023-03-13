@@ -1253,7 +1253,7 @@ async def force_volume_task(
                 colorbar.remove()
             if axesimage is not None:
                 axesimage.remove()
-            display.img_ax.set_title(image_name)
+            display.img_ax.set_title(image_name.replace("_", "\n"))
             display.img_ax.set_ylabel("Y piezo (nm)")
             display.img_ax.set_xlabel("X piezo (nm)")
 
@@ -1316,7 +1316,7 @@ async def force_volume_task(
         manip_name = display.manipulate_strvar.get()
         current_name = display.image_name_strvar.get()
         current_names = list(display.image_name_menu.cget("values"))
-        name = "Calc" + manip_name + current_name
+        name = "Calc" + manip_name + "_" + current_name
         if name not in opened_fvol.image_names:
             manip_fn = calculation.MANIPULATIONS[manip_name]
             async with spinner_scope():
