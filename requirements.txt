@@ -8,7 +8,7 @@ altgraph==0.17.3
     # via pyinstaller
 async-generator==1.10
     # via trio
-attrs==22.1.0
+attrs==22.2.0
     # via
     #   outcome
     #   trio
@@ -20,31 +20,29 @@ cffi==1.15.1
     #   trio-parallel
 colorama==0.4.6
     # via tqdm
-contourpy==1.0.6
+contourpy==1.0.7
     # via matplotlib
 cycler==0.11.0
     # via matplotlib
-exceptiongroup==1.0.0
+exceptiongroup==1.1.1
     # via trio
-fonttools==4.38.0
+fonttools==4.39.0
     # via matplotlib
-future==0.18.2
-    # via pefile
-h5py==3.7.0
+h5py==3.8.0
     # via -r requirements.in
 idna==3.4
     # via trio
-imageio==2.22.2
+imageio==2.26.0
     # via -r requirements.in
 kiwisolver==1.4.4
     # via matplotlib
 llvmlite==0.39.1
     # via numba
-matplotlib==3.6.1
+matplotlib==3.7.1
     # via -r requirements.in
-numba==0.56.3
+numba==0.56.4
     # via -r requirements.in
-numpy==1.23.4
+numpy==1.23.5
     # via
     #   -r requirements.in
     #   contourpy
@@ -57,27 +55,25 @@ outcome==1.2.0
     # via
     #   trio
     #   trio-parallel
-packaging==21.3
+packaging==23.0
     # via matplotlib
-pefile==2022.5.30
+pefile==2023.2.7
     # via pyinstaller
-pillow==9.3.0
+pillow==9.4.0
     # via
     #   -r requirements.in
     #   imageio
     #   matplotlib
-psutil==5.9.3
+psutil==5.9.4
     # via -r requirements.in
 pycparser==2.21
     # via cffi
-pyinstaller==5.6.1
+pyinstaller==5.9.0
     # via -r requirements.in
-pyinstaller-hooks-contrib==2022.11
+pyinstaller-hooks-contrib==2023.0
     # via pyinstaller
 pyparsing==3.0.9
-    # via
-    #   matplotlib
-    #   packaging
+    # via matplotlib
 python-dateutil==2.8.2
     # via matplotlib
 pywin32-ctypes==0.2.0
@@ -92,7 +88,7 @@ sortedcontainers==2.4.0
     # via trio
 tblib==1.7.0
     # via trio-parallel
-tqdm==4.64.1
+tqdm==4.65.0
     # via -r requirements.in
 trio==0.22.0
     # via
@@ -102,7 +98,7 @@ trio-parallel==1.2.0
     # via -r requirements.in
 
 # The following packages are considered to be unsafe in a requirements file:
-setuptools==65.5.0
+setuptools==67.6.0
     # via
     #   numba
     #   pyinstaller
