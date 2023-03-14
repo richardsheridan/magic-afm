@@ -140,7 +140,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         self.k = None
         self.defl_sens = None
         self.npts = None
-        self.scandown = True
+        # self.scandown = True
         self.split = None
         self.sync_dist = 0
 
@@ -732,7 +732,9 @@ class NanoscopeFile(BaseForceVolumeFile):
             factor = 1000.0
 
         self.scansize = float(scansize) * factor
-        self.scandown = {"Down": True, "Up": False}[header["FV"]["Deflection Error"]["Frame direction"]]
+        # self.scandown = {"Down": True, "Up": False}[
+        #     header["FV"]["Deflection Error"]["Frame direction"]
+        # ]
 
         self.k = float(data_header["Spring Constant"])
         self.defl_sens = float(header["Ciao scan list"]["@Sens. DeflSens"].split()[1])

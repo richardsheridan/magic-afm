@@ -1171,7 +1171,7 @@ async def force_volume_task(
                             progress_image = display.img_ax.imshow(
                                 progress_array,
                                 extent=axesimage.get_extent(),
-                                origin="upper" if opened_fvol.scandown else "lower",
+                                origin="lower",
                             )
                             progress_array = progress_image.get_array()
                             old_axesimage = axesimage
