@@ -544,7 +544,11 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         exporter = exporter_map.get(ext, imageio.imwrite)
         for image_name in self._get_image_names():
             if image_name.startswith("Calc"):
-                image = await self._get_image_by_name(image_name)
+                # to date, all afm images have been "flipped" on disk, which is why
+                # they are displayed with "lower" origin, but on export users
+                # have found this confusing, so we manually flip here
+                # TODO: solve this at the data reader level?
+                image = (await self._get_image_by_name(image_name))[::-1]
                 try:
                     await trio.to_thread.run_sync(
                         exporter, root + "_" + image_name[4:] + ext, image
