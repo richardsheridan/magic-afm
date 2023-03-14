@@ -1244,8 +1244,7 @@ async def force_volume_task(
                     )
                 )
 
-        scansize = opened_fvol.scansize
-        s = (scansize + scansize / len(image_array)) // 2
+        fastscansize, slowscansize = opened_fvol.scansize
 
         def change_image_draw_fn():
             nonlocal axesimage, colorbar
@@ -1260,7 +1259,7 @@ async def force_volume_task(
             axesimage = display.img_ax.imshow(
                 image_array,
                 origin="lower",
-                extent=(-s, s, -s, s),
+                extent=(0, fastscansize, 0, slowscansize),
                 picker=True,
                 norm=norm(vmin=image_stats.q01, vmax=image_stats.q99),
                 cmap=cmap,

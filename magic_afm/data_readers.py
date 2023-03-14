@@ -219,7 +219,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         super().__init__(path)
         self._file_image_names.add("Demo")
         self._default_heightmap_names = ("Demo",)
-        self.scansize = 100
+        self.scansize = 100, 100
         self.k = 1
         self.defl_sens = 1
 
@@ -461,8 +461,12 @@ class ARH5File(BaseForceVolumeFile):
         self._file_image_names.update(image_names)
 
         self.k = float(self.notes["SpringConstant"])
-        # what about FastScanSize and SlowScanSize?
-        self.scansize = float(self.notes["ScanSize"]) * NANOMETER_UNIT_CONVERSION
+        self.scansize = (
+            float(self.notes["FastScanSize"]) * NANOMETER_UNIT_CONVERSION,
+            float(self.notes["SlowScanSize"]) * NANOMETER_UNIT_CONVERSION,
+        )
+        # NOTE: aspect is redundant to scansize
+        # self.aspect = float(self.notes["SlowRatio"]) / float(self.notes["FastRatio"])
         self.defl_sens = self._defl_sens_orig = (
             float(self.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
         )
@@ -730,8 +734,15 @@ class NanoscopeFile(BaseForceVolumeFile):
             factor = 0.001
         elif units == "~m":  # microns?!
             factor = 1000.0
+        else:
+            raise ValueError("unknown units:", units)
 
-        self.scansize = float(scansize) * factor
+        # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
+        fastpx = int(header["Ciao scan list"]["Samps/line"])
+        slowpx = int(header["Ciao scan list"]["Lines"])
+        ratio = float(scansize) * factor / max(fastpx, slowpx)
+        self.scansize = (fastpx * ratio, slowpx * ratio)
+
         # self.scandown = {"Down": True, "Up": False}[
         #     header["FV"]["Deflection Error"]["Frame direction"]
         # ]
