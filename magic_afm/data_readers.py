@@ -728,7 +728,7 @@ class NanoscopeFile(BaseForceVolumeFile):
             factor = 1.0
         elif units == "pm":
             factor = 0.001
-        else:  # probably microns but not sure how it's spelled atm
+        elif units == "~m":  # microns?!
             factor = 1000.0
 
         self.scansize = float(scansize) * factor
