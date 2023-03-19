@@ -315,8 +315,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         hinch = height / dpival
         self.figure.set_size_inches(winch, hinch, forward=False)
 
-        # copy old data to avoid blinking before _tkagg.blit fires
-        self._tkphoto = self._tkphoto.copy()
+        # reuse old data to avoid blinking before _tkagg.blit fires
         self._tkphoto.configure(height=height, width=width)
         self._tkcanvas.delete(self._tkcanvas_image_region)
         self._tkcanvas_image_region = self._tkcanvas.create_image(
