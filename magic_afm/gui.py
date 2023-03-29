@@ -72,7 +72,6 @@ from matplotlib.backend_bases import MouseButton, ResizeEvent
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.colorbar import Colorbar
 from matplotlib.colors import Normalize, LogNorm
-from matplotlib.contour import ContourSet
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
 from matplotlib.table import Table
@@ -1274,7 +1273,6 @@ async def force_volume_task(
             if unit is not None:
                 colorbar.formatter = EngFormatter(unit, places=1)
                 colorbar.update_ticks()
-            expand_colorbar(colorbar)
 
             display.fig.set_layout_engine(LAYOUT_ENGINE)
 
@@ -1471,16 +1469,6 @@ async def force_volume_task(
         )
         # This causes the initial plotting of figures after next checkpoint
         display.image_name_strvar.set(opened_fvol.initial_image_name)
-
-
-def expand_colorbar(colorbar):
-    """This is the last part of Colorbar.update_normal()"""
-    colorbar.draw_all()
-    if isinstance(colorbar.mappable, ContourSet):
-        CS = colorbar.mappable
-        if not CS.filled:
-            colorbar.add_lines(CS)
-    colorbar.stale = True
 
 
 def draw_data_table(point_data, ax: Axes):
