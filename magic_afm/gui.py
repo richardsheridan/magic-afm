@@ -318,12 +318,11 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         self._tkphoto.configure(height=height, width=width)
         self._tkcanvas.delete(self._tkcanvas_image_region)
         self._tkcanvas_image_region = self._tkcanvas.create_image(
-            width // 2, height // 2, image=self._tkphoto)
+            width // 2, height // 2, image=self._tkphoto
+        )
         ResizeEvent("resize_event", self)._process()
 
-    def pipe_events_to_trio(
-        self, spinner_scope, motion_send_chan, tooltip_send_chan
-    ):
+    def pipe_events_to_trio(self, spinner_scope, motion_send_chan, tooltip_send_chan):
         self.spinner_scope = spinner_scope
         self.mpl_connect("motion_notify_event", motion_send_chan.send_nowait)
         self.mpl_connect("pick_event", motion_send_chan.send_nowait)
@@ -335,10 +334,17 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
 class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
     def __init__(self, canvas, window):
-        self.toolitems = tuple(x for x in self.toolitems if x[-1] != "configure_subplots")
+        self.toolitems = tuple(
+            x for x in self.toolitems if x[-1] != "configure_subplots"
+        )
         self.toolitems += (
             ("Export", "Export calculated maps", "filesave", "export_calculations"),
-            ("ForceCurves", "Export calculated force curves", "filesave", "export_force_curves"),
+            (
+                "ForceCurves",
+                "Export calculated force curves",
+                "filesave",
+                "export_force_curves",
+            ),
         )
         self._prev_filename = ""
         super().__init__(canvas, window)
@@ -368,7 +374,9 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         finally:
             self.canvas.figure.set_frameon(True)
 
-    def teach_navbar_to_use_trio(self, nursery, get_image_names, get_image_by_name, point_data):
+    def teach_navbar_to_use_trio(
+        self, nursery, get_image_names, get_image_by_name, point_data
+    ):
         self._parent_nursery = nursery
         self._get_image_names = get_image_names
         self._get_image_by_name = get_image_by_name
@@ -470,7 +478,9 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         elif isinstance(exporter, partial) and exporter.func is np.savetxt:
             for name, array in arrays.items():
                 try:
-                    await trio.to_thread.run_sync(exporter, root + "_" + name + ext, array)
+                    await trio.to_thread.run_sync(
+                        exporter, root + "_" + name + ext, array
+                    )
                 except Exception as e:
                     await trio.to_thread.run_sync(
                         partial(
@@ -652,7 +662,9 @@ def unbind_mousewheel(widget_with_bind):
 
 
 class ForceVolumeTkDisplay:
-    def __init__(self, root, name, initial_values: data_readers.ForceVolumeParams, **kwargs):
+    def __init__(
+        self, root, name, initial_values: data_readers.ForceVolumeParams, **kwargs
+    ):
         self._traces: list[tuple[tk.Variable, str]] = []
         self._nursery = None
         self._prev_defl_sens = 1.0
@@ -671,9 +683,7 @@ class ForceVolumeTkDisplay:
         self.plot_ax = None
 
         def initial_draw_fn():
-            self.img_ax, self.plot_ax = self.fig.subplots(
-                1, 2, width_ratios=[1, 1.5]
-            )
+            self.img_ax, self.plot_ax = self.fig.subplots(1, 2, width_ratios=[1, 1.5])
             self.img_ax.set_anchor("W")
             self.img_ax.set_facecolor((0.8, 0, 0))  # scary red for NaN values of images
             # Need to pre-load something into these labels for change_image_callback
@@ -681,7 +691,8 @@ class ForceVolumeTkDisplay:
             self.plot_ax.set_ylabel(" ")
             self.plot_ax.set_ylim([-1000, 1000])
             self.plot_ax.set_xlim([-1000, 1000])
-            return True  # technically needs a draw but later resize will take care of it
+            # technically needs a draw but later resize will take care of it
+            return True
 
         self.canvas.draw_send.send_nowait(initial_draw_fn)
 
@@ -691,9 +702,14 @@ class ForceVolumeTkDisplay:
         image_opts_frame = ttk.Frame(self.options_frame)
 
         image_name_labelframe = ttk.Labelframe(image_opts_frame, text="Image")
-        self.image_name_strvar = tk.StringVar(image_name_labelframe, value="Choose an image...")
+        self.image_name_strvar = tk.StringVar(
+            image_name_labelframe, value="Choose an image..."
+        )
         self.image_name_menu = ttk.Combobox(
-            image_name_labelframe, width=12, state="readonly", textvariable=self.image_name_strvar
+            image_name_labelframe,
+            width=12,
+            state="readonly",
+            textvariable=self.image_name_strvar,
         )
         unbind_mousewheel(self.image_name_menu)
         self.image_name_menu.pack(fill="x")
@@ -769,7 +785,9 @@ class ForceVolumeTkDisplay:
         )
         self.defl_sens_sbox.set(initial_values.defl_sens)
         self.defl_sens_sbox.grid(row=0, column=2, sticky="E")
-        defl_sens_label = ttk.Label(preproc_labelframe, text="Deflection Sens.", justify="left")
+        defl_sens_label = ttk.Label(
+            preproc_labelframe, text="Deflection Sens.", justify="left"
+        )
         defl_sens_label.grid(row=0, column=0, columnspan=2, sticky="W")
         self.spring_const_strvar = tk.StringVar(preproc_labelframe)
         self._add_trace(self.spring_const_strvar, self.spring_const_callback)
@@ -784,7 +802,9 @@ class ForceVolumeTkDisplay:
         )
         self.spring_const_sbox.set(initial_values.k)
         self.spring_const_sbox.grid(row=1, column=2, sticky="E")
-        spring_const_label = ttk.Label(preproc_labelframe, text="Spring Constant", justify="left")
+        spring_const_label = ttk.Label(
+            preproc_labelframe, text="Spring Constant", justify="left"
+        )
         spring_const_label.grid(row=1, column=0, columnspan=2, sticky="W")
         self.sync_dist_strvar = tk.StringVar(preproc_labelframe)
         self._add_trace(self.sync_dist_strvar, self.sync_dist_callback)
@@ -799,13 +819,17 @@ class ForceVolumeTkDisplay:
         )
         self.sync_dist_sbox.set(initial_values.sync_dist)
         self.sync_dist_sbox.grid(row=2, column=2, sticky="E")
-        sync_dist_label = ttk.Label(preproc_labelframe, text="Sync Distance", justify="left")
+        sync_dist_label = ttk.Label(
+            preproc_labelframe, text="Sync Distance", justify="left"
+        )
         sync_dist_label.grid(row=2, column=0, columnspan=2, sticky="W")
         preproc_labelframe.grid(row=0, column=1, sticky="EW")
         preproc_labelframe.grid_columnconfigure(1, weight=1)
 
         fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
-        self.fit_intvar = tk.IntVar(fit_labelframe, value=calculation.FitMode.SKIP.value)
+        self.fit_intvar = tk.IntVar(
+            fit_labelframe, value=calculation.FitMode.SKIP.value
+        )
         self._add_trace(self.fit_intvar, self.change_fit_kind_callback)
         fit_skip_button = ttk.Radiobutton(
             fit_labelframe,
@@ -914,7 +938,11 @@ class ForceVolumeTkDisplay:
             # For Mac OS
             # noinspection PyUnresolvedReferences
             tipwindow.tk.call(
-                "::tk::unsupported::MacWindowStyle", "style", tipwindow._w, "help", "noActivates"
+                "::tk::unsupported::MacWindowStyle",
+                "style",
+                tipwindow._w,
+                "help",
+                "noActivates",
             )
         except tk.TclError:
             pass
@@ -998,10 +1026,22 @@ class ForceVolumeTkDisplay:
         self.calc_props_button.configure(
             command=lambda: nursery.start_soon(calc_prop_map_callback, self.options)
         )
-        self._add_trace(self.colormap_strvar, impartial(partial(nursery.start_soon, change_cmap_callback)))
-        self._add_trace(self.manipulate_strvar, impartial(partial(nursery.start_soon, manipulate_callback)))
-        self._add_trace(self.image_name_strvar, impartial(partial(nursery.start_soon, change_image_callback)))
-        self._add_trace(self.log_scale_intvar, impartial(partial(nursery.start_soon, change_image_callback)))
+        self._add_trace(
+            self.colormap_strvar,
+            impartial(partial(nursery.start_soon, change_cmap_callback)),
+        )
+        self._add_trace(
+            self.manipulate_strvar,
+            impartial(partial(nursery.start_soon, manipulate_callback)),
+        )
+        self._add_trace(
+            self.image_name_strvar,
+            impartial(partial(nursery.start_soon, change_image_callback)),
+        )
+        self._add_trace(
+            self.log_scale_intvar,
+            impartial(partial(nursery.start_soon, change_image_callback)),
+        )
         self.replot = partial(redraw_send_chan.send_nowait, False)
         self.replot_tight = partial(redraw_send_chan.send_nowait, True)
 
@@ -1011,45 +1051,45 @@ class ForceVolumeTkDisplay:
         try:
             self._prev_defl_sens = float(self.defl_sens_strvar.get())
         except ValueError:
-            self.defl_sens_sbox.configure(foreground='red2')
+            self.defl_sens_sbox.configure(foreground="red2")
         else:
-            self.defl_sens_sbox.configure(foreground='black')
+            self.defl_sens_sbox.configure(foreground="black")
             self.replot()
 
     def spring_const_callback(self, *args):
         try:
             self._prev_k = float(self.spring_const_strvar.get())
         except ValueError:
-            self.spring_const_sbox.configure(foreground='red2')
+            self.spring_const_sbox.configure(foreground="red2")
         else:
-            self.spring_const_sbox.configure(foreground='black')
+            self.spring_const_sbox.configure(foreground="black")
             self.replot()
 
     def sync_dist_callback(self, *args):
         try:
             self._prev_sync_dist = int(self.sync_dist_strvar.get())
         except ValueError:
-            self.sync_dist_sbox.configure(foreground='red2')
+            self.sync_dist_sbox.configure(foreground="red2")
         else:
-            self.sync_dist_sbox.configure(foreground='black')
+            self.sync_dist_sbox.configure(foreground="black")
             self.replot()
 
     def radius_callback(self, *args):
         try:
             self._prev_radius = float(self.radius_strvar.get())
         except ValueError:
-            self.fit_radius_sbox.configure(foreground='red2')
+            self.fit_radius_sbox.configure(foreground="red2")
         else:
-            self.fit_radius_sbox.configure(foreground='black')
+            self.fit_radius_sbox.configure(foreground="black")
             self.replot()
 
     def tau_callback(self, *args):
         try:
             self._prev_tau = float(self.tau_strvar.get())
         except ValueError:
-            self.fit_tau_sbox.configure(foreground='red2')
+            self.fit_tau_sbox.configure(foreground="red2")
         else:
-            self.fit_tau_sbox.configure(foreground='black')
+            self.fit_tau_sbox.configure(foreground="black")
             self.replot()
 
     def change_fit_kind_callback(self, *args):
@@ -1065,8 +1105,7 @@ class ForceVolumeTkDisplay:
 
 
 async def force_volume_task(
-        display: ForceVolumeTkDisplay,
-        opened_fvol: data_readers.BaseForceVolumeFile
+    display: ForceVolumeTkDisplay, opened_fvol: data_readers.BaseForceVolumeFile
 ):
     # plot_curve_event_response
     plot_curve_cancels_pending = set()
@@ -1109,7 +1148,9 @@ async def force_volume_task(
                 old_axesimage = object()
                 property_map = np.empty(
                     img_shape,
-                    dtype=np.dtype([(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]),
+                    dtype=np.dtype(
+                        [(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]
+                    ),
                 )
 
                 npts, split = opened_fvol.npts, opened_fvol.split
@@ -1169,7 +1210,9 @@ async def force_volume_task(
                             # new image selected, get a fresh progress image
                             # so it is on top
                             if progress_image is not None:
-                                display.canvas.draw_send.send_nowait(progress_image.remove)
+                                display.canvas.draw_send.send_nowait(
+                                    progress_image.remove
+                                )
                             progress_image = display.img_ax.imshow(
                                 progress_array,
                                 extent=axesimage.get_extent(),
@@ -1268,7 +1311,9 @@ async def force_volume_task(
             )
             axesimage.get_array().fill_value = np.nan
 
-            colorbar = display.fig.colorbar(axesimage, ax=display.img_ax, use_gridspec=True)
+            colorbar = display.fig.colorbar(
+                axesimage, ax=display.img_ax, use_gridspec=True
+            )
             display.navbar.update()  # let navbar catch new cax in fig for tooltips
             if unit is not None:
                 colorbar.formatter = EngFormatter(unit, places=1)
@@ -1328,9 +1373,9 @@ async def force_volume_task(
         display.image_name_menu.set(name)
 
     async def plot_curve_response(
-            point: ImagePoint,
-            options: ForceCurveOptions,
-            clear_previous: bool,
+        point: ImagePoint,
+        options: ForceCurveOptions,
+        clear_previous: bool,
     ):
         existing_points.add(point)  # should be before 1st checkpoint
 
@@ -1391,7 +1436,9 @@ async def force_volume_task(
 
                 # Drawing Phase
                 # Based options choose plots and collect artists for deletion
-                new_artists, color = draw_force_curve(force_curve_data, display.plot_ax, options)
+                new_artists, color = draw_force_curve(
+                    force_curve_data, display.plot_ax, options
+                )
                 plot_artists.extend(new_artists)
                 img_artists.extend(
                     display.img_ax.plot(
@@ -1410,7 +1457,7 @@ async def force_volume_task(
             await display.canvas.draw_send.send(plot_point_draw_fn)
 
     async def mpl_pick_motion_event_task(task_status):
-        send_chan, recv_chan = trio.open_memory_channel(float('inf'))
+        send_chan, recv_chan = trio.open_memory_channel(float("inf"))
         task_status.started(send_chan)
         async for event in recv_chan:
             mouseevent = getattr(event, "mouseevent", event)
@@ -1422,25 +1469,36 @@ async def force_volume_task(
             elif display is not None and mouseevent.inaxes is display.img_ax:
                 if event.name == "motion_notify_event":
                     tooltip_send_chan.send_nowait(
-                        (event.guiEvent.x_root, event.guiEvent.y_root, display.img_ax_tip_text)
+                        (
+                            event.guiEvent.x_root,
+                            event.guiEvent.y_root,
+                            display.img_ax_tip_text,
+                        )
                     )
                     if not control_held:
                         continue
                 if mouseevent.button != MouseButton.LEFT:
                     continue
-                point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, axesimage)
+                point = ImagePoint.from_data(
+                    mouseevent.xdata, mouseevent.ydata, axesimage
+                )
                 if shift_held and point in existing_points:
                     continue
-                nursery.start_soon(plot_curve_response, point, display.options, not shift_held)
+                nursery.start_soon(
+                    plot_curve_response, point, display.options, not shift_held
+                )
             elif display is not None and mouseevent.inaxes is display.plot_ax:
                 if event.name == "motion_notify_event":
                     tooltip_send_chan.send_nowait(
-                        (event.guiEvent.x_root, event.guiEvent.y_root, display.plot_ax_tip_text)
+                        (
+                            event.guiEvent.x_root,
+                            event.guiEvent.y_root,
+                            display.plot_ax_tip_text,
+                        )
                     )
 
     nursery: trio.Nursery
     async with trio.open_nursery() as nursery:
-
         spinner_scope = await nursery.start(
             async_tools.spinner_task, display.spinner_start, display.spinner_stop
         )
@@ -1476,7 +1534,9 @@ def draw_data_table(point_data, ax: Axes):
     if len(point_data) == 1:
         data = next(iter(point_data.values()))
         exp = np.log10(data.beta[0])
-        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get((-exp + 2.7) // 3, ("", 1))
+        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get(
+            (-exp + 2.7) // 3, ("", 1)
+        )
         colLabels = [
             f"$M$ ({prefix}Pa)",
             r"${dM}/{dk} \times {k}/{M}$",
@@ -1517,7 +1577,9 @@ def draw_data_table(point_data, ax: Axes):
             ],
         )
         exp = np.log10(np.mean(m))
-        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get((-exp + 2.7) // 3, ("", 1))
+        prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get(
+            (-exp + 2.7) // 3, ("", 1)
+        )
         colLabels = [
             f"$M$ ({prefix}Pa)",
             r"${dM}/{dk} \times {k}/{M}$",
@@ -1558,7 +1620,11 @@ def draw_force_curve(data, plot_ax, options):
         aex(plot_ax.plot(data.z[data.split :], data.d[data.split :], label="Retract"))
         if options.fit_mode:
             aex(plot_ax.plot(data.z[data.sl], data.d_fit, "--", label="Model"))
-            aap(plot_ax.axvline(data.z_tru, ls=":", c=artists[0].get_color(), label="Surface Z"))
+            aap(
+                plot_ax.axvline(
+                    data.z_tru, ls=":", c=artists[0].get_color(), label="Surface Z"
+                )
+            )
     elif options.disp_kind == DispKind.δf:
         plot_ax.set_xlabel("Indentation depth (nm)")
         plot_ax.set_ylabel("Indentation force (nN)")
@@ -1570,19 +1636,34 @@ def draw_force_curve(data, plot_ax, options):
             aex(plot_ax.plot(delta[data.split :], f[data.split :], label="Retract"))
             aex(plot_ax.plot(delta[data.sl], f_fit, "--", label="Model"))
             mopts = dict(
-                marker="X", markersize=8, linestyle="", markeredgecolor="k", markerfacecolor="k"
+                marker="X",
+                markersize=8,
+                linestyle="",
+                markeredgecolor="k",
+                markerfacecolor="k",
             )
             aex(
                 plot_ax.plot(
-                    [data.ind + data.mindelta - data.beta[2], data.mindelta - data.beta[2]],
+                    [
+                        data.ind + data.mindelta - data.beta[2],
+                        data.mindelta - data.beta[2],
+                    ],
                     [data.defl * options.k - data.beta[1], -data.beta[1]],
                     label="Max/Crit",
                     **mopts,
                 )
             )
         else:
-            aex(plot_ax.plot(data.delta[: data.split], data.f[: data.split], label="Extend"))
-            aex(plot_ax.plot(data.delta[data.split :], data.f[data.split :], label="Retract"))
+            aex(
+                plot_ax.plot(
+                    data.delta[: data.split], data.f[: data.split], label="Extend"
+                )
+            )
+            aex(
+                plot_ax.plot(
+                    data.delta[data.split :], data.f[data.split :], label="Retract"
+                )
+            )
     else:
         raise ValueError("Unknown DispKind: ", data.disp_kind)
     plot_ax.legend(handles=artists)
@@ -1624,15 +1705,30 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
     delta_new, f_new, k_new = calculation.perturb_k(delta, f, eps, options.k)
     optionsdict.pop("k")
     beta_perturb = calculation.fitfun(
-        delta_new[sl], f_new[sl], k_new, **optionsdict, cancel_poller=cancel_poller, split=split
+        delta_new[sl],
+        f_new[sl],
+        k_new,
+        **optionsdict,
+        cancel_poller=cancel_poller,
+        split=split,
     )[0]
     sens = (beta_perturb - beta) / beta / eps
     if np.all(np.isfinite(beta)):
-        deflection, indentation, z_true_surface, mindelta = calculation.calc_def_ind_ztru(
+        (
+            deflection,
+            indentation,
+            z_true_surface,
+            mindelta,
+        ) = calculation.calc_def_ind_ztru(
             f[sl], beta, **dataclasses.asdict(options), split=split
         )
     else:
-        deflection, indentation, z_true_surface, mindelta = np.nan, np.nan, np.nan, np.nan
+        deflection, indentation, z_true_surface, mindelta = (
+            np.nan,
+            np.nan,
+            np.nan,
+            np.nan,
+        )
     return ForceCurveData(
         z=z,
         d=d,
@@ -1722,15 +1818,19 @@ class MyInstrument(trio.abc.Instrument):
     sleep_time = tau / 2
     wake_time = tau / 2
 
+    @property
+    def cycle_time(self):
+        return self.wake_time + self.sleep_time
+
     def before_io_wait(self, timeout):
         t = trio.current_time()
-        b = exp(-(self.wake_time + self.sleep_time) / self.tau)  # b = 1 - alpha
+        b = exp(-self.cycle_time / self.tau)  # b = 1 - alpha
         self.wake_time = (t - self.t) * (1 - b) + b * self.wake_time
         self.t = t
 
     def after_io_wait(self, timeout):
         t = trio.current_time()
-        b = exp(-(self.wake_time + self.sleep_time) / self.tau)  # b = 1 - alpha
+        b = exp(-self.cycle_time / self.tau)  # b = 1 - alpha
         self.sleep_time = (t - self.t) * (1 - b) + b * self.sleep_time
         self.t = t
 
@@ -1791,14 +1891,17 @@ async def about_task(root):
                 f"Tasks living: {task_stats.tasks_living}\n"
                 f"Tasks runnable: {task_stats.tasks_runnable}\n"
                 f"Unprocessed callbacks: {task_stats.run_sync_soon_queue_size}\n"
-                f"Sleep %: {100 * inst.sleep_time / (inst.sleep_time + inst.wake_time):.1f}"
+                f"Sleep %: {100 * inst.sleep_time / inst.cycle_time :.1f}"
             )
             thread_cpu.set(
-                "CPU-bound tasks:" + repr(async_tools.cpu_bound_limiter).split(",")[1][:-1]
+                "CPU-bound tasks:"
+                + repr(async_tools.cpu_bound_limiter).split(",")[1][:-1]
             )
             thread_default.set(
                 "Default threads:"
-                + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][:-1]
+                + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][
+                    :-1
+                ]
             )
             process.set(
                 f"Worker processes: {worker_stats.running_workers}/"
@@ -1856,7 +1959,9 @@ async def main_task(root):
         menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
 
         help_menu = tk.Menu(menu_frame, tearoff=False)
-        help_menu.add_command(label="Open help", accelerator="F1", underline=5, command=help_action)
+        help_menu.add_command(
+            label="Open help", accelerator="F1", underline=5, command=help_action
+        )
         help_menu.bind("<KeyRelease-h>", func=help_action)
         root.bind_all("<KeyRelease-F1>", func=impartial(help_action))
         # noinspection PyTypeChecker

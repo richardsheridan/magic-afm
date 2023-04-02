@@ -148,7 +148,8 @@ def flatten(img):
 
 def planefit(img):
     ind = np.indices(np.shape(img))
-    a = np.stack((np.ones_like(img.ravel()), ind[0].ravel(), ind[1].ravel())).T  # [1, x, y]
+    # [1, x, y]
+    a = np.stack((np.ones_like(img.ravel()), ind[0].ravel(), ind[1].ravel())).T
     b = img.ravel()
     keep = np.isfinite(b)
     try:
@@ -182,7 +183,9 @@ def resample_dset(X, npts, fourier):
         ratio = npts / len(X[0])
         trend = np.copy(X[:, [0]])  # Should be 2D
         X = X - trend
-        return np.squeeze(np.stack([resample(x, ratio, "sinc_fastest") for x in X]) + trend)
+        return np.squeeze(
+            np.stack([resample(x, ratio, "sinc_fastest") for x in X]) + trend
+        )
     else:
         tnew = np.linspace(0, 1, npts, endpoint=False)
         told = np.linspace(0, 1, X.shape[-1], endpoint=False)
@@ -344,7 +347,9 @@ def brentq(func, args, xa, xb):
                 # extrapolate
                 dpre = (fpre - fcur) / (xpre - xcur)
                 dblk = (fblk - fcur) / (xblk - xcur)
-                stry = -fcur * (fblk * dblk - fpre * dpre) / (dblk * dpre * (fblk - fpre))
+                stry = (
+                    -fcur * (fblk * dblk - fpre * dpre) / (dblk * dpre * (fblk - fpre))
+                )
 
             if 2 * abs(stry) < min(abs(spre), 3 * abs(sbis) - xtol):
                 # good short step
@@ -452,10 +457,15 @@ def schwarz_red(red_f, red_fc, stable, offset):
     # Save computations if pure DMT
     if red_fc == -2:
         return df ** (2 / 3) - offset
+    # fmt: off
+    red_contact_radius = (
+        (3 * red_fc + 6) ** (1 / 2) + stable * df ** (1 / 2)
+    ) ** (2 / 3)
 
-    red_contact_radius = ((3 * red_fc + 6) ** (1 / 2) + stable * df ** (1 / 2)) ** (2 / 3)
-
-    red_delta = red_contact_radius**2 - 4 * (red_contact_radius * (red_fc + 2) / 3) ** (1 / 2)
+    red_delta = red_contact_radius ** 2 - 4 * (
+        red_contact_radius * (red_fc + 2) / 3
+    ) ** (1 / 2)
+    # fmt: on
 
     return red_delta - offset
 
@@ -474,7 +484,8 @@ powrat = bigpow / lilpow
 # algebraically solved LJ parameters such that the minimum value is at delta=1
 prefactor = powrat ** (1 / (bigpow - lilpow))
 postfactor = 1 / (prefactor ** (-bigpow) - prefactor ** (-lilpow))  # such that lj(1)=1
-lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))  # delta of minimum slope
+# delta of minimum slope
+lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))
 
 
 @jit(nopython=True, nogil=True, cache=True)
@@ -495,9 +506,13 @@ def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
     Offset is useful for root finding (reduced spring constant matching)"""
     nondim_position = (delta - delta_offset) / delta_scale
     # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
-    attraction = np.divide(lilpow * prefactor ** (-lilpow), nondim_position ** (lilpow + 1))
+    attraction = np.divide(
+        lilpow * prefactor ** (-lilpow), nondim_position ** (lilpow + 1)
+    )
     repulsion = bigpow * prefactor ** (-bigpow) * nondim_position ** (-bigpow - 1)
-    return postfactor * force_scale * (attraction - repulsion) / delta_scale - force_offset
+    return (
+        postfactor * force_scale * (attraction - repulsion) / delta_scale - force_offset
+    )
 
 
 @jit(nopython=True, nogil=True, cache=True)
@@ -645,7 +660,9 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     return np.minimum(s_f, lj_f)
 
 
-def force_curve(red_curve, delta, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale):
+def force_curve(
+    red_curve, delta, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale
+):
     """Calculate a force curve from indentation data."""
     # Catch crazy inputs early
     assert k > 0, k
@@ -671,7 +688,9 @@ def force_curve(red_curve, delta, k, radius, M, fc, tau, delta_shift, force_shif
     return (red_force * ref_force) + force_shift
 
 
-def delta_curve(red_curve, force, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale):
+def delta_curve(
+    red_curve, force, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale
+):
     """Convenience function for inverse of force_curve, i.e. force->delta"""
     # Catch crazy inputs early
     assert k > 0, k
@@ -726,7 +745,9 @@ def rapid_forcecurve_estimate(delta, force, radius):
     return M_guess, fc_guess, deltamin, fzero, 1.0
 
 
-def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, **kwargs):
+def fitfun(
+    delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, **kwargs
+):
     if p0 is None:
         p0 = rapid_forcecurve_estimate(delta, force, radius)
 
@@ -749,11 +770,15 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, 
         red_curve = red_retract
     elif fit_mode == FitMode.BOTH:
         split = kwargs["split"]
+
         def red_curve(delta, *args):
-            return np.concatenate((
-                red_extend(delta[:split], *args),
-                red_retract(delta[split:], *args),
-            ))
+            return np.concatenate(
+                (
+                    red_extend(delta[:split], *args),
+                    red_retract(delta[split:], *args),
+                )
+            )
+
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
@@ -763,11 +788,22 @@ def fitfun(delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, 
             print("Fit likely failed: NaNs in params")
             return np.full_like(delta, np.nan)
         return force_curve(
-            red_curve, delta, k, radius, M, -fc, tau, delta_shift, force_shift, lj_delta_scale
+            red_curve,
+            delta,
+            k,
+            radius,
+            M,
+            -fc,
+            tau,
+            delta_shift,
+            force_shift,
+            lj_delta_scale,
         )
 
     try:
-        beta, cov, infodict, *_ = curve_fit(partial_force_curve, delta, force, p0=p0, bounds=bounds)
+        beta, cov, infodict, *_ = curve_fit(
+            partial_force_curve, delta, force, p0=p0, bounds=bounds
+        )
         sse = infodict["chisq"]
         beta_err = infodict["uncertainties"]
     except Exception as e:
@@ -795,12 +831,21 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
         maxforce = force[:n_pts_max].mean()
     elif fit_mode == FitMode.BOTH:
         split = kwargs["split"]
-        maxforce = force[split-n_pts_max//2:split+n_pts_max//2].mean()
+        maxforce = force[split - n_pts_max // 2 : split + n_pts_max // 2].mean()
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
     maxdelta = delta_curve(
-        schwarz_wrap, maxforce, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale
+        schwarz_wrap,
+        maxforce,
+        k,
+        radius,
+        M,
+        fc,
+        tau,
+        delta_shift,
+        force_shift,
+        lj_delta_scale,
     )
     mindelta = delta_curve(
         schwarz_wrap,
@@ -817,7 +862,16 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
     # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
     zeroindforce = float(
         force_curve(
-            red_retract, delta_shift, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale
+            red_retract,
+            delta_shift,
+            k,
+            radius,
+            M,
+            fc,
+            tau,
+            delta_shift,
+            force_shift,
+            lj_delta_scale,
         )
     )
 
@@ -841,7 +895,9 @@ def calc_properties_imap(delta_f_rc, **kwargs):
         return rc, None
     ind_mod = beta[0]
     adh_force = beta[1]
-    (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(force, beta, **kwargs)
+    (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(
+        force, beta, **kwargs
+    )
     kwargs = kwargs.copy()
     k = kwargs.pop("k")
     eps = 1e-3
@@ -866,30 +922,16 @@ def warmup_jit():
     npts = 1024
     split = npts // 2
     delta = np.float32(
-        (
-            np.cos(np.linspace(0, np.pi * 2, npts, endpoint=False)) - 0.90
-        ) * 25
+        (np.cos(np.linspace(0, np.pi * 2, npts, endpoint=False)) - 0.90) * 25
     )
 
-    fext = force_curve(
-        red_extend, delta[: split], 1, 10, 1, -10, 1, 0, 0, 1
-    )
-    fret = force_curve(
-        red_retract, delta[split:], 1, 10, 1, -10, 1, 0, 0, 1
-    )
-    fext = force_curve(
-        red_extend, delta[: split], 1, 10, 1, -10, 0, 0, 0, 1
-    )
-    fret = force_curve(
-        red_retract, delta[split:], 1, 10, 1, -10, 0, 0, 0, 1
-    )
+    fext = force_curve(red_extend, delta[:split], 1, 10, 1, -10, 1, 0, 0, 1)
+    fret = force_curve(red_retract, delta[split:], 1, 10, 1, -10, 1, 0, 0, 1)
+    fext = force_curve(red_extend, delta[:split], 1, 10, 1, -10, 0, 0, 0, 1)
+    fret = force_curve(red_retract, delta[split:], 1, 10, 1, -10, 0, 0, 0, 1)
     maxforce = fret[slice(len(fret) // 25)].mean()
-    maxdelta = delta_curve(
-        schwarz_wrap, maxforce, 1, 10, 1, -10, 0, 0, 0, 1
-    )
-    maxdelta = delta_curve(
-        schwarz_wrap, maxforce, 1, 10, 1, -10, 1, 0, 0, 1
-    )
+    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, -10, 0, 0, 0, 1)
+    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, -10, 1, 0, 0, 1)
     image = np.zeros((64, 64), dtype=np.float32)
     gauss3x3(image)
     median3x1(image)

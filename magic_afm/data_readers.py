@@ -131,6 +131,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
     _default_heightmap_names = ()
 
     def __init__(self, path):
+        self.scansize = None
         self.path = path
         self._units_map = self._basic_units_map.copy()
         self._calc_images = {}
@@ -636,7 +637,9 @@ class QNMWorker(BrukerWorkerBase):
         amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
         phase = s / npts * 2 * np.pi
         self.z_basis = amp * np.cos(
-            np.linspace(phase, phase + 2 * np.pi, npts, endpoint=False, dtype=np.float32)
+            np.linspace(
+                phase, phase + 2 * np.pi, npts, endpoint=False, dtype=np.float32
+            )
         )
 
     def get_force_curve(self, r, c, defl_sens, sync_dist):
@@ -762,11 +765,15 @@ class NanoscopeFile(BaseForceVolumeFile):
         else:
             return (
                 QNMWorker(header, self._mm, self.split),
-                int(round(float(
-                    header["Ciao scan list"]["Sync Distance QNM"]
-                    if "Sync Distance QNM" in header["Ciao scan list"]
-                    else header["Ciao scan list"]["Sync Distance"]
-                ))),
+                int(
+                    round(
+                        float(
+                            header["Ciao scan list"]["Sync Distance QNM"]
+                            if "Sync Distance QNM" in header["Ciao scan list"]
+                            else header["Ciao scan list"]["Sync Distance"]
+                        )
+                    )
+                ),
             )
 
     async def aclose(self):

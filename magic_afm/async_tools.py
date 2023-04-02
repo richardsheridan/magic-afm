@@ -62,7 +62,9 @@ async def _asyncify_iterator(iter, limiter=None, *, task_status):
     send_chan, recv_chan = trio.open_memory_channel(0)
     task_status.started(recv_chan)
     with send_chan:
-        while (result := await trs(next, iter, sentinel, limiter=limiter)) is not sentinel:
+        while (
+            result := await trs(next, iter, sentinel, limiter=limiter)
+        ) is not sentinel:
             await send_chan.send(result)
 
 
@@ -195,7 +197,7 @@ async def spinner_task(set_spinner, set_normal, task_status):
 async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_status):
     """Manage a tooltip window visibility, position, and text."""
 
-    send_chan, recv_chan = trio.open_memory_channel(float('inf'))
+    send_chan, recv_chan = trio.open_memory_channel(float("inf"))
     task_status.started(send_chan)
     tooltip_command = TOOLTIP_CANCEL  # a tuple of x, y, text. start hidden
 
