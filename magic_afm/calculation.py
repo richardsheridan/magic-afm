@@ -729,8 +729,12 @@ def rapid_forcecurve_estimate(delta, force, radius):
 
     fzero = np.median(force)
 
-    imin = np.argmin(force)  # TODO: better way to choose this for low adhesion
+    imin = np.argmin(force)
     deltamin = delta[imin]
+
+    # if adhesion is low, min may be noise; clip delta to middle of curve
+    deltamid = (delta[0]+delta[-1])/2
+    deltamin = max(deltamin, deltamid)
 
     fmin = force[imin]
     fc_guess = fzero - fmin
