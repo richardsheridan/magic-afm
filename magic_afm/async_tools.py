@@ -22,8 +22,9 @@ It is meant to be easy to lift individual items out into other projects.
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 from contextlib import asynccontextmanager, nullcontext
-from functools import partial, wraps
+from functools import partial
 from itertools import islice
+from math import inf
 
 import trio
 
@@ -197,7 +198,7 @@ async def spinner_task(set_spinner, set_normal, task_status):
 async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_status):
     """Manage a tooltip window visibility, position, and text."""
 
-    send_chan, recv_chan = trio.open_memory_channel(float("inf"))
+    send_chan, recv_chan = trio.open_memory_channel(inf)
     task_status.started(send_chan)
     tooltip_command = TOOLTIP_CANCEL  # a tuple of x, y, text. start hidden
 

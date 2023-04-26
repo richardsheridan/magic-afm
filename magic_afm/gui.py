@@ -56,7 +56,7 @@ import warnings
 import webbrowser
 from contextlib import nullcontext
 from functools import partial, wraps
-from math import exp
+from math import exp, inf
 from tkinter import ttk
 from typing import Callable, ClassVar, Optional
 
@@ -238,7 +238,7 @@ class ImageStats:
 class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
     def __init__(self, figure, master=None):
         self._resize_pending = None
-        self.draw_send, self.draw_recv = trio.open_memory_channel(float("inf"))
+        self.draw_send, self.draw_recv = trio.open_memory_channel(inf)
 
         super().__init__(figure, master)
 
@@ -1324,7 +1324,7 @@ async def force_volume_task(
         await display.canvas.draw_send.send(change_image_draw_fn)
 
     async def redraw_existing_points_task(task_status):
-        redraw_send, redraw_recv = trio.open_memory_channel(float("inf"))
+        redraw_send, redraw_recv = trio.open_memory_channel(inf)
 
         def clear_points_draw_fn():
             for artist in img_artists:
@@ -1457,7 +1457,7 @@ async def force_volume_task(
             await display.canvas.draw_send.send(plot_point_draw_fn)
 
     async def mpl_pick_motion_event_task(task_status):
-        send_chan, recv_chan = trio.open_memory_channel(float("inf"))
+        send_chan, recv_chan = trio.open_memory_channel(inf)
         task_status.started(send_chan)
         async for event in recv_chan:
             mouseevent = getattr(event, "mouseevent", event)
