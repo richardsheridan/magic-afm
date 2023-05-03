@@ -1,5 +1,5 @@
 call %USERPROFILE%\Miniconda3\Scripts\activate.bat || goto :EOF
-call conda create -n mafm-build-tmp -y python=3.10
+call conda create -n mafm-build-tmp -y python=3.11
 call conda activate mafm-build-tmp || goto :error
 pip install -U -r requirements.txt
 REM pip install -U -r requirements-nightly-mpl.txt
