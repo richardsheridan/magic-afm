@@ -88,7 +88,14 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
             i = bytes_.rfind(b"\x08") + 1  # first thing on right not a backspace
             most_recent_numeric_output = bytes_[i:-1]  # crop % sign
             if most_recent_numeric_output:
-                pbar.update(float(most_recent_numeric_output.decode()) - pbar.n)
+                try:
+                    n = round(float(most_recent_numeric_output.decode()), 1)
+                except ValueError:
+                    # I don't know what causes this, but I'd
+                    # rather carry on than have a fatal error
+                    pass
+                else:
+                    pbar.update(n - pbar.n)
 
     try:
         async with trio.open_nursery() as nursery:
