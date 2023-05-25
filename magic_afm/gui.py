@@ -1134,24 +1134,39 @@ async def force_volume_task(
                 desc=f"Fitting {opened_fvol.path.name} force curves",
                 smoothing=0.01,
                 # smoothing_time=1,
-                mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 3,
+                mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 2,
                 unit=" fits",
                 tk_parent=display.tkwindow,
                 grab=False,
                 leave=False,
                 cancel_callback=cancel_scope.cancel,
             ) as pbar:
-                progress_image: Optional[matplotlib.image.AxesImage] = None
+                progress_image: matplotlib.image.AxesImage
                 progress_array = np.zeros(img_shape + (4,), dtype="f4")
                 half_red = np.array((1, 0, 0, 0.5), dtype="f4")
                 half_green = np.array((0, 1, 0, 0.5), dtype="f4")
-                old_axesimage = object()
                 property_map = np.empty(
                     img_shape,
                     dtype=np.dtype(
                         [(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]
                     ),
                 )
+
+                def make_progress_image_draw_fn():
+                    nonlocal progress_image, progress_array
+                    progress_image = display.img_ax.imshow(
+                        progress_array,
+                        extent=axesimage.get_extent(),
+                        origin="lower",
+                        animated=True,
+                        visible=False,
+                        zorder=0.01,
+                        interpolation="none",
+                    )
+                    progress_array = progress_image.get_array()
+                    return True
+
+                display.canvas.draw_send.send_nowait(make_progress_image_draw_fn)
 
                 npts, split = opened_fvol.npts, opened_fvol.split
                 resample = npts > RESAMPLE_NPTS
@@ -1169,8 +1184,12 @@ async def force_volume_task(
                     raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
                 def blit_img_draw_fn():
-                    display.img_ax.redraw_in_frame()
-                    display.canvas.blit(display.img_ax.bbox)
+                    bg = display.canvas.copy_from_bbox(progress_image.clipbox)
+                    progress_image.set_visible(True)
+                    display.img_ax.draw_artist(progress_image)
+                    display.canvas.blit(progress_image.clipbox)
+                    progress_image.set_visible(False)
+                    display.canvas.restore_region(bg)
                     return True
 
                 async with trio.open_nursery() as pipeline_nursery:
@@ -1204,23 +1223,7 @@ async def force_volume_task(
                         else:
                             property_map[rc] = properties
                             progress_array[rc] = half_green
-                        if not pbar.update():
-                            continue
-                        if old_axesimage is not axesimage:
-                            # new image selected, get a fresh progress image
-                            # so it is on top
-                            if progress_image is not None:
-                                display.canvas.draw_send.send_nowait(
-                                    progress_image.remove
-                                )
-                            progress_image = display.img_ax.imshow(
-                                progress_array,
-                                extent=axesimage.get_extent(),
-                                origin="lower",
-                            )
-                            progress_array = progress_image.get_array()
-                            old_axesimage = axesimage
-                        else:
+                        if pbar.update():
                             display.canvas.draw_send.send_nowait(blit_img_draw_fn)
 
         def progress_image_cleanup_draw_fn():
