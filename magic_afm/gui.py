@@ -1307,7 +1307,12 @@ async def force_volume_task(
             axesimage = display.img_ax.imshow(
                 image_array,
                 origin="lower",
-                extent=(0, fastscansize, 0, slowscansize),
+                extent=(
+                    -0.5*fastscansize/image_array.shape[1],
+                    fastscansize+0.5*fastscansize/image_array.shape[1],
+                    -0.5*slowscansize/image_array.shape[0],
+                    slowscansize+0.5*slowscansize/image_array.shape[0],
+                ),
                 picker=True,
                 norm=norm(vmin=image_stats.q01, vmax=image_stats.q99),
                 cmap=cmap,
