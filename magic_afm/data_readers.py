@@ -228,29 +228,30 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         self._file_image_names.add("Demo")
         self._default_heightmap_names = ("Demo",)
         self.scansize = 100, 100
-        self.k = 1
-        self.defl_sens = 1
+        self.k = 10
+        self.defl_sens = 5
 
     async def ainitialize(self):
         await trio.sleep(0)
         self.npts = 1024
         self.split = self.npts // 2
-        self.delta = (
-            np.cos(np.linspace(0, np.pi * 2, self.npts, endpoint=False)) - 0.90
-        ) * 25
+        self.delta = -15 * (
+            np.cos(np.linspace(0, np.pi * 2, self.npts, endpoint=False)) + 0.5
+        )
 
     async def aclose(self):
         pass
 
     def get_force_curve_sync(self, r, c):
         gen = np.random.default_rng(seed=(r, c))
+        parms = (1, 10, 0.1, -2, 1, 0, 0, 1)
         fext = calculation.force_curve(
-            calculation.red_extend, self.delta[: self.split], 1, 10, 1, -10, 1, 0, 0, 1
+            calculation.red_extend, self.delta[: self.split], *parms
         )
         fret = calculation.force_curve(
-            calculation.red_retract, self.delta[self.split :], 1, 10, 1, -10, 1, 0, 0, 1
+            calculation.red_retract, self.delta[self.split :], *parms
         )
-        d = np.concatenate((fext, fret))
+        d = np.concatenate((fext, fret)) / self.k
         z = self.delta + d
         d += gen.normal(scale=0.1, size=d.size)
         z += gen.normal(scale=0.01, size=z.size)
