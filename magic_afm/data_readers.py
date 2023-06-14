@@ -150,6 +150,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         self.npts = None
         # self.scandown = True
         self.split = None
+        self.rate = None
         self.sync_dist = 0
 
     @property
@@ -230,6 +231,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         self.scansize = 100, 100
         self.k = 10
         self.defl_sens = 5
+        self.rate = 100
 
     async def ainitialize(self):
         await trio.sleep(0)
@@ -481,6 +483,7 @@ class ARH5File(BaseForceVolumeFile):
         self.defl_sens = self._defl_sens_orig = (
             float(self.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
         )
+        self.rate = float(self.notes["FastMapZRate"])
         self.npts, self.split = worker.npts, worker.split
 
     async def aclose(self):
@@ -738,7 +741,7 @@ class NanoscopeFile(BaseForceVolumeFile):
         self.npts = int(header["Ciao force list"]["force/line"].split()[0])
         rate, unit = header["Ciao scan list"]["PFT Freq"].split()
         assert unit.lower() == "khz"
-        self.rate = float(rate)
+        self.rate = float(rate) * 1000
 
         scansize, units = header["Ciao scan list"]["Scan Size"].split()
         if units == "nm":

@@ -132,6 +132,7 @@ class TkState(enum.IntFlag):
 @enum.unique
 class DispKind(enum.IntEnum):
     zd = enum.auto()
+    td = enum.auto()
     # noinspection NonAsciiCharacters
     δf = enum.auto()
 
@@ -154,6 +155,7 @@ class ForceCurveData:
     split: np.ndarray
     f: np.ndarray
     delta: np.ndarray
+    t: np.ndarray
     # everything else set only if fit
     beta: Optional[np.ndarray] = None
     beta_err: Optional[np.ndarray] = None
@@ -393,9 +395,9 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             return
         is_fit = next(iter(self._point_data.values())).beta is not None
         if is_fit:
-            h = "z (nm); d (nm); d_fit (nN)"
+            h = "t (ms); z (nm); d (nm); d_fit (nN)"
         else:
-            h = "z (nm); d (nm)"
+            h = "t (ms); z (nm); d (nm)"
         # fmt: off
         export_filetypes = (
             ("ASCII/TXT/TSV/CSV", "*.asc *.txt *.tsv *.csv"),
@@ -450,6 +452,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             if is_fit:
                 arrays[f"r{point.r:04d}c{point.c:04d}"] = np.column_stack(
                     [
+                        data.t[data.sl],
                         data.z[data.sl],
                         data.d[data.sl],
                         data.d_fit,
@@ -458,6 +461,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             else:
                 arrays[f"r{point.r:04d}c{point.c:04d}"] = np.column_stack(
                     [
+                        data.t,
                         data.z,
                         data.d,
                     ]
@@ -760,7 +764,15 @@ class ForceVolumeTkDisplay:
             variable=self.disp_kind_intvar,
             padding=4,
         )
-        disp_zd_button.pack(side="left")
+        disp_zd_button.pack(side="top")
+        disp_td_button = ttk.Radiobutton(
+            disp_labelframe,
+            text="d vs. t",
+            value=DispKind.td.value,
+            variable=self.disp_kind_intvar,
+            padding=4,
+        )
+        disp_td_button.pack(side="top")
         disp_deltaf_button = ttk.Radiobutton(
             disp_labelframe,
             text="f vs. δ",
@@ -768,7 +780,7 @@ class ForceVolumeTkDisplay:
             variable=self.disp_kind_intvar,
             padding=4,
         )
-        disp_deltaf_button.pack(side="left")
+        disp_deltaf_button.pack(side="top")
         disp_labelframe.grid(row=0, column=0)
 
         preproc_labelframe = ttk.Labelframe(self.options_frame, text="Preprocessing")
@@ -1408,6 +1420,7 @@ async def force_volume_task(
                     *force_curve,
                     opened_fvol.split,
                     opened_fvol.npts,
+                    opened_fvol.rate,
                     options,
                     async_tools.make_cancel_poller(),
                 )
@@ -1672,24 +1685,31 @@ def draw_force_curve(data, plot_ax, options):
                     data.delta[data.split :], data.f[data.split :], label="Retract"
                 )
             )
+    elif options.disp_kind == DispKind.td:
+        plot_ax.set_xlabel("Time (ms)")
+        plot_ax.set_ylabel("Deflection (nm)")
+        aex(plot_ax.plot(data.t, data.d, label="Data"))
+        if options.fit_mode:
+            aex(plot_ax.plot(data.t[data.sl], data.d_fit, label="Model"))
     else:
         raise ValueError("Unknown DispKind: ", data.disp_kind)
     plot_ax.legend(handles=artists)
     return artists, artists[0].get_color()
 
 
-def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None):
+def calculate_force_data(z, d, split, npts, rate, options, cancel_poller=lambda: None):
     cancel_poller()
     if npts > RESAMPLE_NPTS:
         split = split * RESAMPLE_NPTS // npts
         z = calculation.resample_dset(z, RESAMPLE_NPTS, True)
         d = calculation.resample_dset(d, RESAMPLE_NPTS, True)
     # Transform data to model units
+    t = np.linspace(0, 1000/rate, num=d.size, endpoint=False, dtype=d.dtype)
     f = d * options.k
     delta = z - d
 
     if not options.fit_mode:
-        return ForceCurveData(split=split, z=z, d=d, f=f, delta=delta)
+        return ForceCurveData(split=split, z=z, d=d, f=f, delta=delta, t=t)
 
     if options.fit_mode == calculation.FitMode.EXTEND:
         sl = slice(split)
@@ -1743,6 +1763,7 @@ def calculate_force_data(z, d, split, npts, options, cancel_poller=lambda: None)
         split=split,
         f=f,
         delta=delta,
+        t=t,
         sl=sl,
         beta=beta,
         beta_err=beta_err,
