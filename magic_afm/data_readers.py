@@ -60,12 +60,15 @@ def mmap_path_read_only(path):
         return mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
 
 
-async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
+async def convert_ardf(ardf_path, *, h5file_path=None, conv_path="ARDFtoHDF5.exe", pbar=None):
     """Turn an ARDF into a corresponding ARH5, returning the path.
 
     Requires converter executable available from Asylum Research"""
     ardf_path = trio.Path(ardf_path)
-    h5file_path = ardf_path.with_suffix(".h5")
+    if h5file_path is None:
+        h5file_path = ardf_path.with_suffix(".h5")
+    else:
+        h5file_path = trio.Path(h5file_path)
 
     if pbar is None:
         pipe = None
@@ -111,10 +114,11 @@ async def convert_ardf(ardf_path, conv_path="ARDFtoHDF5.exe", pbar=None):
             if pbar is not None:
                 nursery.start_soon(reading_stdout)
                 nursery.start_soon(reading_stderr)
-    except FileNotFoundError:
+    except FileNotFoundError as e:
         raise FileNotFoundError(
-            "Please acquire ARDFtoHDF5.exe and place it in the application's root folder."
-        )
+            "Please acquire ARDFtoHDF5.exe and "
+            "place it in the application's root folder."
+        ) from e
     except:
         with trio.CancelScope(shield=True):
             await h5file_path.unlink(missing_ok=True)
