@@ -1779,12 +1779,12 @@ def calculate_force_data(z, d, split, npts, rate, options, cancel_poller=lambda:
     )
 
 
-async def open_task(root):
-    """Open a file using a dialog box, then create a window for data analysis"""
+async def open_task(root, nursery):
+    """Open files using a dialog box, then launch a task for each"""
     # Choose file
-    path = await trio.to_thread.run_sync(
+    paths = await trio.to_thread.run_sync(
         partial(
-            tk.filedialog.askopenfilename,
+            tk.filedialog.askopenfilenames,
             master=root,
             filetypes=[
                 ("AFM Data", "*.h5 *.ARDF *.spm *.pfc"),
@@ -1794,8 +1794,13 @@ async def open_task(root):
             ],
         )
     )
-    if not path:
-        return  # Cancelled
+
+    for path in paths:
+        nursery.start_soon(open_one, root, path)
+
+
+async def open_one(root, path):
+    """Open the supplied path and create a window for data analysis"""
     path = trio.Path(path)
 
     # choose handler based on file suffix
@@ -1958,7 +1963,7 @@ async def main_task(root):
     async with trio.open_nursery() as nursery:
         # local names of actions
         quit_callback = nursery.cancel_scope.cancel
-        open_callback = partial(nursery.start_soon, open_task, root)
+        open_callback = partial(nursery.start_soon, open_task, root, nursery)
         demo_callback = partial(nursery.start_soon, demo_task, root)
         about_callback = partial(nursery.start_soon, about_task, root)
         help_action = partial(
