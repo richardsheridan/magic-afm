@@ -1329,6 +1329,7 @@ async def force_volume_task(
                 norm=norm(vmin=image_stats.q01, vmax=image_stats.q99),
                 cmap=cmap,
             )
+            display.img_ax.autoscale()
             axesimage.get_array().fill_value = np.nan
 
             colorbar = display.fig.colorbar(
