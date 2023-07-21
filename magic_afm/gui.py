@@ -1321,10 +1321,10 @@ async def force_volume_task(
                 image_array,
                 origin="lower",
                 extent=(
-                    -0.5*fastscansize/image_array.shape[1],
-                    fastscansize+0.5*fastscansize/image_array.shape[1],
-                    -0.5*slowscansize/image_array.shape[0],
-                    slowscansize+0.5*slowscansize/image_array.shape[0],
+                    -0.5 * fastscansize / image_array.shape[1],
+                    fastscansize + 0.5 * fastscansize / image_array.shape[1],
+                    -0.5 * slowscansize / image_array.shape[0],
+                    slowscansize + 0.5 * slowscansize / image_array.shape[0],
                 ),
                 picker=True,
                 norm=norm(vmin=image_stats.q01, vmax=image_stats.q99),
@@ -1706,7 +1706,7 @@ def calculate_force_data(z, d, split, npts, rate, options, cancel_poller=lambda:
         z = calculation.resample_dset(z, RESAMPLE_NPTS, True)
         d = calculation.resample_dset(d, RESAMPLE_NPTS, True)
     # Transform data to model units
-    t = np.linspace(0, 1000/rate, num=d.size, endpoint=False, dtype=d.dtype)
+    t = np.linspace(0, 1000 / rate, num=d.size, endpoint=False, dtype=d.dtype)
     f = d * options.k
     delta = z - d
 
