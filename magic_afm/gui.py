@@ -249,7 +249,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
     async def idle_draw_task(self):
         # One of the slowest processes. Stick everything in a thread.
-        delay = 0
+        delay = 0.0
         # Initial draws are extra slow due to figure creation.
         # Make sure they are batched with a special loop.
         async with self.spinner_scope():
@@ -283,7 +283,8 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                 await trs(self.draw)
                 # previous delay is not great predictor of next delay
                 # for now try exponential moving average
-                delay = ((trio.current_time() - t) + delay) / 2
+                delay = ((trio.current_time() - t) + delay) / 2.0
+                delay = min(delay, 1.0)
                 # Funny story, we only want tight layout behavior on resize and
                 # a few other special cases, but also we want super().draw()
                 # and by extension draw_idle_task to be responsible for running
