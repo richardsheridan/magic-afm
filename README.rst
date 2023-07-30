@@ -106,9 +106,9 @@ Other precalculated images can be displayed using the "Image" drop-down box. The
 "logarithmic scale" checkbox can provide contrast when image
 data varies over many orders of magnitude. Images can be flattened, offset, or
 smoothed in the "Manipulations" window. The manipulated images are added to the
-image menu with "Calc<Ext/Ret><Manip>" where <Manip> is the selected operation
-and <Ext/Ret> indicates whether the parameter was estimated from the extend or
-retract data. The available image manipulations are:
+image menu with "Calc<Ext/Ret/Both><Manip>" where <Manip> is the selected operation
+and <Ext/Ret/Both> indicates whether the parameter was estimated from the extend,
+retract, or both data. The available image manipulations are:
 
 Flatten
    A linear fit to each row of the image is subtracted from that row
@@ -152,7 +152,7 @@ respectively. The data are in absolute units, as recorded in the raw data,
 without any offsets/shifts. This view provides a quick qualitative check on a
 force curve.
 
-The "Force curve display" can be toggled between spatial (d vs z) and
+The "Force curve display" can be toggled between spatial (d vs z) temporal (d vs t) and
 natural (f vs δ) units. The "Preprocessing" parameters are read from the data file
 metadata but can be adjusted on the fly, updating the display immediately.
 "Deflection Sens." refers to the calibration factor that multiplies the static vertical
@@ -164,7 +164,8 @@ Fitting Data
 ^^^^^^^^^^^^
 
 Fitting can be toggled between the default nothing (Skip), the approach curve (Extend) or
-the retract curve (Retract). The fit parameters are not read from the file and
+the retract curve (Retract), or simultaneously fit the extend and retract curves (Both).
+The fit parameters are not read from the file and
 only affect the display when either the extend or the retract portions of the
 force curve are toggled to fit. "Tip Radius (nm)" refers to the nominal radius
 of the parabolic probe assumed in the indentation model. "DMT-JKR (0-1)" refers
