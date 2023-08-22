@@ -396,7 +396,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             return
         is_fit = next(iter(self._point_data.values())).beta is not None
         if is_fit:
-            h = "t (ms); z (nm); d (nm); d_fit (nN)"
+            h = "t (ms); z (nm); d (nm); d_fit (nm)"
         else:
             h = "t (ms); z (nm); d (nm)"
         # fmt: off
