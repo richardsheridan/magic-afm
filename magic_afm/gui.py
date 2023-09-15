@@ -68,7 +68,7 @@ import trio
 import trio_parallel
 
 from matplotlib.axes import Axes
-from matplotlib.backend_bases import MouseButton, ResizeEvent
+from matplotlib.backend_bases import MouseButton
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.colorbar import Colorbar
 from matplotlib.colors import Normalize, LogNorm
@@ -293,37 +293,27 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                 # in draw_fn and flag need_draw, and it will be reset here.
                 self.figure.set_layout_engine("none")
 
+    # NOTE: self._resize_pending disables draw_idle to avoid a superfluous redraw
+    # when super().resize(event) internally calls draw_idle.
+    # self.resize() sets self._resize_pending and self._maybe_resize() resets it.
+
     def draw_idle(self):
-        self.draw_send.send_nowait(bool)
+        if self._resize_pending is None:
+            self.draw_send.send_nowait(bool)
 
     def resize(self, event):
-        def tight_resize_draw_fn():
-            self.figure.set_layout_engine(LAYOUT_ENGINE)
-
         if self._resize_pending is None:
+
+            def tight_resize_draw_fn():
+                self.figure.set_layout_engine(LAYOUT_ENGINE)
+
             self.draw_send.send_nowait(tight_resize_draw_fn)
         self._resize_pending = event
 
     def _maybe_resize(self):
-        if self._resize_pending is None:
-            return
-
-        width, height = self._resize_pending.width, self._resize_pending.height
-        self._resize_pending = None
-
-        # compute desired figure size in inches
-        dpival = self.figure.dpi
-        winch = width / dpival
-        hinch = height / dpival
-        self.figure.set_size_inches(winch, hinch, forward=False)
-
-        # reuse old data to avoid blinking before _tkagg.blit fires
-        self._tkphoto.configure(height=height, width=width)
-        self._tkcanvas.delete(self._tkcanvas_image_region)
-        self._tkcanvas_image_region = self._tkcanvas.create_image(
-            width // 2, height // 2, image=self._tkphoto
-        )
-        ResizeEvent("resize_event", self)._process()
+        if self._resize_pending is not None:
+            super().resize(self._resize_pending)
+            self._resize_pending = None
 
     def pipe_events_to_trio(self, spinner_scope, motion_send_chan, tooltip_send_chan):
         self.spinner_scope = spinner_scope
@@ -1243,7 +1233,7 @@ async def force_volume_task(
             if progress_image is not None:
                 progress_image.remove()
 
-        await display.canvas.draw_send.send(progress_image_cleanup_draw_fn)
+        display.canvas.draw_send.send_nowait(progress_image_cleanup_draw_fn)
 
         if cancel_scope.cancelled_caught:
             return
