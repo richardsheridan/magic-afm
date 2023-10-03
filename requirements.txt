@@ -12,12 +12,7 @@ attrs==23.1.0
     #   trio
     #   trio-parallel
 cffi==1.15.1
-    # via
-    #   samplerate
-    #   trio
-    #   trio-parallel
-colorama==0.4.6
-    # via tqdm
+    # via samplerate
 contourpy==1.1.0
     # via matplotlib
 cycler==0.11.0
@@ -53,9 +48,7 @@ outcome==1.2.0
     #   trio-parallel
 packaging==23.1
     # via matplotlib
-pefile==2023.2.7
-    # via pyinstaller
-pillow==10.0.0
+pillow==10.0.1
     # via
     #   -r requirements.in
     #   imageio
@@ -72,8 +65,6 @@ pyparsing==3.0.9
     # via matplotlib
 python-dateutil==2.8.2
     # via matplotlib
-pywin32-ctypes==0.2.2
-    # via pyinstaller
 samplerate==0.1.0
     # via -r requirements.in
 six==1.16.0
