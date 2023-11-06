@@ -460,7 +460,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
 
         if exporter is np.savez_compressed:
             try:
-                await trio.to_thread.run_sync(exporter, fname, **arrays)
+                await trio.to_thread.run_sync(partial(exporter, fname, **arrays))
             except Exception as e:
                 await trio.to_thread.run_sync(
                     partial(
