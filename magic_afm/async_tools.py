@@ -194,7 +194,6 @@ async def spinner_task(set_spinner, set_normal, task_status):
             await trio.sleep_forever()
 
 
-# noinspection PyUnreachableCode
 async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_status):
     """Manage a tooltip window visibility, position, and text."""
 
@@ -203,17 +202,20 @@ async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_
     tooltip_command = TOOLTIP_CANCEL  # a tuple of x, y, text. start hidden
 
     while True:
-        if tooltip_command != TOOLTIP_CANCEL:
-            with trio.move_on_after(show_delay):
+        if tooltip_command == TOOLTIP_CANCEL:
+            tooltip_command = await recv_chan.receive()
+        else:
+            with trio.move_on_after(show_delay) as cs:
                 tooltip_command = await recv_chan.receive()
-                continue
-            show_tooltip(*tooltip_command)
-            with trio.move_on_after(hide_delay):
-                tooltip_command = await recv_chan.receive()
-                hide_tooltip()
-                continue
-            hide_tooltip()
-        tooltip_command = await recv_chan.receive()
+            if cs.cancelled_caught:
+                show_tooltip(*tooltip_command)
+                try:
+                    with trio.move_on_after(hide_delay) as cs:
+                        tooltip_command = await recv_chan.receive()
+                    if cs.cancelled_caught:
+                        tooltip_command = TOOLTIP_CANCEL
+                finally:
+                    hide_tooltip()
 
 
 def make_cancel_poller():
