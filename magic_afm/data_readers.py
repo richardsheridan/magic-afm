@@ -118,7 +118,7 @@ async def convert_ardf(ardf_path, *, h5file_path=None, conv_path="ARDFtoHDF5.exe
         raise FileNotFoundError(
             "Please acquire ARDFtoHDF5.exe and "
             "place it in the application's root folder."
-        ) from e
+        ) from None
     except:
         with trio.CancelScope(shield=True):
             await h5file_path.unlink(missing_ok=True)
@@ -492,7 +492,7 @@ class ARH5File(BaseForceVolumeFile):
 
     async def aclose(self):
         with trio.CancelScope(shield=True):
-            await trs(self._h5data.close)
+            await trio.to_thread.run_sync(self._h5data.close)
 
     def _choose_worker(self, h5data):
         if "FFM" in h5data:

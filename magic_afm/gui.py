@@ -624,6 +624,7 @@ class TkHost:
             run_sync_soon_threadsafe=self.run_sync_soon_threadsafe,
             run_sync_soon_not_threadsafe=self.run_sync_soon_not_threadsafe,
             done_callback=self.done_callback,
+            restrict_keyboard_interrupt_to_checkpoints=True,
         )
         try:
             self.root.mainloop()
