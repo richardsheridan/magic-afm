@@ -545,7 +545,7 @@ class BrukerWorkerBase(metaclass=abc.ABCMeta):
         self.header = header  # get_image
         self.mm = mm  # get_image
         self.split = s  # get_force_curve
-        self.version = header[header["first"]]["Version"].strip()  # get_image
+        self.version = header["Force file list"]["Version"].strip()  # get_image
 
     @abc.abstractmethod
     def get_force_curve(self, r, c, defl_sens, sync_dist):
@@ -818,34 +818,33 @@ def parse_nanoscope_header(header_lines):
     that iterates the header line-by-line."""
 
     header = {}
-    section = ""
     for line in header_lines:
         assert line.startswith("\\")
         line = line[1:].strip()  # strip leading slash and newline
 
         if line.startswith("*"):
-            if line.startswith("*File list end"):
+            # we're starting a new section
+            section_name = line[1:]
+            if section_name == "File list end":
                 break  # THIS IS THE **NORMAL** WAY TO END THE FOR LOOP
-            if section == line[1:]:
-                if header[section] is current:
-                    header[section] = [current]
-                current = {}
-                header[section].append(current)
+            if section_name in header:
+                # repeat section name, which we interpret as a list of sections
+                if header[section_name] is current_section:
+                    header[section_name] = [current_section]
+                current_section = {}
+                header[section_name].append(current_section)
             else:
-                section = line[1:]
-                if not header:
-                    header["first"] = section
-                current = {}
-                header[section] = current
-            continue
+                current_section = {}
+                header[section_name] = current_section
+        else:
+            # add key, value pairs for this section
+            key, value = line.split(":", maxsplit=1)
+            # Colon special case for "groups"
+            if key.startswith("@") and key[1].isdigit() and len(key) == 2:
+                key2, value = value.split(":", maxsplit=1)
+                key = key + ":" + key2
 
-        key, value = line.split(":", maxsplit=1)
-        # Colon special case for "groups"
-        if key.startswith("@") and key[1].isdigit() and len(key) == 2:
-            key2, value = value.split(":", maxsplit=1)
-            key = key + ":" + key2
-
-        current[key] = value.strip()
+            current_section[key] = value.strip()
     else:
         raise ValueError("File ended too soon")
     if (not header) or ("" in header):
@@ -855,6 +854,7 @@ def parse_nanoscope_header(header_lines):
     header["Image"] = {}
     for entry in header["Ciao image list"]:
         if type(entry) is str:
+            # a single image in this file, rather than a list of images
             name = header["Ciao image list"]["@2:Image Data"].split('"')[1]
             header["Image"][name] = header["Ciao image list"]
             break
@@ -864,6 +864,7 @@ def parse_nanoscope_header(header_lines):
     header["FV"] = {}
     for entry in header["Ciao force image list"]:
         if type(entry) is str:
+            # a single force image in this file, rather than a list of images
             name = header["Ciao force image list"]["@4:Image Data"].split('"')[1]
             header["FV"][name] = header["Ciao force image list"]
             break
