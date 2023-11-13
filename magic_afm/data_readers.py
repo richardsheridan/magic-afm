@@ -71,12 +71,15 @@ async def convert_ardf(ardf_path, *, h5file_path=None, conv_path="ARDFtoHDF5.exe
         h5file_path = trio.Path(h5file_path)
 
     if pbar is None:
+        # Just display the raw subprocess output
         pipe = None
     else:
+        # set up pbar and pipes for custom display
         pbar.set_description_str("Converting " + ardf_path.name)
         pipe = PIPE
 
     async def reading_stdout():
+        """Store up stdout in our own buffer to check for Failed at the end."""
         stdout = bytearray()
         async for bytes_ in proc.stdout:
             stdout.extend(bytes_)
@@ -87,6 +90,7 @@ async def convert_ardf(ardf_path, *, h5file_path=None, conv_path="ARDFtoHDF5.exe
             print(stdout)
 
     async def reading_stderr():
+        """Parse the percent complete display to send to our own progressbar"""
         async for bytes_ in proc.stderr:
             i = bytes_.rfind(b"\x08") + 1  # first thing on right not a backspace
             most_recent_numeric_output = bytes_[i:-1]  # crop % sign
@@ -108,6 +112,7 @@ async def convert_ardf(ardf_path, *, h5file_path=None, conv_path="ARDFtoHDF5.exe
                     [conv_path, ardf_path, h5file_path],
                     stderr=pipe,
                     stdout=pipe,
+                    # suppress a console on windows
                     startupinfo=STARTUPINFO(dwFlags=STARTF_USESHOWWINDOW),
                 )
             )
