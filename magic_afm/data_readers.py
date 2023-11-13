@@ -143,6 +143,10 @@ class ForceVolumeParams:
 
 
 class BaseForceVolumeFile(metaclass=abc.ABCMeta):
+    """Consistent interface across filetypes for Magic AFM GUI
+
+    I would not recommend re-using this or its subclasses for an external application.
+    Prefer wrapping a worker class."""
     _basic_units_map = {}
     _default_heightmap_names = ()
 
