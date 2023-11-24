@@ -23,6 +23,7 @@ asyncifies the worker's disk reads with threads, although this is not a rule.
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import abc
 import dataclasses
+import struct
 import threading
 from functools import partial
 from subprocess import PIPE
@@ -34,6 +35,7 @@ except ImportError:
     STARTF_USESHOWWINDOW = None
 from typing import Set
 
+import attrs
 import numpy as np
 import trio
 
@@ -60,7 +62,9 @@ def mmap_path_read_only(path):
         return mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
 
 
-async def convert_ardf(ardf_path, *, h5file_path=None, conv_path="ARDFtoHDF5.exe", pbar=None):
+async def convert_ardf(
+    ardf_path, *, h5file_path=None, conv_path="ARDFtoHDF5.exe", pbar=None
+):
     """Turn an ARDF into a corresponding ARH5, returning the path.
 
     Requires converter executable available from Asylum Research"""
@@ -147,6 +151,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
 
     I would not recommend re-using this or its subclasses for an external application.
     Prefer wrapping a worker class."""
+
     _basic_units_map = {}
     _default_heightmap_names = ()
 
@@ -891,6 +896,66 @@ def bruker_bpp_fix(bpp, version):
         return 4
     else:
         return int(bpp)
+
+
+@attrs.frozen(slots=True)
+class ARDFHeader:
+    offset: int = attrs.field()
+    crc: int = attrs.field(repr=hex)
+    size: int = attrs.field()
+    name: bytes = attrs.field()
+    flags: int = attrs.field(repr=hex)
+
+    @classmethod
+    def unpack(cls, data: memoryview, offset=0):
+        return cls(offset, *struct.unpack_from("<LL4sL", data, offset))
+
+    def validate(self, data):
+        # ImHex poly 0x4c11db7 init 0xffffffff xor out 0xffffffff reflect in and out
+        import zlib
+
+        crc = zlib.crc32(data[self.offset + 4 : self.offset + self.size])
+        if self.crc != crc:
+            raise ValueError(f"Invalid section. Expected {self.crc:X}, got {crc:X}.")
+
+
+@attrs.frozen(slots=True)
+class ARDFFileTableOfContents:
+    offset: int
+    size: int
+    entries: list
+
+    @classmethod
+    def unpack(cls, data: memoryview, offset: int):
+        size, nentries, stride = struct.unpack_from("<QLL", data, offset + 16)
+        assert stride == 24
+        assert size - 32 == nentries * stride, (size, nentries, stride)
+        entries = []
+        for toc_offset in range(offset + 32, offset + size, 24):
+            *header, pointer = struct.unpack_from("<LL4sLQ", data, toc_offset)
+            if not pointer:
+                break  # rest is null padding
+            entries.append((ARDFHeader(toc_offset, *header), pointer))
+        return cls(offset, size, entries)
+
+
+def parse_ardf(ardf_view: memoryview):
+    file_header = ARDFHeader.unpack(ardf_view)
+    file_header.validate(ardf_view)
+    if file_header.size != 16 or file_header.name != b"ARDF":
+        raise ValueError("Not an ARDF file.", file_header)
+    ftoc_header = ARDFHeader.unpack(ardf_view, offset=file_header.size)
+    ftoc_header.validate(ardf_view)
+    if ftoc_header.size != 32 or ftoc_header.name != b"FTOC":
+        raise ValueError("Malformed ARDF file table of contents.", ftoc_header)
+    ftoc = ARDFFileTableOfContents.unpack(ardf_view, offset=file_header.size)
+
+    for item, pointer in ftoc.entries:
+        print(item)
+        item.validate(ardf_view)
+        item = ARDFHeader.unpack(ardf_view, pointer)
+        print(item)
+        item.validate(ardf_view)
 
 
 SUFFIX_FVFILE_MAP = {".h5": ARH5File, ".spm": NanoscopeFile, ".pfc": NanoscopeFile}
