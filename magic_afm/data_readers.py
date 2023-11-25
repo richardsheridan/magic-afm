@@ -923,7 +923,7 @@ class ARDFHeader:
 
 
 @attrs.frozen(slots=True)
-class ARDFFileTableOfContents:
+class ARDFTableOfContents:
     data: memoryview
     offset: int
     size: int
@@ -1010,7 +1010,7 @@ class ARDFImage:
         if imag_header.size != 32 or imag_header.name != b"IMAG":
             raise ValueError("Malformed image header.", imag_header)
         imag_header.validate()
-        imag_toc = ARDFFileTableOfContents.unpack(imag_header.data, imag_header.offset)
+        imag_toc = ARDFTableOfContents.unpack(imag_header.data, imag_header.offset)
 
         # don't use NEXT or THMB data, step over
         ttoc_header = ARDFHeader.unpack(imag_toc.data, imag_toc.offset + imag_toc.size)
@@ -1082,7 +1082,7 @@ def parse_ardf(ardf_view: memoryview):
     if ftoc_header.size != 32 or ftoc_header.name != b"FTOC":
         raise ValueError("Malformed ARDF file table of contents.", ftoc_header)
     ftoc_header.validate()
-    ftoc = ARDFFileTableOfContents.unpack(ardf_view, offset=file_header.size)
+    ftoc = ARDFTableOfContents.unpack(ardf_view, offset=file_header.size)
     ttoc_header = ARDFHeader.unpack(ardf_view, offset=ftoc.offset + ftoc.size)
     if ttoc_header.size != 32 or ttoc_header.name != b"TTOC":
         raise ValueError("Malformed ARDF text table of contents.", ftoc_header)
