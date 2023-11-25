@@ -939,7 +939,11 @@ class ARDFFileTableOfContents:
             *header, pointer = struct.unpack_from("<LL4sLQ", data, toc_offset)
             if not pointer:
                 break  # rest is null padding
-            entries.append((ARDFHeader(data, toc_offset, *header), pointer))
+            entry_header = ARDFHeader(data, toc_offset, *header)
+            if entry_header.name not in {b"IMAG", b"VOLM", b"NEXT", b"THMB"}:
+                raise ValueError("Malformed table of contents.", entry_header)
+            entry_header.validate()
+            entries.append((entry_header, pointer))
         return cls(data, offset, size, entries)
 
 
@@ -961,7 +965,8 @@ class ARDFTextTableOfContents:
             if not pointer:
                 break  # rest is null padding
             entry_header = ARDFHeader(data, toc_offset, *header)
-            assert entry_header.name == b"TOFF", entry_header
+            if entry_header.name != b"TOFF":
+                raise ValueError("Malformed text table entry.", entry_header)
             entry_header.validate()
             entries.append((entry_header, pointer))
         return cls(data, offset, size, entries)
@@ -969,12 +974,13 @@ class ARDFTextTableOfContents:
     def decode_entry(self, index: int):
         entry_header, pointer = self.entries[index]
         *header, i, text_len = struct.unpack_from("<LL4sLLL", self.data, pointer)
-        assert i == index, (i, index)
         text_header = ARDFHeader(self.data, pointer, *header)
-        assert text_header.name == b"TEXT", text_header
+        if text_header.name != b"TEXT":
+            raise ValueError("Malformed text section.", text_header)
         text_header.validate()
+        assert i == index, (i, index)
         offset = text_header.offset + 24
-        assert text_len < 24 + text_header.size, (text_len, text_header)
+        assert text_len < text_header.size - 24, (text_len, text_header)
         return (
             self.data[offset : offset + text_len]
             .tobytes()
@@ -1018,16 +1024,12 @@ class ARDFImage:
         if idef_header.name != b"IDEF":
             raise ValueError("Malformed image definition.", ttoc_header)
         idef_header.validate()
-        (
-            points,
-            lines,
-            _,
-            __,
-            x_step,
-            y_step,
-            *cstrings,
-        ) = struct.unpack_from(
-            "<LLQQdd32s32s32s32s", idef_header.data, idef_header.offset + 16
+        idef_format = "<LLQQdd32s32s32s32s"
+        assert struct.calcsize(idef_format) == idef_header.size - 16
+        points, lines, _, __, x_step, y_step, *cstrings = struct.unpack_from(
+            idef_format,
+            idef_header.data,
+            idef_header.offset + 16,
         )
         assert not (_ or __), (_, __)
         x_units, y_units, name, units = [
