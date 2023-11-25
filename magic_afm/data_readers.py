@@ -22,7 +22,6 @@ asyncifies the worker's disk reads with threads, although this is not a rule.
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import abc
-import dataclasses
 import threading
 from functools import partial
 from subprocess import PIPE
@@ -32,8 +31,8 @@ try:
 except ImportError:
     STARTUPINFO = lambda *a, **kw: None
     STARTF_USESHOWWINDOW = None
-from typing import Set
 
+import attrs
 import numpy as np
 import trio
 
@@ -132,9 +131,9 @@ async def convert_ardf(ardf_path, *, h5file_path=None, conv_path="ARDFtoHDF5.exe
     return h5file_path
 
 
-@dataclasses.dataclass
+@attrs.frozen
 class ForceVolumeParams:
-    image_names: Set[str]
+    image_names: set[str]
     k: float
     defl_sens: float
     npts: int
