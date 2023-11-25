@@ -993,6 +993,7 @@ class ARDFImage:
     units: str
     points: int
     lines: int
+    stride: int
     x_step: float
     y_step: float
     x_units: str
@@ -1003,14 +1004,16 @@ class ARDFImage:
         if imag_header.size != 32 or imag_header.name != b"IMAG":
             raise ValueError("Malformed image header.", imag_header)
         imag_header.validate()
-        # don't use NEXT or THMB data, step over
         imag_toc = ARDFFileTableOfContents.unpack(imag_header.data, imag_header.offset)
-        # don't use TTOC or TOFF, step over
+
+        # don't use NEXT or THMB data, step over
         ttoc_header = ARDFHeader.unpack(imag_toc.data, imag_toc.offset + imag_toc.size)
         if ttoc_header.size != 32 or ttoc_header.name != b"TTOC":
             raise ValueError("Malformed image text table of contents.", ttoc_header)
         ttoc_header.validate()
         ttoc = ARDFTextTableOfContents.unpack(ttoc_header.data, ttoc_header.offset)
+
+        # don't use TTOC or TOFF, step over
         idef_header = ARDFHeader.unpack(ttoc.data, ttoc.offset + ttoc.size)
         if idef_header.name != b"IDEF":
             raise ValueError("Malformed image definition.", ttoc_header)
@@ -1030,22 +1033,42 @@ class ARDFImage:
         x_units, y_units, name, units = [
             x.rstrip(b"\0").decode("windows-1252") for x in cstrings
         ]
+
         ibox_header = ARDFHeader.unpack(
             idef_header.data, idef_header.offset + idef_header.size
         )
         if ibox_header.size != 32 or ibox_header.name != b"IBOX":
             raise ValueError("Malformed image layout.", ibox_header)
         ibox_header.validate()
-        size, line, stride = struct.unpack_from(
+        size, lines_from_ibox, stride = struct.unpack_from(
             "<QLL", ibox_header.data, ibox_header.offset + 16
+        )  # TODO: invert lines? it's just a negative sign on stride
+        assert lines == lines_from_ibox, (lines, lines_from_ibox)
+
+        return cls(
+            imag_header.data,
+            imag_header.offset,
+            ibox_header.offset + ibox_header.size + 16,  # past IDAT header
+            size,
+            name,
+            units,
+            points,
+            lines,
+            stride,
+            x_step,
+            y_step,
+            x_units,
+            y_units,
         )
+
+    def get_ndarray(self):
         return np.ndarray(
-            shape=(lines, points),
+            shape=(self.lines, self.points),
             dtype=np.float32,
-            buffer=ibox_header.data.obj,
-            offset=ibox_header.offset + ibox_header.size + 16,  # past IDAT header
-            strides=(stride, 4),
-        )  # TODO: invert lines? it's just a negative sign on strides
+            buffer=self.data.obj,
+            offset=self.data_offset,
+            strides=(self.stride, 4),
+        )
 
 
 def parse_ardf(ardf_view: memoryview):
@@ -1069,7 +1092,7 @@ def parse_ardf(ardf_view: memoryview):
         item.validate()
         item = ARDFHeader.unpack(ardf_view, pointer)
         if item.name == b"IMAG":
-            print(ARDFImage.parse_imag(item)[::-1].strides)
+            print(ARDFImage.parse_imag(item).get_ndarray())
         if item.name == b"VOLM":
             parse_volm(item)
 
