@@ -43,7 +43,6 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import ctypes
-import dataclasses
 import datetime
 import enum
 import itertools
@@ -60,6 +59,7 @@ from math import exp, inf
 from tkinter import ttk
 from typing import Callable, ClassVar, Optional
 
+import attrs
 import imageio
 import matplotlib
 import numpy as np
@@ -137,7 +137,7 @@ class DispKind(enum.IntEnum):
     δf = enum.auto()
 
 
-@dataclasses.dataclass
+@attrs.frozen
 class ForceCurveOptions:
     fit_mode: calculation.FitMode
     disp_kind: DispKind
@@ -148,7 +148,7 @@ class ForceCurveOptions:
     tau: float
 
 
-@dataclasses.dataclass
+@attrs.frozen
 class ForceCurveData:
     z: np.ndarray
     d: np.ndarray
@@ -171,7 +171,7 @@ class ForceCurveData:
     sse: Optional[np.ndarray] = None
 
 
-@dataclasses.dataclass(frozen=True)
+@attrs.frozen
 class ImagePoint:
     r: int
     c: int
@@ -223,7 +223,7 @@ class ImagePoint:
         return cls(r, c, x, y)
 
 
-@dataclasses.dataclass(frozen=True)
+@attrs.frozen
 class ImageStats:
     min: float
     q01: float
@@ -1221,7 +1221,7 @@ async def force_volume_task(
                         np.ndindex(img_shape),
                         chunksize * 8,
                     )
-                    d = dataclasses.asdict(options)
+                    d = attrs.asdict(options)
                     del d["disp_kind"]
                     property_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
@@ -1718,7 +1718,7 @@ def calculate_force_data(z, d, split, npts, rate, options, cancel_poller=lambda:
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
     cancel_poller()
-    optionsdict = dataclasses.asdict(options)
+    optionsdict = attrs.asdict(options)
     beta, beta_err, sse, calc_fun = calculation.fitfun(
         delta[sl], f[sl], **optionsdict, cancel_poller=cancel_poller, split=split
     )
@@ -1745,7 +1745,7 @@ def calculate_force_data(z, d, split, npts, rate, options, cancel_poller=lambda:
             z_true_surface,
             mindelta,
         ) = calculation.calc_def_ind_ztru(
-            f[sl], beta, **dataclasses.asdict(options), split=split
+            f[sl], beta, **attrs.asdict(options), split=split
         )
     else:
         deflection, indentation, z_true_surface, mindelta = (
