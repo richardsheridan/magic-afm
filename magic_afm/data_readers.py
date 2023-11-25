@@ -898,13 +898,17 @@ def bruker_bpp_fix(bpp, version):
         return int(bpp)
 
 
-@attrs.frozen(slots=True)
+def decode_cstring(cstring: bytes):
+    return cstring.rstrip(b"\0").decode("windows-1252")
+
+
+@attrs.frozen
 class ARDFHeader:
-    data: memoryview = attrs.field()
-    offset: int = attrs.field()
+    data: memoryview
+    offset: int
     crc: int = attrs.field(repr=hex)
-    size: int = attrs.field()
-    name: bytes = attrs.field()
+    size: int
+    name: bytes
     flags: int = attrs.field(repr=hex)
 
     @classmethod
@@ -920,9 +924,10 @@ class ARDFHeader:
             raise ValueError(
                 f"Invalid section. Expected {self.crc:X}, got {crc:X}.", self
             )
+        return True
 
 
-@attrs.frozen(slots=True)
+@attrs.frozen
 class ARDFTableOfContents:
     data: memoryview
     offset: int
@@ -947,7 +952,7 @@ class ARDFTableOfContents:
         return cls(data, offset, size, entries)
 
 
-@attrs.frozen(slots=True)
+@attrs.frozen
 class ARDFTextTableOfContents:
     data: memoryview = attrs.field()
     offset: int
@@ -989,7 +994,7 @@ class ARDFTextTableOfContents:
         )
 
 
-@attrs.frozen(slots=True)
+@attrs.frozen
 class ARDFImage:
     data: memoryview
     imag_offset: int
@@ -997,9 +1002,8 @@ class ARDFImage:
     size: int
     name: str
     units: str
-    points: int
-    lines: int
-    stride: int
+    shape: tuple[int, int]
+    strides: tuple[int, int]
     x_step: float
     y_step: float
     x_units: str
@@ -1021,20 +1025,20 @@ class ARDFImage:
 
         # don't use TTOC or TOFF, step over
         idef_header = ARDFHeader.unpack(ttoc.data, ttoc.offset + ttoc.size)
-        if idef_header.name != b"IDEF":
-            raise ValueError("Malformed image definition.", ttoc_header)
-        idef_header.validate()
         idef_format = "<LLQQdd32s32s32s32s"
-        assert struct.calcsize(idef_format) == idef_header.size - 16
+        if (
+            idef_header.name != b"IDEF"
+            or idef_header.size != struct.calcsize(idef_format) + 16
+        ):
+            raise ValueError("Malformed image definition.", idef_header)
+        idef_header.validate()
         points, lines, _, __, x_step, y_step, *cstrings = struct.unpack_from(
             idef_format,
             idef_header.data,
             idef_header.offset + 16,
         )
         assert not (_ or __), (_, __)
-        x_units, y_units, name, units = [
-            x.rstrip(b"\0").decode("windows-1252") for x in cstrings
-        ]
+        x_units, y_units, name, units = list(map(decode_cstring, cstrings))
 
         ibox_header = ARDFHeader.unpack(
             idef_header.data, idef_header.offset + idef_header.size
@@ -1042,21 +1046,24 @@ class ARDFImage:
         if ibox_header.size != 32 or ibox_header.name != b"IBOX":
             raise ValueError("Malformed image layout.", ibox_header)
         ibox_header.validate()
-        size, lines_from_ibox, stride = struct.unpack_from(
+        data_offset = ibox_header.offset + ibox_header.size + 16  # past IDAT header
+        ibox_size, lines_from_ibox, stride = struct.unpack_from(
             "<QLL", ibox_header.data, ibox_header.offset + 16
         )  # TODO: invert lines? it's just a negative sign on stride
         assert lines == lines_from_ibox, (lines, lines_from_ibox)
+        assert ARDFHeader.unpack(
+            ibox_header.data, ibox_header.offset + ibox_size
+        ).validate()  # TODO: comment out, causes unnecessary disk read
 
         return cls(
             imag_header.data,
             imag_header.offset,
-            ibox_header.offset + ibox_header.size + 16,  # past IDAT header
-            size,
+            data_offset,
+            data_offset + ibox_size - imag_header.offset,  # IMAG crc to GAMI flags
             name,
             units,
-            points,
-            lines,
-            stride,
+            (lines, points),
+            (stride, 4),
             x_step,
             y_step,
             x_units,
@@ -1065,42 +1072,69 @@ class ARDFImage:
 
     def get_ndarray(self):
         return np.ndarray(
-            shape=(self.lines, self.points),
+            shape=self.shape,
             dtype=np.float32,
             buffer=self.data.obj,
             offset=self.data_offset,
-            strides=(self.stride, 4),
-        )
+            strides=self.strides,
+        ).copy()
 
 
-def parse_ardf(ardf_view: memoryview):
-    file_header = ARDFHeader.unpack(ardf_view, 0)
-    if file_header.size != 16 or file_header.name != b"ARDF":
-        raise ValueError("Not an ARDF file.", file_header)
-    file_header.validate()
-    ftoc_header = ARDFHeader.unpack(ardf_view, offset=file_header.size)
-    if ftoc_header.size != 32 or ftoc_header.name != b"FTOC":
-        raise ValueError("Malformed ARDF file table of contents.", ftoc_header)
-    ftoc_header.validate()
-    ftoc = ARDFTableOfContents.unpack(ardf_view, offset=file_header.size)
-    ttoc_header = ARDFHeader.unpack(ardf_view, offset=ftoc.offset + ftoc.size)
-    if ttoc_header.size != 32 or ttoc_header.name != b"TTOC":
-        raise ValueError("Malformed ARDF text table of contents.", ftoc_header)
-    ttoc_header.validate()
-    ttoc = ARDFTextTableOfContents.unpack(ardf_view, offset=ftoc.offset + ftoc.size)
-    assert len(ttoc.entries) == 1
-    notes = ttoc.decode_entry(0)
-    for item, pointer in ftoc.entries:
-        item.validate()
-        item = ARDFHeader.unpack(ardf_view, pointer)
-        if item.name == b"IMAG":
-            print(ARDFImage.parse_imag(item).get_ndarray())
-        if item.name == b"VOLM":
-            parse_volm(item)
+@attrs.frozen
+class ARDFVolume:
+    data: memoryview
+    volm_offset: int
+    data_offset: int
+    size: int
+    name: str
+    units: str
+    shape: tuple[int, int, int]
+    strides: tuple[int, int, int]
+    x_step: float
+    y_step: float
+    t_step: float
+    x_units: str
+    y_units: str
+    t_units: str
+
+    @classmethod
+    def parse_volm(cls, volm_header: ARDFHeader):
+        ...
 
 
-def parse_volm(volm_header: ARDFHeader):
-    ...
+@attrs.define
+class ARDFWorker:
+    @classmethod
+    def parse_ardf(cls, ardf_view: memoryview):
+        file_header = ARDFHeader.unpack(ardf_view, 0)
+        if file_header.size != 16 or file_header.name != b"ARDF":
+            raise ValueError("Not an ARDF file.", file_header)
+        file_header.validate()
+        ftoc_header = ARDFHeader.unpack(ardf_view, offset=file_header.size)
+        if ftoc_header.size != 32 or ftoc_header.name != b"FTOC":
+            raise ValueError("Malformed ARDF file table of contents.", ftoc_header)
+        ftoc_header.validate()
+        ftoc = ARDFTableOfContents.unpack(ardf_view, offset=file_header.size)
+        ttoc_header = ARDFHeader.unpack(ardf_view, offset=ftoc.offset + ftoc.size)
+        if ttoc_header.size != 32 or ttoc_header.name != b"TTOC":
+            raise ValueError("Malformed ARDF text table of contents.", ftoc_header)
+        ttoc_header.validate()
+        ttoc = ARDFTextTableOfContents.unpack(ardf_view, offset=ftoc.offset + ftoc.size)
+        assert len(ttoc.entries) == 1
+        notes = ttoc.decode_entry(0)
+        images = {}
+        for item, pointer in ftoc.entries:
+            item.validate()
+            item = ARDFHeader.unpack(ardf_view, pointer)
+            if item.name == b"IMAG":
+                item = ARDFImage.parse_imag(item)
+                images[item.name] = item
+                item.get_ndarray()
+            elif item.name == b"VOLM":
+                ARDFVolume.parse_volm(item)
+            else:
+                raise RuntimeError(f"Unknown TOC entry {item.name}.", item)
+        print(notes[:20], list(images))
 
 
 SUFFIX_FVFILE_MAP = {".h5": ARH5File, ".spm": NanoscopeFile, ".pfc": NanoscopeFile}
