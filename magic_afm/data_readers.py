@@ -1147,7 +1147,9 @@ class ARDFVolume:
                 )
             )
             offset = header.offset + header.size
-            channels[name] = (i, unit)
+            # TODO: apply NANOMETER_UNIT_CONVERSION depending on this
+            assert unit == "m"
+            channels[name] = (i, "nm")
         else:
             raise RuntimeError("Got too many channels.", channels)
 
@@ -1280,12 +1282,14 @@ class ARDFVolume:
             # return a class that uses vtoc entries for lookups
 
     def get_force_curve(self, r, c):
-        return self.array_view[
-            r,
-            c,
-            [self.channels["Drive"][0], self.channels["Defl"][0]],
-        ] * NANOMETER_UNIT_CONVERSION
-        # TODO: Raw or Drive?
+        return (
+            self.array_view[
+                r,
+                c,
+                [self.channels["Raw"][0], self.channels["Defl"][0]],
+            ]
+            * NANOMETER_UNIT_CONVERSION
+        )
 
 
 @attrs.define
