@@ -996,11 +996,9 @@ class ARDFTextTableOfContents:
 class ARDFImage:
     data: memoryview
     imag_offset: int
-    data_offset: int
+    ibox_offset: int
     name: str
     units: str
-    shape: tuple[int, int]
-    strides: tuple[int, int]
     x_step: float
     y_step: float
     x_units: str
@@ -1037,29 +1035,12 @@ class ARDFImage:
         assert not (_ or __), (_, __)
         x_units, y_units, name, units = list(map(decode_cstring, cstrings))
 
-        ibox_header = ARDFHeader.unpack(
-            idef_header.data, idef_header.offset + idef_header.size
-        )
-        if ibox_header.size != 32 or ibox_header.name != b"IBOX":
-            raise ValueError("Malformed image layout.", ibox_header)
-        ibox_header.validate()
-        data_offset = ibox_header.offset + ibox_header.size + 16  # past IDAT header
-        ibox_size, lines_from_ibox, stride = struct.unpack_from(
-            "<QLL", ibox_header.data, ibox_header.offset + 16
-        )  # TODO: invert lines? it's just a negative sign on stride
-        assert lines == lines_from_ibox, (lines, lines_from_ibox)
-        assert ARDFHeader.unpack(
-            ibox_header.data, ibox_header.offset + ibox_size
-        ).validate()  # TODO: comment out, causes unnecessary disk read
-
         return cls(
             imag_header.data,
             imag_header.offset,
-            data_offset,
+            idef_header.offset + idef_header.size,
             name,
             units,
-            (lines, points),
-            (stride, 4),
             x_step,
             y_step,
             x_units,
@@ -1067,16 +1048,30 @@ class ARDFImage:
         )
 
     def get_ndarray(self):
-        return (
-            np.ndarray(
-                shape=self.shape,
-                dtype=np.float32,
-                buffer=self.data.obj,
-                offset=self.data_offset,
-                strides=self.strides,
-            )
-            * NANOMETER_UNIT_CONVERSION
+        ibox_header = ARDFHeader.unpack(self.data, self.ibox_offset)
+        if ibox_header.size != 32 or ibox_header.name != b"IBOX":
+            raise ValueError("Malformed image layout.", ibox_header)
+        ibox_header.validate()
+        data_offset = ibox_header.offset + ibox_header.size + 16  # past IDAT header
+        ibox_size, lines, stride = struct.unpack_from(
+            "<QLL", ibox_header.data, ibox_header.offset + 16
+        )  # TODO: invert lines? it's just a negative sign on stride
+        points = (stride - 16)//4  # less IDAT header
+        # elide image data validation and map into an array directly
+        arr = np.ndarray(
+            shape=(lines, points),
+            dtype=np.float32,
+            buffer=self.data.obj,
+            offset=data_offset,
+            strides=(stride, 4),
+        ).copy()
+        gami_header = ARDFHeader.unpack(
+            ibox_header.data, ibox_header.offset + ibox_size
         )
+        if gami_header.size != 16 or gami_header.name != b"GAMI":
+            raise ValueError("Malformed image layout.", gami_header)
+        gami_header.validate()
+        return arr
 
 
 @attrs.frozen
