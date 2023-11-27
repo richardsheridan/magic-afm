@@ -1056,7 +1056,7 @@ class ARDFImage:
         ibox_size, lines, stride = struct.unpack_from(
             "<QLL", ibox_header.data, ibox_header.offset + 16
         )  # TODO: invert lines? it's just a negative sign on stride
-        points = (stride - 16)//4  # less IDAT header
+        points = (stride - 16) // 4  # less IDAT header
         # elide image data validation and map into an array directly
         arr = np.ndarray(
             shape=(lines, points),
@@ -1195,14 +1195,13 @@ class ARDFVolume:
         mlov_header.validate()
 
         # Check if each offset is regularly spaced
-        voff_strides = [
-            next_entry[-1] - entry[-1]  # compare pointers to VSET
-            for entry, next_entry in zip(vtoc_entries, vtoc_entries[1:])
-        ]
-        if all(s == voff_strides[0] for s in voff_strides):
+        # optimize for LARGE regular case (FMaps are SMALL)
+        pointer_arr = np.array([x[-1] for x in vtoc_entries], np.int64)
+        voff_strides = np.diff(pointer_arr)
+        if np.all(voff_strides == voff_strides[0]):
             # return a class that holds a strided array view
 
-            # just walk past these first headers to find our offset
+            # just walk past these first headers to find our data_offset
             first_vset_header = ARDFHeader.unpack(data, vtoc_entries[0][-1])
             if first_vset_header.name != b"VSET":
                 raise ValueError("Malformed volume set", first_vset_header)
@@ -1254,7 +1253,7 @@ class ARDFVolume:
                 buffer=data.obj,
                 offset=data_offset,
                 strides=(
-                    voff_strides[0],
+                    int(voff_strides[0]),
                     voff_strides[0] // points,
                     first_vdat_header.size,
                     4,
