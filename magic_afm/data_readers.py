@@ -902,6 +902,16 @@ def decode_cstring(cstring: bytes):
     return cstring.rstrip(b"\0").decode("windows-1252")
 
 
+def parse_AR_note(note: str):
+    # The notes have a very regular key-value structure
+    # convert to dict for later access
+    return dict(
+        line.split(":", 1)
+        for line in note.split("\n")
+        if ":" in line and "@Line:" not in line
+    )
+
+
 @attrs.frozen
 class ARDFHeader:
     data: memoryview
@@ -995,6 +1005,69 @@ class ARDFTextTableOfContents:
 
 
 @attrs.frozen
+class ARDFVset:
+    data: memoryview
+    offset: int
+    size: int
+    force_index: int
+    line: int
+    point: int
+    vtype: int
+    prev_vset_offset: int
+    next_vset_offset: int
+
+    @classmethod
+    def unpack(cls, data: memoryview, offset: int):
+        vset_format = "<LLLLQQ"
+        size = 48  # 16 + struct.calcsize(vset_format)  # constant
+        return cls(
+            data, offset, size, *struct.unpack_from(vset_format, data, offset + 16)
+        )
+
+
+@attrs.frozen
+class ARDFVdata:
+    data: memoryview
+    offset: int
+    size: int
+    force_index: int
+    line: int
+    point: int
+    nfloats: int
+    channel: int
+    seg_offsets: tuple[int, ...]
+
+    @classmethod
+    def unpack(cls, header: ARDFHeader):
+        data = header.data
+        offset = header.offset
+        vdat_format = "<10L"
+        size = 56  # struct.calcsize(vdat_format) + 16  # constant
+        (force_index, line, point, nfloats, channel, *seg_offsets) = struct.unpack_from(
+            vdat_format, data, offset + 16
+        )
+        return cls(
+            data, offset, size, force_index, line, point, nfloats, channel, seg_offsets
+        )
+
+    @property
+    def array_offset(self):
+        return self.offset + self.size
+
+    @property
+    def next_offset(self):
+        return self.array_offset + self.nfloats * 4
+
+    def get_ndarray(self):
+        return np.ndarray(
+            shape=self.nfloats,
+            dtype=np.float32,
+            buffer=self.data,
+            offset=self.array_offset,
+        ).copy()
+
+
+@attrs.frozen
 class ARDFImage:
     data: memoryview
     ibox_offset: int
@@ -1076,6 +1149,7 @@ class ARDFImage:
 
 Index: TypeAlias = tuple[int, ...]
 ZDArrays: TypeAlias = Collection[np.ndarray]
+ChanMap: TypeAlias = dict[str, tuple[int, str]]
 
 
 class FVReader(Protocol):
@@ -1106,22 +1180,14 @@ class ARDFFFMReader:
     trace: bool
 
     @classmethod
-    def parse(cls, first_vset_header, points, lines, channels):
+    def parse(cls, first_vset_header: ARDFHeader, points: int, lines: int, channels):
         data = first_vset_header.data
         # just walk past these first headers to find our data_offset
         if first_vset_header.name != b"VSET":
             raise ValueError("Malformed volume set", first_vset_header)
         first_vset_header.validate()
-        vset_format = "<LLLLQQ"
-        (
-            force_index,
-            line,
-            point,
-            vtype,
-            prev_vset_offset,
-            next_vset_offset,
-        ) = struct.unpack_from(vset_format, data, first_vset_header.offset + 16)
-        vset_stride = next_vset_offset - first_vset_header.offset
+        first_vset = ARDFVset.unpack(first_vset_header.data, first_vset_header.offset)
+        vset_stride = first_vset.next_vset_offset - first_vset_header.offset
 
         first_vnam_header = ARDFHeader.unpack(
             data, first_vset_header.offset + first_vset_header.size
@@ -1134,24 +1200,14 @@ class ARDFFFMReader:
         )
         if first_vdat_header.name != b"VDAT":
             raise ValueError("Malformed volume data")
-
-        vdat_format = "<10L"
-        vdat_info_size = struct.calcsize(vdat_format) + 16
-        array_offset = first_vdat_header.offset + vdat_info_size
-        (
-            force_index,
-            line,
-            point,
-            nfloats,
-            channel,
-            *seg_offsets,
-        ) = struct.unpack_from(vdat_format, data, first_vdat_header.offset + 16)
+        first_vdat = ARDFVdata.unpack(first_vdat_header)
+        array_offset = first_vdat_header.offset + first_vdat.size
         return cls(
             array_view=np.ndarray(
-                shape=(lines, points, len(channels), nfloats),
+                shape=(lines, points, len(channels), first_vdat.nfloats),
                 dtype=np.float32,
                 buffer=data,
-                offset=array_offset,
+                offset=first_vdat.array_offset,
                 strides=(
                     vset_stride * points,
                     vset_stride,
@@ -1161,9 +1217,9 @@ class ARDFFFMReader:
             ),
             array_offset=array_offset,
             channels=[channels["Raw"][0], channels["Defl"][0]],
-            seg_offsets=seg_offsets,
-            scandown=line != 0,
-            trace=point == 0,
+            seg_offsets=first_vdat.seg_offsets,
+            scandown=first_vdat.line != 0,
+            trace=first_vdat.point == 0,
         )
 
     def get_curve(self, r, c):
@@ -1179,22 +1235,83 @@ class ARDFFFMReader:
 
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
-        raise NotImplementedError
+        # For now assume our strides don't bounce around
+        # TODO: cleverly use np.nditer?
+        for point in np.ndindex(self.array_view.shape[:2]):
+            yield point, self.get_curve(*point)
 
     def get_all_curves(self) -> ZDArrays:
         """Eagerly load all curves into memory."""
-        raise NotImplementedError
+        # advanced indexing triggers a copy
+        loaded_data = self.array_view[:, :, self.channels, :]
+        # avoid a second copy with inplace op
+        loaded_data *= NANOMETER_UNIT_CONVERSION
+        # a view with shuffled indices is possible, but
+        # most other classes return tuples anyway
+        return loaded_data[:, :, 0, :], loaded_data[:, :, 1, :]
 
 
-@attrs.frozen
+@attrs.frozen(eq=False)
 class ARDFForceMapReader:
-    @classmethod
-    def parse(cls, param):
-        return cls()
+    data: memoryview
+    vtoc_lines: np.ndarray
+    vtoc_pointers: np.ndarray
+    lines: int
+    points: int
+    channels: ChanMap
+    seen_vsets: dict[Index, ARDFVset] = attrs.field(init=False, factory=dict)
+
+    def traverse_vsets(self, pointer: int):
+        while True:
+            header = ARDFHeader.unpack(self.data, pointer)
+            if header.name != b"VSET":
+                break
+            header.validate()
+            vset = ARDFVset.unpack(self.data, pointer)
+            yield vset  # .line, vset.point, vset.
+            pointer = vset.next_vset_offset
+
+    def traverse_vdats(self, pointer):
+        vnam_header = ARDFHeader.unpack(self.data, pointer)
+        if vnam_header.name != b"VNAM":
+            raise ValueError("Malformed volume name", vnam_header)
+        vnam_header.validate()
+        pointer = vnam_header.offset + vnam_header.size
+        while True:
+            vdat_header = ARDFHeader.unpack(self.data, pointer)
+            if vdat_header.name != b"VDAT":
+                break
+            vdat_header.validate()  # TODO: check if meaningfully slow
+            yield ARDFVdata.unpack(vdat_header)
 
     def get_curve(self, r: int, c: int) -> ZDArrays:
         """Efficiently get a specific curve from disk."""
-        raise NotImplementedError
+        if not (0 <= r < self.lines and 0 <= c < self.points):
+            raise ValueError("Invalid index:", (self.lines, self.points), (r, c))
+        # bisect row pointer
+        # TODO: deal with reversed case
+        i = self.vtoc_lines.searchsorted(r)
+        pointer = int(self.vtoc_pointers[i])
+        if (r, c) in self.seen_vsets:
+            vset = self.seen_vsets[r, c]
+        else:
+            # linear search by traversing vsets
+            # TODO: avoid redundant traversal
+            for vset in self.traverse_vsets(pointer):
+                if vset.line != r:
+                    raise RuntimeError("point not found?!", (r, c))
+                self.seen_vsets[vset.line, vset.point] = vset
+                if vset.point == c:
+                    break
+        pointer = vset.offset + vset.size
+
+        zname = "Raw" if "Raw" in self.channels else "ZSnsr"
+        for vdat in self.traverse_vdats(pointer):
+            if vdat.channel == self.channels[zname]:
+                z = vdat.get_ndarray()
+            elif vdat.channel == self.channels["Defl"]:
+                d = vdat.get_ndarray()
+        return z, d
 
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
@@ -1209,6 +1326,7 @@ class ARDFForceMapReader:
 class ARDFVolume:
     volm_offset: int
     reader: FVReader
+    shape: tuple[int, int]
     x_step: float
     y_step: float
     t_step: float
@@ -1261,7 +1379,7 @@ class ARDFVolume:
 
         # Implicit table of channels here smh
         offset = vdef_header.offset + vdef_header.size
-        channels = {}
+        channels: ChanMap = {}
         for i in range(5):
             header = ARDFHeader.unpack(data, offset)
             if header.name != b"VCHN":
@@ -1306,7 +1424,8 @@ class ARDFVolume:
         )
         assert stride == 40, stride
         assert size - 32 == nentries * stride, (size, nentries, stride)
-        vtoc_entries = []
+        vtoc_lines = []
+        vtoc_pointers = []
         for toc_offset in range(
             vtoc_header.offset + 32, vtoc_header.offset + size, stride
         ):
@@ -1318,7 +1437,8 @@ class ARDFVolume:
             if entry_header.name != b"VOFF":
                 raise ValueError("Malformed volume table entry.", entry_header)
             entry_header.validate()
-            vtoc_entries.append((entry_header, force_index, line, pointer))
+            vtoc_lines.append(line)
+            vtoc_pointers.append(pointer)
 
         mlov_header = ARDFHeader.unpack(data, vtoc_header.offset + size)
         if mlov_header.size != 16 or mlov_header.name != b"MLOV":
@@ -1327,19 +1447,25 @@ class ARDFVolume:
 
         # Check if each offset is regularly spaced
         # optimize for LARGE regular case (FMaps are SMALL)
-        pointer_arr = np.array([x[-1] for x in vtoc_entries], np.int64)
+        pointer_arr = np.array(vtoc_pointers, np.int64)
         voff_strides = np.diff(pointer_arr)
         if np.all(voff_strides == voff_strides[0]):
-            first_vset_header = ARDFHeader.unpack(data, vtoc_entries[0][-1])
-            reader = ARDFFFMReader.parse(
-                first_vset_header, points, lines, channels
-            )
+            first_vset_header = ARDFHeader.unpack(data, vtoc_pointers[0])
+            reader = ARDFFFMReader.parse(first_vset_header, points, lines, channels)
         else:
-            reader = ARDFForceMapReader.parse(...)
+            reader = ARDFForceMapReader(
+                data,
+                np.array(vtoc_lines, np.uint32),
+                pointer_arr,
+                points,
+                lines,
+                channels,
+            )
 
         return cls(
             volm_header.offset,
             reader,
+            (points, lines),
             x_step,
             y_step,
             t_step,
