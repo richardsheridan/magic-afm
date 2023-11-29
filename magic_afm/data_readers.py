@@ -997,7 +997,6 @@ class ARDFTextTableOfContents:
 @attrs.frozen
 class ARDFImage:
     data: memoryview
-    imag_offset: int
     ibox_offset: int
     name: str
     units: str
@@ -1039,7 +1038,6 @@ class ARDFImage:
 
         return cls(
             imag_header.data,
-            imag_header.offset,
             idef_header.offset + idef_header.size,
             name,
             units,
@@ -1063,7 +1061,7 @@ class ARDFImage:
         arr = np.ndarray(
             shape=(lines, points),
             dtype=np.float32,
-            buffer=self.data.obj,
+            buffer=self.data,
             offset=data_offset,
             strides=(stride, 4),
         ).copy()
@@ -1097,6 +1095,7 @@ class FVReader(Protocol):
 @attrs.frozen
 class ARDFFFMReader:
     array_view: np.ndarray
+    array_offset: int  # hard to recover from views
     channels: list[int]  # [z, d]
     # seg_offsets is weird. you'd think it would contain the starting index
     # for each segment. However, it always has a trailing value of 1-nfloats,
@@ -1138,7 +1137,7 @@ class ARDFFFMReader:
 
         vdat_format = "<10L"
         vdat_info_size = struct.calcsize(vdat_format) + 16
-        data_offset = first_vdat_header.offset + vdat_info_size
+        array_offset = first_vdat_header.offset + vdat_info_size
         (
             force_index,
             line,
@@ -1152,8 +1151,8 @@ class ARDFFFMReader:
             array_view=np.ndarray(
                 shape=(lines, points, len(channels), nfloats),
                 dtype=np.float32,
-                buffer=data.obj,
-                offset=data_offset,
+                buffer=data,
+                offset=array_offset,
                 strides=(
                     vset_stride * points,
                     vset_stride,
@@ -1161,6 +1160,7 @@ class ARDFFFMReader:
                     4,
                 ),
             ),
+            array_offset=array_offset,
             channels=[channels["Raw"][0], channels["Defl"][0]],
             seg_offsets=seg_offsets,
             scandown=line != 0,
@@ -1208,7 +1208,6 @@ class ARDFForceMapReader:
 
 @attrs.frozen
 class ARDFVolume:
-    data: memoryview
     volm_offset: int
     reader: FVReader
     x_step: float
@@ -1220,9 +1219,8 @@ class ARDFVolume:
     xdef: list[str]
 
     @classmethod
-    def parse_volm(cls, volm_header: ARDFHeader):
+    def parse_volm(cls, data, volm_header: ARDFHeader):
         # TODO: wrap every struct.unpack_from with a new attrs class with .unpack()
-        data = volm_header.data
         if volm_header.size != 32 or volm_header.name != b"VOLM":
             raise ValueError("Malformed volume header.", volm_header)
         volm_header.validate()
@@ -1230,6 +1228,7 @@ class ARDFVolume:
         volm_toc = ARDFTableOfContents.unpack(data, volm_header.offset)
         assert len(volm_toc.entries) == 1
         nset_header, nset = volm_toc.entries[0]
+        nset_header.validate()
         ttoc_header = ARDFHeader.unpack(data, volm_toc.offset + volm_toc.size)
         if ttoc_header.size != 32 or ttoc_header.name != b"TTOC":
             raise ValueError("Malformed volume text table of contents.", ttoc_header)
@@ -1255,6 +1254,7 @@ class ARDFVolume:
             vdef_header.offset + 16,
         )
         assert sum(_) == 0, _
+        assert points * lines == nset, (points, lines, nset)
         x_units, y_units, t_units, seg_names = list(map(decode_cstring, cstrings))
         seg_names = seg_names.split(";")[:-1]
         assert nseg == len(seg_names)
@@ -1335,7 +1335,6 @@ class ARDFVolume:
             reader = ARDFForceMapReader.parse(...)
 
         return cls(
-            data,
             volm_header.offset,
             reader,
             x_step,
@@ -1382,7 +1381,7 @@ class ARDFWorker:
                 images[item.name] = item
                 assert isinstance(item.get_ndarray(), np.ndarray)
             elif item.name == b"VOLM":
-                volumes.append(ARDFVolume.parse_volm(item))
+                volumes.append(ARDFVolume.parse_volm(ardf_view, item))
             else:
                 raise RuntimeError(f"Unknown TOC entry {item.name}.", item)
         return cls(notes, images, volumes)
