@@ -24,8 +24,10 @@ asyncifies the worker's disk reads with threads, although this is not a rule.
 import abc
 import struct
 import threading
+from collections.abc import Collection, Iterable
 from functools import partial
 from subprocess import PIPE
+from typing import Protocol, TypeAlias
 
 try:
     from subprocess import STARTF_USESHOWWINDOW, STARTUPINFO
@@ -1074,14 +1076,141 @@ class ARDFImage:
         return arr
 
 
+Index: TypeAlias = tuple[int, ...]
+ZDArrays: TypeAlias = Collection[np.ndarray]
+
+
+class FVReader(Protocol):
+    def get_curve(self, r: int, c: int) -> ZDArrays:
+        """Efficiently get a specific curve from disk."""
+        ...
+
+    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+        """Iterate over curves lazily in on-disk order."""
+        ...
+
+    def get_all_curves(self) -> ZDArrays:
+        """Eagerly load all curves into memory."""
+        ...
+
+
+@attrs.frozen
+class ARDFFFMReader:
+    array_view: np.ndarray
+    channels: list[int]  # [z, d]
+    # seg_offsets is weird. you'd think it would contain the starting index
+    # for each segment. However, it always has a trailing value of 1-nfloats,
+    # and nonexistent segments get a zero. For regular/FFM data, we'll just
+    # assume that the second offset maps to our "split" concept.
+    seg_offsets: tuple
+    scandown: bool
+    trace: bool
+
+    @classmethod
+    def parse(cls, data, first_vtoc_entry, points, lines, channels):
+        # just walk past these first headers to find our data_offset
+        first_vset_header = ARDFHeader.unpack(data, first_vtoc_entry[-1])
+        if first_vset_header.name != b"VSET":
+            raise ValueError("Malformed volume set", first_vset_header)
+        first_vset_header.validate()
+        vset_format = "<LLLLQQ"
+        (
+            force_index,
+            line,
+            point,
+            vtype,
+            prev_vset_offset,
+            next_vset_offset,
+        ) = struct.unpack_from(vset_format, data, first_vset_header.offset + 16)
+        vset_stride = next_vset_offset - first_vset_header.offset
+
+        first_vnam_header = ARDFHeader.unpack(
+            data, first_vset_header.offset + first_vset_header.size
+        )
+        if first_vnam_header.name != b"VNAM":
+            raise ValueError("Malformed volume name", first_vnam_header)
+        first_vnam_header.validate()
+        first_vdat_header = ARDFHeader.unpack(
+            data, first_vnam_header.offset + first_vnam_header.size
+        )
+        if first_vdat_header.name != b"VDAT":
+            raise ValueError("Malformed volume data")
+
+        vdat_format = "<10L"
+        vdat_info_size = struct.calcsize(vdat_format) + 16
+        data_offset = first_vdat_header.offset + vdat_info_size
+        (
+            force_index,
+            line,
+            point,
+            nfloats,
+            channel,
+            *seg_offsets,
+        ) = struct.unpack_from(vdat_format, data, first_vdat_header.offset + 16)
+        assert (force_index, line) == first_vtoc_entry[1:3]
+        return cls(
+            array_view=np.ndarray(
+                shape=(lines, points, len(channels), nfloats),
+                dtype=np.float32,
+                buffer=data.obj,
+                offset=data_offset,
+                strides=(
+                    vset_stride * points,
+                    vset_stride,
+                    first_vdat_header.size,
+                    4,
+                ),
+            ),
+            channels=[channels["Raw"][0], channels["Defl"][0]],
+            seg_offsets=seg_offsets,
+            scandown=line != 0,
+            trace=point == 0,
+        )
+
+    def get_curve(self, r, c):
+        """Efficiently get a specific curve from disk."""
+        return (
+            self.array_view[
+                r,
+                c,
+                self.channels,
+            ]
+            * NANOMETER_UNIT_CONVERSION
+        )
+
+    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+        """Iterate over curves lazily in on-disk order."""
+        raise NotImplementedError
+
+    def get_all_curves(self) -> ZDArrays:
+        """Eagerly load all curves into memory."""
+        raise NotImplementedError
+
+
+@attrs.frozen
+class ARDFForceMapReader:
+    @classmethod
+    def parse(cls, param):
+        return cls()
+
+    def get_curve(self, r: int, c: int) -> ZDArrays:
+        """Efficiently get a specific curve from disk."""
+        raise NotImplementedError
+
+    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+        """Iterate over curves lazily in on-disk order."""
+        raise NotImplementedError
+
+    def get_all_curves(self) -> ZDArrays:
+        """Eagerly load all curves into memory."""
+        raise NotImplementedError
+
+
 @attrs.frozen
 class ARDFVolume:
     data: memoryview
     volm_offset: int
-    data_offset: int
-    channels: dict[str, tuple[int, str]]  # name: (index, unit)
-    segments: dict[str, tuple[int, int]] | None  # name: (index, start index)
-    array_view: np.ndarray | None
+    reader: FVReader
     x_step: float
     y_step: float
     t_step: float
@@ -1201,94 +1330,21 @@ class ARDFVolume:
         pointer_arr = np.array([x[-1] for x in vtoc_entries], np.int64)
         voff_strides = np.diff(pointer_arr)
         if np.all(voff_strides == voff_strides[0]):
-            # return a class that holds a strided array view
-
-            # just walk past these first headers to find our data_offset
-            first_vset_header = ARDFHeader.unpack(data, vtoc_entries[0][-1])
-            if first_vset_header.name != b"VSET":
-                raise ValueError("Malformed volume set", first_vset_header)
-            first_vset_header.validate()
-            # vset_format = "<LLLLQQ"
-            # (
-            #     force_index,
-            #     line,
-            #     point,
-            #     vtype,
-            #     prev_vset_offset,
-            #     next_vset_offset,
-            # ) = struct.unpack_from(vset_format, data, first_vset_header.offset + 16)
-            # vset_stride = next_vset_offset - first_vset_header.offset
-            # assert vset_stride == voff_strides[0]// points
-            first_vnam_header = ARDFHeader.unpack(
-                data, first_vset_header.offset + first_vset_header.size
-            )
-            if first_vnam_header.name != b"VNAM":
-                raise ValueError("Malformed volume name", first_vnam_header)
-            first_vnam_header.validate()
-            first_vdat_header = ARDFHeader.unpack(
-                data, first_vnam_header.offset + first_vnam_header.size
-            )
-            if first_vdat_header.name != b"VDAT":
-                raise ValueError("Malformed volume data")
-
-            vdat_format = "<10L"
-            vdat_info_size = struct.calcsize(vdat_format) + 16
-            data_offset = first_vdat_header.offset + vdat_info_size
-            (
-                force_index,
-                line,
-                point,
-                nfloats,
-                channel,
-                *seg_offsets,
-            ) = struct.unpack_from(vdat_format, data, first_vdat_header.offset + 16)
-            assert (force_index, line) == vtoc_entries[0][1:3]
-            # seg_offsets is weird. you'd think it would contain the starting index
-            # for each segment. However, it always has a trailing value of 1-nfloats,
-            # and nonexistant segments get a zero. For regular/FFM data, we'll just
-            # assume that the second offset maps to our "split" concept.
-            segments = dict(zip(seg_names, enumerate(seg_offsets)))
-            assert segments["Ret"][1] == seg_offsets[1], (segments, seg_offsets)
-            array_view = np.ndarray(
-                shape=(lines, points, len(channels), nfloats),
-                dtype=np.float32,
-                buffer=data.obj,
-                offset=data_offset,
-                strides=(
-                    int(voff_strides[0]),
-                    voff_strides[0] // points,
-                    first_vdat_header.size,
-                    4,
-                ),
-            )
-
-            return cls(
-                data,
-                volm_header.offset,
-                data_offset,
-                channels,
-                segments,
-                array_view,
-                x_step,
-                y_step,
-                t_step,
-                x_units,
-                y_units,
-                t_units,
-                xdef,
-            )
+            reader = ARDFFFMReader.parse(data, vtoc_entries[0], points, lines, channels)
         else:
-            raise NotImplementedError
-            # return a class that uses vtoc entries for lookups
+            reader = ARDFForceMapReader.parse(...)
 
-    def get_force_curve(self, r, c):
-        return (
-            self.array_view[
-                r,
-                c,
-                [self.channels["Raw"][0], self.channels["Defl"][0]],
-            ]
-            * NANOMETER_UNIT_CONVERSION
+        return cls(
+            data,
+            volm_header.offset,
+            reader,
+            x_step,
+            y_step,
+            t_step,
+            x_units,
+            y_units,
+            t_units,
+            xdef,
         )
 
 
@@ -1324,7 +1380,7 @@ class ARDFWorker:
             if item.name == b"IMAG":
                 item = ARDFImage.parse_imag(item)
                 images[item.name] = item
-                item.get_ndarray()
+                assert isinstance(item.get_ndarray(), np.ndarray)
             elif item.name == b"VOLM":
                 volumes.append(ARDFVolume.parse_volm(item))
             else:
