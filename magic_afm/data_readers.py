@@ -1106,9 +1106,9 @@ class ARDFFFMReader:
     trace: bool
 
     @classmethod
-    def parse(cls, data, first_vtoc_entry, points, lines, channels):
+    def parse(cls, first_vset_header, points, lines, channels):
+        data = first_vset_header.data
         # just walk past these first headers to find our data_offset
-        first_vset_header = ARDFHeader.unpack(data, first_vtoc_entry[-1])
         if first_vset_header.name != b"VSET":
             raise ValueError("Malformed volume set", first_vset_header)
         first_vset_header.validate()
@@ -1146,7 +1146,6 @@ class ARDFFFMReader:
             channel,
             *seg_offsets,
         ) = struct.unpack_from(vdat_format, data, first_vdat_header.offset + 16)
-        assert (force_index, line) == first_vtoc_entry[1:3]
         return cls(
             array_view=np.ndarray(
                 shape=(lines, points, len(channels), nfloats),
@@ -1219,7 +1218,8 @@ class ARDFVolume:
     xdef: list[str]
 
     @classmethod
-    def parse_volm(cls, data, volm_header: ARDFHeader):
+    def parse_volm(cls, volm_header: ARDFHeader):
+        data = volm_header.data
         # TODO: wrap every struct.unpack_from with a new attrs class with .unpack()
         if volm_header.size != 32 or volm_header.name != b"VOLM":
             raise ValueError("Malformed volume header.", volm_header)
@@ -1330,7 +1330,10 @@ class ARDFVolume:
         pointer_arr = np.array([x[-1] for x in vtoc_entries], np.int64)
         voff_strides = np.diff(pointer_arr)
         if np.all(voff_strides == voff_strides[0]):
-            reader = ARDFFFMReader.parse(data, vtoc_entries[0], points, lines, channels)
+            first_vset_header = ARDFHeader.unpack(data, vtoc_entries[0][-1])
+            reader = ARDFFFMReader.parse(
+                first_vset_header, points, lines, channels
+            )
         else:
             reader = ARDFForceMapReader.parse(...)
 
