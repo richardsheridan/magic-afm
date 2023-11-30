@@ -1337,23 +1337,25 @@ class ARDFForceMapReader:
     def get_all_curves(self) -> ZDArrays:
         """Eagerly load all curves into memory."""
         minext = 0xFFFFFFFF
-        curves = {}
+        vdats = {}
         for vset in self.traverse_vsets(int(self.vtoc_pointers[0])):
             for vdat in self.traverse_vdats(vset.offset + vset.size):
-                # code elsewhere assumes split is halfway through
                 if vdat.channel == self.channels["ZSnsr"][0]:
-                    z = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
+                    zvdat = vdat
                 elif vdat.channel == self.channels["Defl"][0]:
-                    d = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
-            curves[vset.line, vset.point] = z, d
+                    dvdat = vdat
+            vdats[vset.line, vset.point] = zvdat, dvdat
             minext = min(minext, vdat.seg_offsets[1])
+        del vset, vdat
         minfloats = 2 * minext
-        x = np.empty((self.lines, self.points, 2, minext * 2), dtype=np.float32)
-        for (r, c), (z, d) in curves.items():
-            # TODO: verify turnaround point against iter_curves
-            halfextra = (len(z) - minfloats) // 2  # even - even -> even
+        x = np.empty((self.lines, self.points, 2, minfloats), dtype=np.float32)
+        for (r, c), (zvdat, dvdat) in vdats.items():
+            # code elsewhere assumes split is halfway through
+            floats = zvdat.seg_offsets[1] * 2
+            halfextra = (floats - minfloats) // 2  # even - even -> even
             sl = np.s_[halfextra : minfloats + halfextra]
-            x[r, c, :, :] = z[sl], d[sl]
+            # TODO: verify turnaround point against iter_curves
+            x[r, c, :, :] = zvdat.get_ndarray()[sl], dvdat.get_ndarray()[sl]
         z = x[:, :, 0, :]
         d = x[:, :, 1, :]
         return z, d
