@@ -1269,6 +1269,9 @@ class ARDFForceMapReader:
                 break
             header.validate()
             vset = ARDFVset.unpack(self.data, pointer)
+            index = (vset.line, vset.point)
+            if index not in self.seen_vsets:
+                self.seen_vsets[index] = vset
             yield vset  # .line, vset.point, vset.
             pointer = vset.next_vset_offset
 
@@ -1291,9 +1294,7 @@ class ARDFForceMapReader:
         if not (0 <= r < self.lines and 0 <= c < self.points):
             raise ValueError("Invalid index:", (self.lines, self.points), (r, c))
 
-        if (r, c) in self.seen_vsets:
-            vset = self.seen_vsets[r, c]
-        else:
+        if (r, c) not in self.seen_vsets:
             # bisect row pointer
             if self.vtoc_lines[0]:
                 # probably reversed
@@ -1301,16 +1302,13 @@ class ARDFForceMapReader:
             else:
                 sl = np.s_[:]
             i = self.vtoc_lines[sl].searchsorted(r)
-            # traverse vsets of this vtoc
-            # TODO: avoid redundant traversal
+            # read entire line of the vtoc
             for vset in self.traverse_vsets(int(self.vtoc_pointers[sl][i])):
                 if vset.line != r:
-                    raise RuntimeError("point not found?!", (r, c))
-                self.seen_vsets[vset.line, vset.point] = vset
-                if vset.point == c:
                     break
-            else:
-                raise RuntimeError("point not found?!", (r, c))
+                # transverse_vsets implicitly fills in seen_vsets
+
+        vset = self.seen_vsets[r, c]
 
         for vdat in self.traverse_vdats(vset.offset + vset.size):
             # zname = "Raw" if "Raw" in self.channels else "ZSnsr"
