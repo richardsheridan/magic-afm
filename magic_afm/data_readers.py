@@ -1205,7 +1205,6 @@ class ARDFFFMReader:
         if first_vdat_header.name != b"VDAT":
             raise ValueError("Malformed volume data")
         first_vdat = ARDFVdata.unpack(first_vdat_header)
-        array_offset = first_vdat_header.offset + first_vdat.size
         return cls(
             array_view=np.ndarray(
                 shape=(lines, points, len(channels), first_vdat.nfloats),
@@ -1219,7 +1218,7 @@ class ARDFFFMReader:
                     4,
                 ),
             ),
-            array_offset=array_offset,
+            array_offset=first_vdat.array_offset,
             channels=[channels["Raw"][0], channels["Defl"][0]],
             seg_offsets=first_vdat.seg_offsets,
             scandown=first_vdat.line != 0,
