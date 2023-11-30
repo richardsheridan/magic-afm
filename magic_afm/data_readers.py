@@ -24,6 +24,7 @@ asyncifies the worker's disk reads with threads, although this is not a rule.
 import abc
 import struct
 import threading
+import time
 from collections.abc import Collection, Iterable
 from functools import partial
 from subprocess import PIPE
@@ -1281,45 +1282,80 @@ class ARDFForceMapReader:
             vdat_header = ARDFHeader.unpack(self.data, pointer)
             if vdat_header.name != b"VDAT":
                 break
-            vdat_header.validate()  # TODO: check if meaningfully slow
+            # vdat_header.validate()  # TODO: check if meaningfully slow on bigger data
             yield ARDFVdata.unpack(vdat_header)
+            pointer = vdat_header.offset + vdat_header.size
 
     def get_curve(self, r: int, c: int) -> ZDArrays:
         """Efficiently get a specific curve from disk."""
         if not (0 <= r < self.lines and 0 <= c < self.points):
             raise ValueError("Invalid index:", (self.lines, self.points), (r, c))
-        # bisect row pointer
-        # TODO: deal with reversed case
-        i = self.vtoc_lines.searchsorted(r)
-        pointer = int(self.vtoc_pointers[i])
+
         if (r, c) in self.seen_vsets:
             vset = self.seen_vsets[r, c]
         else:
-            # linear search by traversing vsets
+            # bisect row pointer
+            if self.vtoc_lines[0]:
+                # probably reversed
+                sl = np.s_[::-1]
+            else:
+                sl = np.s_[:]
+            i = self.vtoc_lines[sl].searchsorted(r)
+            # traverse vsets of this vtoc
             # TODO: avoid redundant traversal
-            for vset in self.traverse_vsets(pointer):
+            for vset in self.traverse_vsets(int(self.vtoc_pointers[sl][i])):
                 if vset.line != r:
                     raise RuntimeError("point not found?!", (r, c))
                 self.seen_vsets[vset.line, vset.point] = vset
                 if vset.point == c:
                     break
-        pointer = vset.offset + vset.size
+            else:
+                raise RuntimeError("point not found?!", (r, c))
 
-        zname = "Raw" if "Raw" in self.channels else "ZSnsr"
-        for vdat in self.traverse_vdats(pointer):
-            if vdat.channel == self.channels[zname]:
-                z = vdat.get_ndarray()
-            elif vdat.channel == self.channels["Defl"]:
-                d = vdat.get_ndarray()
+        for vdat in self.traverse_vdats(vset.offset + vset.size):
+            # zname = "Raw" if "Raw" in self.channels else "ZSnsr"
+            # code elsewhere assumes split is halfway through
+            if vdat.channel == self.channels["ZSnsr"][0]:
+                z = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
+            elif vdat.channel == self.channels["Defl"][0]:
+                d = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
         return z, d
 
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
-        raise NotImplementedError
+        # zname = "Raw" if "Raw" in self.channels else "ZSnsr"
+        for vset in self.traverse_vsets(int(self.vtoc_pointers[0])):
+            for vdat in self.traverse_vdats(vset.offset + vset.size):
+                # code elsewhere assumes split is halfway through
+                if vdat.channel == self.channels["ZSnsr"][0]:
+                    z = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
+                elif vdat.channel == self.channels["Defl"][0]:
+                    d = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
+            yield (vset.line, vset.point), (z, d)
 
     def get_all_curves(self) -> ZDArrays:
         """Eagerly load all curves into memory."""
-        raise NotImplementedError
+        minext = 0xFFFFFFFF
+        curves = {}
+        for vset in self.traverse_vsets(int(self.vtoc_pointers[0])):
+            for vdat in self.traverse_vdats(vset.offset + vset.size):
+                # code elsewhere assumes split is halfway through
+                if vdat.channel == self.channels["ZSnsr"][0]:
+                    z = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
+                elif vdat.channel == self.channels["Defl"][0]:
+                    d = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
+            curves[vset.line, vset.point] = z, d
+            minext = min(minext, vdat.seg_offsets[1])
+        minfloats = 2 * minext
+        x = np.empty((self.lines, self.points, 2, minext * 2), dtype=np.float32)
+        for (r, c), (z, d) in curves.items():
+            # TODO: verify turnaround point against iter_curves
+            halfextra = (len(z) - minfloats) // 2  # even - even -> even
+            sl = np.s_[halfextra : minfloats + halfextra]
+            x[r, c, :, :] = z[sl], d[sl]
+        z = x[:, :, 0, :]
+        d = x[:, :, 1, :]
+        return z, d
 
 
 @attrs.frozen
@@ -1429,10 +1465,9 @@ class ARDFVolume:
         for toc_offset in range(
             vtoc_header.offset + 32, vtoc_header.offset + size, stride
         ):
-            *header, force_index, line, _, pointer = struct.unpack_from(
+            *header, force_index, line, point, pointer = struct.unpack_from(
                 "<LL4sLLLQQ", data, toc_offset
             )
-            assert _ == 0, _
             entry_header = ARDFHeader(data, toc_offset, *header)
             if entry_header.name != b"VOFF":
                 raise ValueError("Malformed volume table entry.", entry_header)
@@ -1457,8 +1492,8 @@ class ARDFVolume:
                 data,
                 np.array(vtoc_lines, np.uint32),
                 pointer_arr,
-                points,
                 lines,
+                points,
                 channels,
             )
 
@@ -1510,7 +1545,7 @@ class ARDFWorker:
                 images[item.name] = item
                 assert isinstance(item.get_ndarray(), np.ndarray)
             elif item.name == b"VOLM":
-                volumes.append(ARDFVolume.parse_volm(ardf_view, item))
+                volumes.append(ARDFVolume.parse_volm(item))
             else:
                 raise RuntimeError(f"Unknown TOC entry {item.name}.", item)
         return cls(notes, images, volumes)
