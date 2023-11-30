@@ -1060,12 +1060,15 @@ class ARDFVdata:
         return self.array_offset + self.nfloats * 4
 
     def get_ndarray(self):
-        return np.ndarray(
-            shape=self.nfloats,
-            dtype=np.float32,
-            buffer=self.data,
-            offset=self.array_offset,
-        ).copy()
+        return (
+            np.ndarray(
+                shape=self.nfloats,
+                dtype=np.float32,
+                buffer=self.data,
+                offset=self.array_offset,
+            )
+            * NANOMETER_UNIT_CONVERSION
+        )
 
 
 @attrs.frozen
