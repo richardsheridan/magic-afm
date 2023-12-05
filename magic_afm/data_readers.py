@@ -22,9 +22,9 @@ asyncifies the worker's disk reads with threads, although this is not a rule.
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import abc
+import mmap
 import struct
 import threading
-import time
 from collections.abc import Collection, Iterable
 from functools import partial
 from subprocess import PIPE
@@ -915,7 +915,7 @@ def parse_AR_note(note: str):
 
 @attrs.frozen
 class ARDFHeader:
-    data: memoryview
+    data: mmap
     offset: int
     crc: int = attrs.field(repr=hex)
     size: int
@@ -923,7 +923,7 @@ class ARDFHeader:
     flags: int = attrs.field(repr=hex)
 
     @classmethod
-    def unpack(cls, data: memoryview, offset: int):
+    def unpack(cls, data: mmap, offset: int):
         return cls(data, offset, *struct.unpack_from("<LL4sL", data, offset))
 
     def validate(self):
@@ -940,13 +940,13 @@ class ARDFHeader:
 
 @attrs.frozen
 class ARDFTableOfContents:
-    data: memoryview
+    data: mmap
     offset: int
     size: int
     entries: list[tuple[ARDFHeader, int]]
 
     @classmethod
-    def unpack(cls, data: memoryview, offset: int):
+    def unpack(cls, data: mmap, offset: int):
         size, nentries, stride = struct.unpack_from("<QLL", data, offset + 16)
         assert stride == 24
         assert size - 32 == nentries * stride, (size, nentries, stride)
@@ -965,13 +965,13 @@ class ARDFTableOfContents:
 
 @attrs.frozen
 class ARDFTextTableOfContents:
-    data: memoryview = attrs.field()
+    data: mmap
     offset: int
     size: int
     entries: list[tuple[ARDFHeader, int]]
 
     @classmethod
-    def unpack(cls, data: memoryview, offset: int):
+    def unpack(cls, data: mmap, offset: int):
         size, nentries, stride = struct.unpack_from("<QLL", data, offset + 16)
         assert stride == 32, stride
         assert size - 32 == nentries * stride, (size, nentries, stride)
@@ -997,17 +997,15 @@ class ARDFTextTableOfContents:
         assert i == index, (i, index)
         offset = text_header.offset + 24
         assert text_len < text_header.size - 24, (text_len, text_header)
-        return (
-            self.data[offset : offset + text_len]
-            .tobytes()
-            .replace(b"\r", b"\n")
-            .decode("windows-1252")
-        )
+        self.data.seek(offset)
+        text = self.data.read(text_len)
+        # self.data.seek(0)  # seems unneeded currently
+        return text.replace(b"\r", b"\n").decode("windows-1252")
 
 
 @attrs.frozen
 class ARDFVset:
-    data: memoryview
+    data: mmap
     offset: int
     size: int
     force_index: int
@@ -1018,7 +1016,7 @@ class ARDFVset:
     next_vset_offset: int
 
     @classmethod
-    def unpack(cls, data: memoryview, offset: int):
+    def unpack(cls, data: mmap, offset: int):
         vset_format = "<LLLLQQ"
         size = 48  # 16 + struct.calcsize(vset_format)  # constant
         return cls(
@@ -1028,7 +1026,7 @@ class ARDFVset:
 
 @attrs.frozen
 class ARDFVdata:
-    data: memoryview
+    data: mmap
     offset: int
     size: int
     force_index: int
@@ -1073,7 +1071,7 @@ class ARDFVdata:
 
 @attrs.frozen
 class ARDFImage:
-    data: memoryview
+    data: mmap
     ibox_offset: int
     name: str
     units: str
@@ -1172,6 +1170,7 @@ class FVReader(Protocol):
 
 @attrs.frozen
 class ARDFFFMReader:
+    data: mmap  # keep checking our mmap is open so array_view cannot segfault
     array_view: np.ndarray
     array_offset: int  # hard to recover from views
     channels: list[int]  # [z, d]
@@ -1206,6 +1205,7 @@ class ARDFFFMReader:
             raise ValueError("Malformed volume data")
         first_vdat = ARDFVdata.unpack(first_vdat_header)
         return cls(
+            data=data,
             array_view=np.ndarray(
                 shape=(lines, points, len(channels), first_vdat.nfloats),
                 dtype=np.float32,
@@ -1227,6 +1227,7 @@ class ARDFFFMReader:
 
     def get_curve(self, r, c):
         """Efficiently get a specific curve from disk."""
+        assert not self.data.closed
         return (
             self.array_view[
                 r,
@@ -1245,6 +1246,7 @@ class ARDFFFMReader:
 
     def get_all_curves(self) -> ZDArrays:
         """Eagerly load all curves into memory."""
+        assert not self.data.closed
         # advanced indexing triggers a copy
         loaded_data = self.array_view[:, :, self.channels, :]
         # avoid a second copy with inplace op
@@ -1256,7 +1258,7 @@ class ARDFFFMReader:
 
 @attrs.frozen(eq=False)
 class ARDFForceMapReader:
-    data: memoryview
+    data: mmap
     vtoc_lines: np.ndarray
     vtoc_pointers: np.ndarray
     lines: int
@@ -1308,7 +1310,7 @@ class ARDFForceMapReader:
             for vset in self.traverse_vsets(int(self.vtoc_pointers[sl][i])):
                 if vset.line != r:
                     break
-                # transverse_vsets implicitly fills in seen_vsets
+                # traverse_vsets implicitly fills in seen_vsets
 
         vset = self.seen_vsets[r, c]
 
@@ -1446,12 +1448,9 @@ class ARDFVolume:
         assert _ == 0, _
         if nchars > header.size:
             raise ValueError("Experiment definition too long.", header, nchars)
-        xdef = (
-            data[header.offset + 24 : header.offset + 24 + nchars]
-            .tobytes()
-            .decode("windows-1252")
-            .split(";")[:-1]
-        )
+        data.seek(header.offset + 24)
+        xdef = data.read(nchars).decode("windows-1252").split(";")[:-1]
+        # data.seek(0)  # seems unneeded currently
 
         vtoc_header = ARDFHeader.unpack(data, header.offset + header.size)
         if vtoc_header.size != 32 or vtoc_header.name != b"VTOC":
@@ -1515,35 +1514,33 @@ class ARDFVolume:
 
 @attrs.define
 class ARDFWorker:
-    notes: str = attrs.field(repr=False)
+    notes:  dict[str, str] = attrs.field(repr=False)
     images: dict[str, ARDFImage]
     volumes: list[ARDFVolume]
-    _view: memoryview
 
     @classmethod
-    def parse_ardf(cls, ardf_view):
-        ardf_view = memoryview(ardf_view)
-        file_header = ARDFHeader.unpack(ardf_view, 0)
+    def parse_ardf(cls, ardf_mmap: mmap):
+        file_header = ARDFHeader.unpack(ardf_mmap, 0)
         if file_header.size != 16 or file_header.name != b"ARDF":
             raise ValueError("Not an ARDF file.", file_header)
         file_header.validate()
-        ftoc_header = ARDFHeader.unpack(ardf_view, offset=file_header.size)
+        ftoc_header = ARDFHeader.unpack(ardf_mmap, offset=file_header.size)
         if ftoc_header.size != 32 or ftoc_header.name != b"FTOC":
             raise ValueError("Malformed ARDF file table of contents.", ftoc_header)
         ftoc_header.validate()
-        ftoc = ARDFTableOfContents.unpack(ardf_view, offset=file_header.size)
-        ttoc_header = ARDFHeader.unpack(ardf_view, offset=ftoc.offset + ftoc.size)
+        ftoc = ARDFTableOfContents.unpack(ardf_mmap, offset=file_header.size)
+        ttoc_header = ARDFHeader.unpack(ardf_mmap, offset=ftoc.offset + ftoc.size)
         if ttoc_header.size != 32 or ttoc_header.name != b"TTOC":
             raise ValueError("Malformed ARDF text table of contents.", ftoc_header)
         ttoc_header.validate()
-        ttoc = ARDFTextTableOfContents.unpack(ardf_view, offset=ftoc.offset + ftoc.size)
+        ttoc = ARDFTextTableOfContents.unpack(ardf_mmap, offset=ftoc.offset + ftoc.size)
         assert len(ttoc.entries) == 1
         notes = parse_AR_note(ttoc.decode_entry(0))
         images = {}
         volumes = []
         for item, pointer in ftoc.entries:
             item.validate()
-            item = ARDFHeader.unpack(ardf_view, pointer)
+            item = ARDFHeader.unpack(ardf_mmap, pointer)
             if item.name == b"IMAG":
                 item = ARDFImage.parse_imag(item)
                 images[item.name] = item
@@ -1552,10 +1549,7 @@ class ARDFWorker:
                 volumes.append(ARDFVolume.parse_volm(item))
             else:
                 raise RuntimeError(f"Unknown TOC entry {item.name}.", item)
-        return cls(notes, images, volumes, ardf_view)
-
-    def close(self):
-        self._view.release()
+        return cls(notes, images, volumes)
 
 
 class ARDFFile(BaseForceVolumeFile):
@@ -1609,8 +1603,8 @@ class ARDFFile(BaseForceVolumeFile):
         self._file_image_names.update(self._worker.images.keys())
 
         self.k = float(self._worker.notes["SpringConstant"])
-        lines, points = self._worker.volumes[0].shape
         # slight numerical differences here
+        # lines, points = self._worker.volumes[0].shape
         # xsize = lines * self._worker.volumes[0].x_step
         # ysize = points * self._worker.volumes[0].y_step
         self.scansize = (
@@ -1628,9 +1622,6 @@ class ARDFFile(BaseForceVolumeFile):
         self.split = self.npts // 2
 
     async def aclose(self):
-        if self._worker is not None:
-            self._worker.close()
-            self._worker = None
         if self._mm is not None:
             with trio.CancelScope(shield=True):
                 await trio.to_thread.run_sync(self._mm.close)
