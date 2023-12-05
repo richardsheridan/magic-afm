@@ -1802,33 +1802,33 @@ async def open_one(root, path):
 
     # choose handler based on file suffix
     suffix = path.suffix.lower()
-    if suffix == ".ardf":
-        with trio.CancelScope() as cscope, tqdm_tk(
-            tk_parent=root,
-            cancel_callback=cscope.cancel,
-            total=100,
-            unit="%",
-            leave=False,
-            smoothing=0.1,
-            # smoothing_time=0.5,
-            miniters=1,
-        ) as pbar:
-            try:
-                path = await data_readers.convert_ardf(path, pbar=pbar)
-            except FileNotFoundError as e:
-                await trio.to_thread.run_sync(
-                    partial(
-                        tkinter.messagebox.showerror,
-                        master=root,
-                        title="Converter not found",
-                        message=str(e),
-                    )
-                )
-                return
-        if cscope.cancelled_caught:
-            return
-        else:
-            suffix = path.suffix.lower()
+    # if suffix == ".ardf":
+    #     with trio.CancelScope() as cscope, tqdm_tk(
+    #         tk_parent=root,
+    #         cancel_callback=cscope.cancel,
+    #         total=100,
+    #         unit="%",
+    #         leave=False,
+    #         smoothing=0.1,
+    #         # smoothing_time=0.5,
+    #         miniters=1,
+    #     ) as pbar:
+    #         try:
+    #             path = await data_readers.convert_ardf(path, pbar=pbar)
+    #         except FileNotFoundError as e:
+    #             await trio.to_thread.run_sync(
+    #                 partial(
+    #                     tkinter.messagebox.showerror,
+    #                     master=root,
+    #                     title="Converter not found",
+    #                     message=str(e),
+    #                 )
+    #             )
+    #             return
+    #     if cscope.cancelled_caught:
+    #         return
+    #     else:
+    #         suffix = path.suffix.lower()
 
     async with data_readers.SUFFIX_FVFILE_MAP[suffix](path) as opened_fv:
         display = ForceVolumeTkDisplay(root, path.name, opened_fv.parameters)

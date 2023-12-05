@@ -200,11 +200,11 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         )
 
     @abc.abstractmethod
-    def ainitialize(self):
+    async def ainitialize(self):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def aclose(self):
+    async def aclose(self):
         raise NotImplementedError
 
     async def __aenter__(self):
@@ -1518,9 +1518,11 @@ class ARDFWorker:
     notes: str = attrs.field(repr=False)
     images: dict[str, ARDFImage]
     volumes: list[ARDFVolume]
+    _view: memoryview
 
     @classmethod
-    def parse_ardf(cls, ardf_view: memoryview):
+    def parse_ardf(cls, ardf_view):
+        ardf_view = memoryview(ardf_view)
         file_header = ARDFHeader.unpack(ardf_view, 0)
         if file_header.size != 16 or file_header.name != b"ARDF":
             raise ValueError("Not an ARDF file.", file_header)
@@ -1536,7 +1538,7 @@ class ARDFWorker:
         ttoc_header.validate()
         ttoc = ARDFTextTableOfContents.unpack(ardf_view, offset=ftoc.offset + ftoc.size)
         assert len(ttoc.entries) == 1
-        notes = ttoc.decode_entry(0)
+        notes = parse_AR_note(ttoc.decode_entry(0))
         images = {}
         volumes = []
         for item, pointer in ftoc.entries:
@@ -1545,12 +1547,109 @@ class ARDFWorker:
             if item.name == b"IMAG":
                 item = ARDFImage.parse_imag(item)
                 images[item.name] = item
-                assert isinstance(item.get_ndarray(), np.ndarray)
+                # assert isinstance(item.get_ndarray(), np.ndarray)
             elif item.name == b"VOLM":
                 volumes.append(ARDFVolume.parse_volm(item))
             else:
                 raise RuntimeError(f"Unknown TOC entry {item.name}.", item)
-        return cls(notes, images, volumes)
+        return cls(notes, images, volumes, ardf_view)
+
+    def close(self):
+        self._view.release()
 
 
-SUFFIX_FVFILE_MAP = {".h5": ARH5File, ".spm": NanoscopeFile, ".pfc": NanoscopeFile}
+class ARDFFile(BaseForceVolumeFile):
+    _basic_units_map = {
+        "Adhesion": "N",
+        "Height": "m",
+        "IndentationHertz": "m",
+        "YoungsHertz": "Pa",
+        "YoungsJKR": "Pa",
+        "YoungsDMT": "Pa",
+        "ZSensor": "m",
+        "MapAdhesion": "N",
+        "MapHeight": "m",
+        "Force": "N",
+    }
+    _default_heightmap_names = ("MapHeight", "ZSensorTrace", "ZSensorRetrace")
+    _worker: ARDFWorker | None = None
+    _mm = None
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state["_mm"]
+        del state["_worker"]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        try:
+            mm, worker, path_lock = CACHED_OPEN_PATHS[self.path]
+        except KeyError:
+            self._mm = mm = mmap_path_read_only(self.path)
+            worker = ARDFWorker.parse_ardf(mm)
+            path_lock = threading.Lock()
+            path_lock.acquire()
+            CACHED_OPEN_PATHS[self.path] = mm, worker, path_lock
+            threading.Thread(
+                target=eventually_evict_path, args=(self.path,), daemon=True
+            ).start()
+        else:
+            # reset thread countdown
+            try:
+                path_lock.release()
+            except RuntimeError:
+                pass  # no problem if unreleased
+        self._mm = mm
+        self._worker = worker
+
+    async def ainitialize(self):
+        self._mm = await trio.to_thread.run_sync(mmap_path_read_only, self.path)
+        self._worker = await trio.to_thread.run_sync(ARDFWorker.parse_ardf, self._mm)
+        self._file_image_names.update(self._worker.images.keys())
+
+        self.k = float(self._worker.notes["SpringConstant"])
+        lines, points = self._worker.volumes[0].shape
+        # slight numerical differences here
+        # xsize = lines * self._worker.volumes[0].x_step
+        # ysize = points * self._worker.volumes[0].y_step
+        self.scansize = (
+            float(self._worker.notes["FastScanSize"]) * NANOMETER_UNIT_CONVERSION,
+            float(self._worker.notes["SlowScanSize"]) * NANOMETER_UNIT_CONVERSION,
+        )
+        # NOTE: aspect is redundant to scansize
+        # self.aspect = float(self.notes["SlowRatio"]) / float(self.notes["FastRatio"])
+        self.defl_sens = self._defl_sens_orig = (
+            float(self._worker.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
+        )
+        self.rate = float(self._worker.notes["FastMapZRate"])
+        # TODO: don't assume FFM data
+        self.npts = self._worker.volumes[0].reader.array_view.shape[-1]
+        self.split = self.npts // 2
+
+    async def aclose(self):
+        if self._worker is not None:
+            self._worker.close()
+            self._worker = None
+        if self._mm is not None:
+            with trio.CancelScope(shield=True):
+                await trio.to_thread.run_sync(self._mm.close)
+
+    def get_force_curve_sync(self, r, c):
+        return self._worker.volumes[0].reader.get_curve(r, c)
+
+    async def get_image(self, image_name):
+        if image_name in self._calc_images:
+            await trio.sleep(0)
+            image = self._calc_images[image_name]
+        else:
+            image = await trs(self._worker.images[image_name].get_ndarray)
+        return image
+
+
+SUFFIX_FVFILE_MAP = {
+    ".ardf": ARDFFile,
+    ".h5": ARH5File,
+    ".spm": NanoscopeFile,
+    ".pfc": NanoscopeFile,
+}
