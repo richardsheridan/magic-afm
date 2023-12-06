@@ -160,7 +160,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         self.scansize = None
         self.path = path
         self._units_map = self._basic_units_map.copy()
-        self._calc_images = {}
+        self._image_cache = {}
         self._file_image_names = set()
         self._trace = None
         self._worker = None
@@ -178,7 +178,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
 
     @property
     def image_names(self):
-        return self._calc_images.keys() | self._file_image_names
+        return self._image_cache.keys() | self._file_image_names
 
     @property
     def initial_image_name(self):
@@ -219,7 +219,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         return self._units_map.get(image_name, "V")
 
     def add_image(self, image_name, units, image):
-        self._calc_images[image_name] = image
+        self._image_cache[image_name] = image
         image_name = self.strip_trace(image_name)
         self._units_map[image_name] = units
 
@@ -236,8 +236,17 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
     def get_force_curve_sync(self, r, c):
         raise NotImplementedError
 
-    @abc.abstractmethod
     async def get_image(self, image_name):
+        if image_name in self._image_cache:
+            await trio.sleep(0)
+            image = self._image_cache[image_name]
+        else:
+            image = await trs(self.get_image_sync, image_name)
+            self._image_cache[image_name] = image
+        return image
+
+    @abc.abstractmethod
+    def get_image_sync(self, image_name):
         raise NotImplementedError
 
 
@@ -278,13 +287,8 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         z += gen.normal(scale=0.01, size=z.size)
         return z, d
 
-    async def get_image(self, image_name):
-        await trio.sleep(0)
-        try:
-            image = self._calc_images[image_name]
-        except KeyError:
-            image = np.zeros((64, 64), dtype=np.float32)
-        return image
+    def get_image_sync(self, image_name):
+        return np.zeros((64, 64), dtype=np.float32)
 
 
 NANOMETER_UNIT_CONVERSION = (
@@ -543,15 +547,7 @@ class ARH5File(BaseForceVolumeFile):
             d *= self.defl_sens / self._defl_sens_orig
         return z, d
 
-    async def get_image(self, image_name):
-        if image_name in self._calc_images:
-            await trio.sleep(0)
-            image = self._calc_images[image_name]
-        else:
-            image = await trs(self._sync_get_image, image_name)
-        return image
-
-    def _sync_get_image(self, image_name):
+    def get_image_sync(self, image_name):
         return self._images[image_name][:]
 
 
@@ -816,13 +812,8 @@ class NanoscopeFile(BaseForceVolumeFile):
     def get_force_curve_sync(self, r, c):
         return self._worker.get_force_curve(r, c, self.defl_sens, self.sync_dist)
 
-    async def get_image(self, image_name):
-        if image_name in self._calc_images:
-            await trio.sleep(0)
-            image = self._calc_images[image_name]
-        else:
-            image = await trs(self._worker.get_image, image_name)
-        return image
+    def get_image_sync(self, image_name):
+        return self._worker.get_image(image_name)
 
 
 # noinspection PyUnboundLocalVariable
@@ -1514,7 +1505,7 @@ class ARDFVolume:
 
 @attrs.define
 class ARDFWorker:
-    notes:  dict[str, str] = attrs.field(repr=False)
+    notes: dict[str, str] = attrs.field(repr=False)
     images: dict[str, ARDFImage]
     volumes: list[ARDFVolume]
 
@@ -1629,13 +1620,8 @@ class ARDFFile(BaseForceVolumeFile):
     def get_force_curve_sync(self, r, c):
         return self._worker.volumes[0].reader.get_curve(r, c)
 
-    async def get_image(self, image_name):
-        if image_name in self._calc_images:
-            await trio.sleep(0)
-            image = self._calc_images[image_name]
-        else:
-            image = await trs(self._worker.images[image_name].get_ndarray)
-        return image
+    def get_image_sync(self, image_name):
+        return self._worker.images[image_name].get_ndarray()
 
 
 SUFFIX_FVFILE_MAP = {
