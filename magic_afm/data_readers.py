@@ -139,7 +139,6 @@ async def convert_ardf(
 
 @attrs.frozen
 class ForceVolumeParams:
-    image_names: set[str]
     k: float
     defl_sens: float
     npts: int
@@ -182,9 +181,8 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
 
     @property
     def initial_image_name(self):
-        for name in self._default_heightmap_names:
-            if name in self._file_image_names:
-                return name
+        for name in self._file_image_names.intersection(self._default_heightmap_names):
+            return name
         else:
             return None
 
@@ -193,7 +191,6 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         return ForceVolumeParams(
             k=self.k,
             defl_sens=self.defl_sens,
-            image_names=self._file_image_names,
             npts=self.npts,
             split=self.split,
             sync_dist=self.sync_dist,

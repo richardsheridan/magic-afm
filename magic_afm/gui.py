@@ -719,7 +719,6 @@ class ForceVolumeTkDisplay:
         )
         unbind_mousewheel(self.image_name_menu)
         self.image_name_menu.pack(fill="x")
-        self.reset_image_name_menu(initial_values.image_names)
         image_name_labelframe.pack(fill="x")
 
         colormap_labelframe = ttk.Labelframe(image_opts_frame, text="Colormap")
@@ -1544,6 +1543,7 @@ async def force_volume_task(
             change_image_callback,
         )
         # This causes the initial plotting of figures after next checkpoint
+        display.reset_image_name_menu(opened_fvol.image_names)
         display.image_name_strvar.set(opened_fvol.initial_image_name)
 
 
