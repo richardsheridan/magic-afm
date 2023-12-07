@@ -906,7 +906,9 @@ class ARDFHeader:
         # ImHex poly 0x4c11db7 init 0xffffffff xor out 0xffffffff reflect in and out
         import zlib
 
-        crc = zlib.crc32(self.data[self.offset + 4 : self.offset + self.size])
+        crc = zlib.crc32(
+            memoryview(self.data)[self.offset + 4 : self.offset + self.size]
+        )
         if self.crc != crc:
             raise ValueError(
                 f"Invalid section. Expected {self.crc:X}, got {crc:X}.", self
@@ -1264,7 +1266,7 @@ class ARDFForceMapReader:
             vdat_header = ARDFHeader.unpack(self.data, pointer)
             if vdat_header.name != b"VDAT":
                 break
-            # vdat_header.validate()  # TODO: check if meaningfully slow on bigger data
+            vdat_header.validate()  # opportunity to read data with gil released
             yield ARDFVdata.unpack(vdat_header)
             pointer = vdat_header.offset + vdat_header.size
 
