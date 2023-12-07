@@ -92,7 +92,6 @@ except AttributeError:
     pass
 
 matplotlib.rcParams["savefig.dpi"] = 300
-RESAMPLE_NPTS = 512
 LAYOUT_ENGINE = "constrained"
 
 COLORMAPS = [
@@ -150,12 +149,11 @@ class ForceCurveOptions:
 
 @attrs.frozen
 class ForceCurveData:
-    z: np.ndarray
-    d: np.ndarray
-    split: np.ndarray
-    f: np.ndarray
-    delta: np.ndarray
-    t: np.ndarray
+    zxr: tuple[np.ndarray, np.ndarray]
+    dxr: tuple[np.ndarray, np.ndarray]
+    txr: tuple[np.ndarray, np.ndarray]
+    fxr: tuple[np.ndarray, np.ndarray]
+    deltaxr: tuple[np.ndarray, np.ndarray]
     # everything else set only if fit
     beta: Optional[np.ndarray] = None
     beta_err: Optional[np.ndarray] = None
@@ -823,8 +821,8 @@ class ForceVolumeTkDisplay:
         self._add_trace(self.sync_dist_strvar, self.sync_dist_callback)
         self.sync_dist_sbox = ttk.Spinbox(
             preproc_labelframe,
-            from_=-initial_values.npts,
-            to=initial_values.npts,
+            from_=-initial_values.sync_dist * 2,
+            to=initial_values.sync_dist * 2,
             increment=1,
             format="%0.0f",
             width=6,
@@ -1181,21 +1179,6 @@ async def force_volume_task(
 
                 display.canvas.draw_send.send_nowait(make_progress_image_draw_fn)
 
-                npts, split = opened_fvol.npts, opened_fvol.split
-                resample = npts > RESAMPLE_NPTS
-                if resample:
-                    split = split * RESAMPLE_NPTS // npts
-                    npts = RESAMPLE_NPTS
-
-                if options.fit_mode == calculation.FitMode.EXTEND:
-                    sl = slice(split)
-                elif options.fit_mode == calculation.FitMode.RETRACT:
-                    sl = slice(split, None)
-                elif options.fit_mode == calculation.FitMode.BOTH:
-                    sl = slice(None)
-                else:
-                    raise ValueError("Unknown fit_mode: ", options.fit_mode)
-
                 def blit_img_draw_fn():
                     bg = display.canvas.copy_from_bbox(progress_image.clipbox)
                     progress_image.set_visible(True)
@@ -1212,9 +1195,7 @@ async def force_volume_task(
                         partial(
                             calculation.load_force_curve,
                             opened_fvol,
-                            resample,
-                            npts,
-                            sl,
+                            options.fit_mode,
                             options.k,
                         ),
                         np.ndindex(img_shape),
@@ -1225,7 +1206,7 @@ async def force_volume_task(
                     property_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
                         trio_parallel.run_sync,
-                        partial(calculation.calc_properties_imap, **d, split=split),
+                        partial(calculation.calc_properties_imap, **d),
                         force_curve_aiter,
                         chunksize,
                     )
@@ -1423,9 +1404,7 @@ async def force_volume_task(
                 force_curve_data = await trs(
                     calculate_force_data,
                     *force_curve,
-                    opened_fvol.split,
-                    opened_fvol.npts,
-                    opened_fvol.rate,
+                    opened_fvol.t_step,
                     options,
                     async_tools.make_cancel_poller(),
                 )
@@ -1627,17 +1606,24 @@ def draw_data_table(point_data, ax: Axes):
     return table
 
 
-def draw_force_curve(data, plot_ax, options):
+def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
     artists = []
     aex = artists.extend
     aap = artists.append
     if options.disp_kind == DispKind.zd:
         plot_ax.set_xlabel("Z piezo (nm)")
         plot_ax.set_ylabel("Cantilever deflection (nm)")
-        aex(plot_ax.plot(data.z[: data.split], data.d[: data.split], label="Extend"))
-        aex(plot_ax.plot(data.z[data.split :], data.d[data.split :], label="Retract"))
+        aex(plot_ax.plot(data.zxr[0], data.dxr[0], label="Extend"))
+        aex(plot_ax.plot(data.zxr[1], data.dxr[1], label="Retract"))
+        if options.fit_mode == calculation.FitMode.BOTH:
+            aex(plot_ax.plot(np.concatenate(data.zxr), data.d_fit, "--", label="Model"))
+        elif options.fit_mode:
+            aex(
+                plot_ax.plot(
+                    data.zxr[options.fit_mode - 1], data.d_fit, "--", label="Model"
+                )
+            )
         if options.fit_mode:
-            aex(plot_ax.plot(data.z[data.sl], data.d_fit, "--", label="Model"))
             aap(
                 plot_ax.axvline(
                     data.z_tru, ls=":", c=artists[0].get_color(), label="Surface Z"
@@ -1647,12 +1633,40 @@ def draw_force_curve(data, plot_ax, options):
         plot_ax.set_xlabel("Indentation depth (nm)")
         plot_ax.set_ylabel("Indentation force (nN)")
         if options.fit_mode:
-            delta = data.delta - data.beta[2]
-            f = data.f - data.beta[3]
             f_fit = data.f_fit - data.beta[3]
-            aex(plot_ax.plot(delta[: data.split], f[: data.split], label="Extend"))
-            aex(plot_ax.plot(delta[data.split :], f[data.split :], label="Retract"))
-            aex(plot_ax.plot(delta[data.sl], f_fit, "--", label="Model"))
+            aex(
+                plot_ax.plot(
+                    data.deltaxr[0] - data.beta[2],
+                    data.fxr[0] - data.beta[3],
+                    label="Extend",
+                )
+            )
+            aex(
+                plot_ax.plot(
+                    data.deltaxr[1] - data.beta[2],
+                    data.fxr[1] - data.beta[3],
+                    label="Retract",
+                )
+            )
+            if options.fit_mode == calculation.FitMode.BOTH:
+                aex(
+                    plot_ax.plot(
+                        np.concatenate(data.deltaxr) - data.beta[2],
+                        f_fit,
+                        "--",
+                        label="Model",
+                    )
+                )
+            else:
+                aex(
+                    plot_ax.plot(
+                        data.deltaxr[options.fit_mode - 1] - data.beta[2],
+                        f_fit,
+                        "--",
+                        label="Model",
+                    )
+                )
+
             mopts = dict(
                 marker="X",
                 markersize=8,
@@ -1672,57 +1686,63 @@ def draw_force_curve(data, plot_ax, options):
                 )
             )
         else:
-            aex(
-                plot_ax.plot(
-                    data.delta[: data.split], data.f[: data.split], label="Extend"
-                )
-            )
-            aex(
-                plot_ax.plot(
-                    data.delta[data.split :], data.f[data.split :], label="Retract"
-                )
-            )
+            aex(plot_ax.plot(data.deltaxr[0], data.fxr[0], label="Extend"))
+            aex(plot_ax.plot(data.deltaxr[1], data.fxr[1], label="Retract"))
     elif options.disp_kind == DispKind.td:
         plot_ax.set_xlabel("Time (ms)")
         plot_ax.set_ylabel("Deflection (nm)")
-        aex(plot_ax.plot(data.t, data.d, label="Data"))
-        if options.fit_mode:
-            aex(plot_ax.plot(data.t[data.sl], data.d_fit, label="Model"))
+        # TODO: mismatching lengths here
+        aex(plot_ax.plot(data.txr[0], data.dxr[0], label="Extend"))
+        aex(plot_ax.plot(data.txr[1], data.dxr[1], label="Retract"))
+        if options.fit_mode == calculation.FitMode.BOTH:
+            aex(plot_ax.plot(np.concatenate(data.txr), data.d_fit, label="Model"))
+        elif options.fit_mode:
+            aex(plot_ax.plot(data.txr[options.fit_mode - 1], data.d_fit, label="Model"))
+
     else:
         raise ValueError("Unknown DispKind: ", data.disp_kind)
     plot_ax.legend(handles=artists)
     return artists, artists[0].get_color()
 
 
-def calculate_force_data(z, d, split, npts, rate, options, cancel_poller=lambda: None):
+def calculate_force_data(zxr, dxr, t_step, options, cancel_poller=lambda: None):
     cancel_poller()
-    if npts > RESAMPLE_NPTS:
-        split = split * RESAMPLE_NPTS // npts
-        z = calculation.resample_dset(z, RESAMPLE_NPTS, True)
-        d = calculation.resample_dset(d, RESAMPLE_NPTS, True)
+    npts = sum(map(len, zxr))
+    t_step *= 1000
+    rnpts = calculation.RESAMPLE_NPTS
+    if npts > rnpts:
+        split = len(zxr[0]) * rnpts // npts
+        z = calculation.resample_dset(np.concatenate(zxr), rnpts, True)
+        d = calculation.resample_dset(np.concatenate(dxr), rnpts, True)
+        zxr = z[:split], z[split:]
+        dxr = d[:split], d[split:]
+        t_step *= npts / rnpts
+        npts = rnpts
     # Transform data to model units
-    t = np.linspace(0, 1000 / rate, num=d.size, endpoint=False, dtype=d.dtype)
-    f = d * options.k
-    delta = z - d
+    t = np.linspace(0, npts*t_step, num=npts, endpoint=False, dtype=dxr[0].dtype)
+    txr = t[: len(dxr[0])], t[len(dxr[0]) :]
+    assert npts == sum(map(len,txr))
+    fxr = tuple(map(np.multiply, dxr, (options.k,) * len(dxr)))
+    deltaxr = tuple(map(np.subtract, zxr, dxr))
 
     if not options.fit_mode:
-        return ForceCurveData(split=split, z=z, d=d, f=f, delta=delta, t=t)
+        return ForceCurveData(zxr=zxr, dxr=dxr, txr=txr, fxr=fxr, deltaxr=deltaxr)
 
     if options.fit_mode == calculation.FitMode.EXTEND:
-        sl = slice(split)
+        delta, f, split = deltaxr[0], fxr[0], None
     elif options.fit_mode == calculation.FitMode.RETRACT:
-        sl = slice(split, None)
+        delta, f, split = deltaxr[1], fxr[1], None
     elif options.fit_mode == calculation.FitMode.BOTH:
-        sl = slice(None)
+        delta, f, split = np.concatenate(deltaxr), np.concatenate(fxr), len(deltaxr[0])
     else:
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
     cancel_poller()
     optionsdict = attrs.asdict(options)
     beta, beta_err, sse, calc_fun = calculation.fitfun(
-        delta[sl], f[sl], **optionsdict, cancel_poller=cancel_poller, split=split
+        delta, f, **optionsdict, cancel_poller=cancel_poller, split=split
     )
-    f_fit = calc_fun(delta[sl], *beta)
+    f_fit = calc_fun(delta, *beta)
     d_fit = f_fit / options.k
     cancel_poller()
 
@@ -1730,8 +1750,8 @@ def calculate_force_data(z, d, split, npts, rate, options, cancel_poller=lambda:
     delta_new, f_new, k_new = calculation.perturb_k(delta, f, eps, options.k)
     optionsdict.pop("k")
     beta_perturb = calculation.fitfun(
-        delta_new[sl],
-        f_new[sl],
+        delta_new,
+        f_new,
         k_new,
         **optionsdict,
         cancel_poller=cancel_poller,
@@ -1744,9 +1764,7 @@ def calculate_force_data(z, d, split, npts, rate, options, cancel_poller=lambda:
             indentation,
             z_true_surface,
             mindelta,
-        ) = calculation.calc_def_ind_ztru(
-            f[sl], beta, **attrs.asdict(options), split=split
-        )
+        ) = calculation.calc_def_ind_ztru(f, beta, **attrs.asdict(options), split=split)
     else:
         deflection, indentation, z_true_surface, mindelta = (
             np.nan,
@@ -1755,13 +1773,11 @@ def calculate_force_data(z, d, split, npts, rate, options, cancel_poller=lambda:
             np.nan,
         )
     return ForceCurveData(
-        z=z,
-        d=d,
-        split=split,
-        f=f,
-        delta=delta,
-        t=t,
-        sl=sl,
+        zxr=zxr,
+        dxr=dxr,
+        fxr=fxr,
+        deltaxr=deltaxr,
+        txr=txr,
         beta=beta,
         beta_err=beta_err,
         calc_fun=calc_fun,

@@ -38,6 +38,7 @@ else:
 
 EPS = float(np.finfo(np.float64).eps)
 RT_EPS = float(np.sqrt(EPS))
+RESAMPLE_NPTS = 512
 
 gkern = np.array([0.25, 0.5, 0.25], dtype=np.float32)
 
@@ -719,8 +720,8 @@ def delta_curve(
 @enum.unique
 class FitMode(enum.IntEnum):
     SKIP = 0  # needs to be inty and falsy
-    EXTEND = enum.auto()
-    RETRACT = enum.auto()
+    EXTEND = 1
+    RETRACT = 2
     BOTH = enum.auto()
 
 
@@ -733,7 +734,7 @@ def rapid_forcecurve_estimate(delta, force, radius):
     deltamin = delta[imin]
 
     # if adhesion is low, min may be noise; clip delta to middle of curve
-    deltamid = (delta[0]+delta[-1])/2
+    deltamid = (delta[0] + delta[-1]) / 2
     deltamin = max(deltamin, deltamid)
 
     fmin = force[imin]
@@ -893,7 +894,8 @@ def perturb_k(delta, f, epsilon, k):
 
 
 def calc_properties_imap(delta_f_rc, **kwargs):
-    delta, force, rc = delta_f_rc
+    delta, force, split, rc = delta_f_rc
+    kwargs["split"] = split
     beta, beta_err, sse, partial_force_curve = fitfun(delta, force, **kwargs)
     if np.any(np.isnan(beta)):
         return rc, None
@@ -902,7 +904,6 @@ def calc_properties_imap(delta_f_rc, **kwargs):
     (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(
         force, beta, **kwargs
     )
-    kwargs = kwargs.copy()
     k = kwargs.pop("k")
     eps = 1e-3
     beta_perturb, *_ = fitfun(*perturb_k(delta, force, eps, k), p0=beta, **kwargs)
@@ -960,12 +961,24 @@ def nice_workers():
     psutil.Process().nice(NICE)
 
 
-def load_force_curve(opened_fvol, resample, npts, sl, k, rc):
-    z, d = opened_fvol.get_force_curve_sync(*rc)
-    if resample:
-        z, d = resample_dset([z, d], npts, True)
-    z = z[sl]
-    d = d[sl]
+def load_force_curve(opened_fvol, fit_mode, k, rc):
+    zxr, dxr = opened_fvol.get_force_curve_sync(*rc)
+    npts = sum(map(len, zxr))
+    if npts > RESAMPLE_NPTS:
+        split = len(zxr[0]) * RESAMPLE_NPTS // npts
+        z = resample_dset(np.concatenate(zxr), RESAMPLE_NPTS, True)
+        d = resample_dset(np.concatenate(dxr), RESAMPLE_NPTS, True)
+        zxr = z[:split], z[split:]
+        dxr = d[:split], d[split:]
+
+    if fit_mode == FitMode.EXTEND:
+        z, d, split = zxr[0], dxr[0], None
+    elif fit_mode == FitMode.RETRACT:
+        z, d, split = zxr[1], dxr[1], None
+    elif fit_mode == FitMode.BOTH:
+        z, d, split = np.concatenate(zxr), np.concatenate(dxr), len(zxr[0])
+    else:
+        raise ValueError("Unknown fit_mode: ", fit_mode)
     delta = z - d
     f = d * k
-    return delta, f, rc
+    return delta, f, split, rc

@@ -141,8 +141,6 @@ async def convert_ardf(
 class ForceVolumeParams:
     k: float
     defl_sens: float
-    npts: int
-    split: int
     sync_dist: int
 
 
@@ -165,10 +163,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         self._worker = None
         self.k = None
         self.defl_sens = None
-        self.npts = None
-        # self.scandown = True
-        self.split = None
-        self.rate = None
+        self.t_step = None
         self.sync_dist = 0
 
     @property
@@ -191,8 +186,6 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         return ForceVolumeParams(
             k=self.k,
             defl_sens=self.defl_sens,
-            npts=self.npts,
-            split=self.split,
             sync_dist=self.sync_dist,
         )
 
@@ -256,15 +249,12 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         self.scansize = 100, 100
         self.k = 10
         self.defl_sens = 5
-        self.rate = 100
+        self.t_step = 5e-6
 
     async def ainitialize(self):
         await trio.sleep(0)
-        self.npts = 1024
-        self.split = self.npts // 2
-        self.delta = -15 * (
-            np.cos(np.linspace(0, np.pi * 2, self.npts, endpoint=False)) + 0.5
-        )
+        t = np.linspace(0, np.pi * 2, 1000, endpoint=False)
+        self.delta = -15 * (np.cos(t) + 0.5)
 
     async def aclose(self):
         pass
@@ -272,17 +262,15 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
     def get_force_curve_sync(self, r, c):
         gen = np.random.default_rng(seed=(r, c))
         parms = (1, 10, 0.1, -2, 1, 0, 0, 1)
-        fext = calculation.force_curve(
-            calculation.red_extend, self.delta[: self.split], *parms
-        )
-        fret = calculation.force_curve(
-            calculation.red_retract, self.delta[self.split :], *parms
-        )
-        d = np.concatenate((fext, fret)) / self.k
-        z = self.delta + d
-        d += gen.normal(scale=0.1, size=d.size)
-        z += gen.normal(scale=0.01, size=z.size)
-        return z, d
+        deltaext = self.delta[: self.delta.size // 2]
+        deltaret = self.delta[self.delta.size // 2 :]
+        fext = calculation.force_curve(calculation.red_extend, deltaext, *parms)
+        fret = calculation.force_curve(calculation.red_retract, deltaret, *parms)
+        dext = fext / self.k + gen.normal(scale=0.1, size=fext.size)
+        dret = fret / self.k + gen.normal(scale=0.1, size=fret.size)
+        zext = deltaext + dext + gen.normal(scale=0.01, size=fext.size)
+        zret = deltaret + dret + gen.normal(scale=0.01, size=fret.size)
+        return (zext, zret), (dext, dret)
 
     def get_image_sync(self, image_name):
         return np.zeros((64, 64), dtype=np.float32)
@@ -1159,7 +1147,7 @@ class FVReader(Protocol):
 @attrs.frozen
 class ARDFFFMReader:
     data: mmap  # keep checking our mmap is open so array_view cannot segfault
-    array_view: np.ndarray
+    array_view: np.ndarray = attrs.field(repr=False)
     array_offset: int  # hard to recover from views
     channels: list[int]  # [z, d]
     # seg_offsets is weird. you'd think it would contain the starting index
@@ -1223,7 +1211,7 @@ class ARDFFFMReader:
                 self.channels,
             ]
             * NANOMETER_UNIT_CONVERSION
-        )
+        ).reshape((len(self.channels), 2, -1))
 
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
@@ -1239,9 +1227,8 @@ class ARDFFFMReader:
         loaded_data = self.array_view[:, :, self.channels, :]
         # avoid a second copy with inplace op
         loaded_data *= NANOMETER_UNIT_CONVERSION
-        # a view with shuffled indices is possible, but
-        # most other classes return tuples anyway
-        return loaded_data[:, :, 0, :], loaded_data[:, :, 1, :]
+        # reshape assuming equal points on extend and retract
+        return loaded_data.reshape(self.array_view.shape[:-1] + (2, -1))
 
 
 @attrs.frozen(eq=False)
@@ -1304,24 +1291,28 @@ class ARDFForceMapReader:
 
         for vdat in self.traverse_vdats(vset.offset + vset.size):
             # zname = "Raw" if "Raw" in self.channels else "ZSnsr"
-            # code elsewhere assumes split is halfway through
+            s = vdat.seg_offsets
             if vdat.channel == self.channels["ZSnsr"][0]:
-                z = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
+                z = vdat.get_ndarray()
+                zxr = z[: s[1]], z[s[1] : s[2]]
             elif vdat.channel == self.channels["Defl"][0]:
-                d = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
-        return z, d
+                d = vdat.get_ndarray()
+                dxr = d[: s[1]], d[s[1] : s[2]]
+        return zxr, dxr
 
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
         # zname = "Raw" if "Raw" in self.channels else "ZSnsr"
         for vset in self.traverse_vsets(int(self.vtoc_pointers[0])):
             for vdat in self.traverse_vdats(vset.offset + vset.size):
-                # code elsewhere assumes split is halfway through
+                s = vdat.seg_offsets
                 if vdat.channel == self.channels["ZSnsr"][0]:
-                    z = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
+                    z = vdat.get_ndarray()
+                    zxr = z[: s[1]], z[s[1] : s[2]]
                 elif vdat.channel == self.channels["Defl"][0]:
-                    d = vdat.get_ndarray()[: vdat.seg_offsets[1] * 2]
-            yield (vset.line, vset.point), (z, d)
+                    d = vdat.get_ndarray()
+                    dxr = d[: s[1]], d[s[1] : s[2]]
+            yield (vset.line, vset.point), (zxr, dxr)
 
     def get_all_curves(self) -> ZDArrays:
         """Eagerly load all curves into memory."""
@@ -1345,9 +1336,7 @@ class ARDFForceMapReader:
             sl = np.s_[halfextra : minfloats + halfextra]
             # TODO: verify turnaround point against iter_curves
             x[r, c, :, :] = zvdat.get_ndarray()[sl], dvdat.get_ndarray()[sl]
-        z = x[:, :, 0, :]
-        d = x[:, :, 1, :]
-        return z, d
+        return x.reshape(x.shape[:-1] + (2, -1))
 
 
 @attrs.frozen
@@ -1604,10 +1593,7 @@ class ARDFFile(BaseForceVolumeFile):
         self.defl_sens = self._defl_sens_orig = (
             float(self._worker.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
         )
-        self.rate = float(self._worker.notes["FastMapZRate"])
-        # TODO: don't assume FFM data
-        self.npts = self._worker.volumes[0].reader.array_view.shape[-1]
-        self.split = self.npts // 2
+        self.t_step = self._worker.volumes[0].t_step
 
     async def aclose(self):
         if self._mm is not None:
@@ -1615,7 +1601,10 @@ class ARDFFile(BaseForceVolumeFile):
                 await trio.to_thread.run_sync(self._mm.close)
 
     def get_force_curve_sync(self, r, c):
-        return self._worker.volumes[0].reader.get_curve(r, c)
+        out = zxr, dxr = self._worker.volumes[0].reader.get_curve(r, c)
+        if self.defl_sens != self._defl_sens_orig:
+            dxr *= self.defl_sens / self._defl_sens_orig
+        return out
 
     def get_image_sync(self, image_name):
         return self._worker.images[image_name].get_ndarray()
