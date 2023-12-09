@@ -32,7 +32,7 @@ TOOLTIP_CANCEL = None, None, None
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 
 cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count() or 1)
-trs = partial(trio.to_thread.run_sync, cancellable=True)
+trs = partial(trio.to_thread.run_sync, abandon_on_cancel=True)
 
 
 def _chunk_producer(fn, job_items, chunksize):
@@ -216,14 +216,3 @@ async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_
                         tooltip_command = TOOLTIP_CANCEL
                 finally:
                     hide_tooltip()
-
-
-def make_cancel_poller():
-    """Uses internal undocumented bits so probably super fragile"""
-    _cancel_status = trio.lowlevel.current_task()._cancel_status
-
-    def poll_for_cancel(*args, **kwargs):
-        if _cancel_status.effectively_cancelled:
-            raise trio.Cancelled._create()
-
-    return poll_for_cancel

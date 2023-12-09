@@ -41,7 +41,7 @@ import numpy as np
 import trio
 
 from . import calculation
-from .async_tools import make_cancel_poller, trs
+from .async_tools import trs
 
 CACHED_OPEN_PATHS = {}
 
@@ -328,14 +328,14 @@ class ForceMapWorker:
 
         return self._shared_get_part(curve, split)
 
-    def get_all_curves(self, _poll_for_cancel=(lambda: None)):
+    def get_all_curves(self, cancel_poller=bool):
         im_r, im_c, num_segments = self.segments.shape
         x = np.empty((im_r, im_c, 2, self.minext + self.minret), dtype=np.float32)
         for index, curve in self.force_curves.items():
             # Unfortunately they threw in segments here too, so we skip over it
             if index == "Segments":
                 continue
-            _poll_for_cancel()
+            cancel_poller()
             # Because of the nonuniform arrays, each indent gets its own dataset
             # indexed by 'row:column' e.g. '1:1'. We could start with the shape and index
             # manually, but the string munging is easier for me to think about
@@ -361,12 +361,12 @@ class FFMSingleWorker:
         d = self.defl[r, c]
         return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
 
-    def get_all_curves(self, _poll_for_cancel=(lambda: None)):
-        _poll_for_cancel()
+    def get_all_curves(self, cancel_poller=bool):
+        cancel_poller()
         z = self.raw[:] * NANOMETER_UNIT_CONVERSION
-        _poll_for_cancel()
+        cancel_poller()
         d = self.defl[:] * NANOMETER_UNIT_CONVERSION
-        _poll_for_cancel()
+        cancel_poller()
         return z, d
 
 
@@ -389,17 +389,17 @@ class FFMTraceRetraceWorker:
             d = self.defl_retrace[r, c]
         return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
 
-    def get_all_curves(self, _poll_for_cancel=(lambda: None)):
-        _poll_for_cancel()
+    def get_all_curves(self, cancel_poller=bool):
+        cancel_poller()
         if self.trace:
             z = self.raw_trace[:] * NANOMETER_UNIT_CONVERSION
-            _poll_for_cancel()
+            cancel_poller()
             d = self.defl_trace[:] * NANOMETER_UNIT_CONVERSION
         else:
             z = self.raw_retrace[:] * NANOMETER_UNIT_CONVERSION
-            _poll_for_cancel()
+            cancel_poller()
             d = self.defl_retrace[:] * NANOMETER_UNIT_CONVERSION
-        _poll_for_cancel()
+        cancel_poller()
         return z, d
 
 
@@ -527,7 +527,7 @@ class ARH5File(BaseForceVolumeFile):
         return z, d
 
     async def get_all_curves(self):
-        z, d = await trs(self._worker.get_all_curves, make_cancel_poller())
+        z, d = await trs(self._worker.get_all_curves, trio.from_thread.check_cancelled)
         if self.defl_sens != self._defl_sens_orig:
             d *= self.defl_sens / self._defl_sens_orig
         return z, d

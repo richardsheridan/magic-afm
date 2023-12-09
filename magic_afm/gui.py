@@ -1406,7 +1406,7 @@ async def force_volume_task(
                     *force_curve,
                     opened_fvol.t_step,
                     options,
-                    async_tools.make_cancel_poller(),
+                    trio.from_thread.check_cancelled,
                 )
                 del force_curve  # contained in data
             plot_curve_cancels_pending.discard(cancel_scope)
@@ -1705,7 +1705,7 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
     return artists, artists[0].get_color()
 
 
-def calculate_force_data(zxr, dxr, t_step, options, cancel_poller=lambda: None):
+def calculate_force_data(zxr, dxr, t_step, options, cancel_poller=bool):
     cancel_poller()
     npts = sum(map(len, zxr))
     t_step *= 1000
@@ -1713,7 +1713,9 @@ def calculate_force_data(zxr, dxr, t_step, options, cancel_poller=lambda: None):
     if npts > rnpts:
         split = len(zxr[0]) * rnpts // npts
         z = calculation.resample_dset(np.concatenate(zxr), rnpts, True)
+        cancel_poller()
         d = calculation.resample_dset(np.concatenate(dxr), rnpts, True)
+        cancel_poller()
         zxr = z[:split], z[split:]
         dxr = d[:split], d[split:]
         t_step *= npts / rnpts
