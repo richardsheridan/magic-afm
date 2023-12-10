@@ -43,6 +43,42 @@ import trio
 from . import calculation
 from .async_tools import trs
 
+
+NANOMETER_UNIT_CONVERSION = (
+    1e9  # maybe we can intelligently read this from the file someday
+)
+###############################################
+############### Typing stuff ##################
+###############################################
+Index: TypeAlias = tuple[int, ...]
+ZDArrays: TypeAlias = Collection[np.ndarray]
+ChanMap: TypeAlias = dict[str, tuple[int, str]]
+
+
+class FVReader(Protocol):
+    def get_curve(self, r: int, c: int) -> ZDArrays:
+        """Efficiently get a specific curve from disk."""
+        ...
+
+    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+        """Iterate over curves lazily in on-disk order."""
+        ...
+
+    def get_all_curves(self) -> ZDArrays:
+        """Eagerly load all curves into memory."""
+        ...
+
+
+@attrs.frozen
+class ForceVolumeParams:
+    k: float
+    defl_sens: float
+    sync_dist: int
+
+
+###############################################
+################## Helpers ####################
+###############################################
 CACHED_OPEN_PATHS = {}
 
 
@@ -56,11 +92,105 @@ def eventually_evict_path(path):
     return
 
 
+def open_h5(path):
+    import h5py
+
+    return h5py.File(path, "r")
+
+
 def mmap_path_read_only(path):
     import mmap
 
     with open(path, mode="rb", buffering=0) as file:
         return mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
+
+
+def decode_cstring(cstring: bytes):
+    return cstring.rstrip(b"\0").decode("windows-1252")
+
+
+# noinspection PyUnboundLocalVariable
+def parse_nanoscope_header(header_lines):
+    """Convert header from a Nanoscope file to a convenient nested dict
+
+    header_lines can be an opened file object or a list of strings or anything
+    that iterates the header line-by-line."""
+
+    header = {}
+    for line in header_lines:
+        assert line.startswith("\\")
+        line = line[1:].strip()  # strip leading slash and newline
+
+        if line.startswith("*"):
+            # we're starting a new section
+            section_name = line[1:]
+            if section_name == "File list end":
+                break  # THIS IS THE **NORMAL** WAY TO END THE FOR LOOP
+            if section_name in header:
+                # repeat section name, which we interpret as a list of sections
+                if header[section_name] is current_section:
+                    header[section_name] = [current_section]
+                current_section = {}
+                header[section_name].append(current_section)
+            else:
+                current_section = {}
+                header[section_name] = current_section
+        else:
+            # add key, value pairs for this section
+            key, value = line.split(":", maxsplit=1)
+            # Colon special case for "groups"
+            if key.startswith("@") and key[1].isdigit() and len(key) == 2:
+                key2, value = value.split(":", maxsplit=1)
+                key = key + ":" + key2
+
+            current_section[key] = value.strip()
+    else:
+        raise ValueError("File ended too soon")
+    if (not header) or ("" in header):
+        raise ValueError("File is empty or not a Bruker data file")
+
+    # link headers from [section][index][key] to [Image/FV][Image Data name][key]
+    header["Image"] = {}
+    for entry in header["Ciao image list"]:
+        if type(entry) is str:
+            # a single image in this file, rather than a list of images
+            name = header["Ciao image list"]["@2:Image Data"].split('"')[1]
+            header["Image"][name] = header["Ciao image list"]
+            break
+        name = entry["@2:Image Data"].split('"')[1]
+        # assert name not in header["Image"]  # assume data is redundant for now
+        header["Image"][name] = entry
+    header["FV"] = {}
+    for entry in header["Ciao force image list"]:
+        if type(entry) is str:
+            # a single force image in this file, rather than a list of images
+            name = header["Ciao force image list"]["@4:Image Data"].split('"')[1]
+            header["FV"][name] = header["Ciao force image list"]
+            break
+        name = entry["@4:Image Data"].split('"')[1]
+        # assert name not in header["FV"]  # assume data is redundant for now
+        header["FV"][name] = entry
+
+    return header
+
+
+def bruker_bpp_fix(bpp, version):
+    if (
+        version > "0x09200000"
+    ):  # Counting on lexical ordering here, hope zeros don't change...
+        return 4
+    else:
+        return int(bpp)
+
+
+def parse_AR_note(note: str):
+    # The notes have a very regular key-value structure
+    # convert to dict for later access
+    return dict(
+        line.split(":", 1)
+        for line in note.split("\n")
+        if ":" in line and "@Line:" not in line
+    )
 
 
 async def convert_ardf(
@@ -137,13 +267,9 @@ async def convert_ardf(
     return h5file_path
 
 
-@attrs.frozen
-class ForceVolumeParams:
-    k: float
-    defl_sens: float
-    sync_dist: int
-
-
+###############################################
+################## FVFiles ####################
+###############################################
 class BaseForceVolumeFile(metaclass=abc.ABCMeta):
     """Consistent interface across filetypes for Magic AFM GUI
 
@@ -276,10 +402,9 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         return np.zeros((64, 64), dtype=np.float32)
 
 
-NANOMETER_UNIT_CONVERSION = (
-    1e9  # maybe we can intelligently read this from the file someday
-)
-
+###############################################
+################### Asylum ####################
+###############################################
 
 class ForceMapWorker:
     def __init__(self, h5data):
@@ -403,12 +528,6 @@ class FFMTraceRetraceWorker:
         return z, d
 
 
-def open_h5(path):
-    import h5py
-
-    return h5py.File(path, "r")
-
-
 class ARH5File(BaseForceVolumeFile):
     _basic_units_map = {
         "Adhesion": "N",
@@ -519,361 +638,6 @@ class ARH5File(BaseForceVolumeFile):
 
     def get_image_sync(self, image_name):
         return self._images[image_name][:]
-
-
-class BrukerWorkerBase(metaclass=abc.ABCMeta):
-    def __init__(self, header, mm, s):
-        self.header = header  # get_image
-        self.mm = mm  # get_image
-        self.split = s  # get_force_curve
-        self.version = header["Force file list"]["Version"].strip()  # get_image
-
-    @abc.abstractmethod
-    def get_force_curve(self, r, c, defl_sens, sync_dist):
-        raise NotImplementedError
-
-    def get_image(self, image_name):
-        h = self.header["Image"][image_name]
-
-        value = h["@2:Z scale"]
-        bpp = bruker_bpp_fix(h["Bytes/pixel"], self.version)
-        hard_scale = float(value.split()[-2]) / (2 ** (bpp * 8))
-        hard_offset = float(h["@2:Z offset"].split()[-2]) / (2 ** (bpp * 8))
-        soft_scale_name = "@" + value[1 + value.find("[") : value.find("]")]
-        try:
-            soft_scale_string = self.header["Ciao scan list"][soft_scale_name]
-        except KeyError:
-            soft_scale_string = self.header["Scanner list"][soft_scale_name]
-        soft_scale = float(soft_scale_string.split()[1]) / NANOMETER_UNIT_CONVERSION
-        scale = np.float32(hard_scale * soft_scale)
-        data_length = int(h["Data length"])
-        offset = int(h["Data offset"])
-        r = int(h["Number of lines"])
-        c = int(h["Samps/line"])
-        assert data_length == r * c * bpp
-        # scandown = h["Frame direction"] == "Down"
-        z_ints = np.ndarray(
-            shape=(r, c), dtype=f"i{bpp}", buffer=self.mm, offset=offset
-        )
-        z_floats = z_ints * scale + np.float32(hard_offset * soft_scale)
-        return z_floats
-
-
-class FFVWorker(BrukerWorkerBase):
-    def __init__(self, header, mm, s):
-        super().__init__(header, mm, s)
-        arbitrary_image = next(iter(header["Image"].values()))
-        r = int(arbitrary_image["Number of lines"])
-        c = int(arbitrary_image["Samps/line"])
-        data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
-        for name in [data_name, "Height Sensor"]:
-            subheader = header["FV"][name]
-            offset = int(subheader["Data offset"])
-            bpp = bruker_bpp_fix(subheader["Bytes/pixel"], self.version)
-            length = int(subheader["Data length"])
-            npts = length // (r * c * bpp)
-            data = np.ndarray(
-                shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset
-            )
-            if name == "Height Sensor":
-                self.z_ints = data
-                value = subheader["@4:Z scale"]
-                soft_scale = float(
-                    header["Ciao scan list"]["@Sens. ZsensSens"].split()[1]
-                )
-                hard_scale = float(
-                    value[1 + value.find("(") : value.find(")")].split()[0]
-                )
-                self.z_scale = np.float32(soft_scale * hard_scale)
-            else:
-                self.d_ints = data
-                value = subheader["@4:Z scale"]
-                self.defl_hard_scale = float(
-                    value[1 + value.find("(") : value.find(")")].split()[0]
-                )
-
-    def get_force_curve(self, r, c, defl_sens, sync_dist):
-        s = self.split
-        defl_scale = np.float32(defl_sens * self.defl_hard_scale)
-
-        d = self.d_ints[r, c] * defl_scale
-        d[:s] = d[s - 1 :: -1]
-
-        if sync_dist:
-            d = np.roll(d, -sync_dist)
-
-        z = self.z_ints[r, c] * self.z_scale
-        return (z[s - 1 :: -1], z[s:]), (d[:s], d[s:])
-
-
-class QNMWorker(BrukerWorkerBase):
-    def __init__(self, header, mm, s):
-        super().__init__(header, mm, s)
-        arbitrary_image = next(iter(header["Image"].values()))
-        r = int(arbitrary_image["Number of lines"])
-        c = int(arbitrary_image["Samps/line"])
-        data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
-        subheader = header["FV"][data_name]
-        bpp = bruker_bpp_fix(subheader["Bytes/pixel"], self.version)
-        length = int(subheader["Data length"])
-        offset = int(subheader["Data offset"])
-        npts = length // (r * c * bpp)
-
-        self.d_ints = np.ndarray(
-            shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset
-        )
-        value = subheader["@4:Z scale"]
-        self.defl_hard_scale = float(
-            value[1 + value.find("(") : value.find(")")].split()[0]
-        )
-
-        try:
-            image = self.get_image("Height Sensor")
-        except KeyError:
-            image = self.get_image("Height")
-        image *= NANOMETER_UNIT_CONVERSION
-        self.height_for_z = image
-        amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
-        phase = s / npts * 2 * np.pi
-        self.z_basis = amp * np.cos(
-            np.linspace(
-                phase, phase + 2 * np.pi, npts, endpoint=False, dtype=np.float32
-            )
-        )
-
-    def get_force_curve(self, r, c, defl_sens, sync_dist):
-        s = self.split
-        defl_scale = np.float32(defl_sens * self.defl_hard_scale)
-
-        d = self.d_ints[r, c] * defl_scale
-        d[:s] = d[s - 1 :: -1]
-        # remove blip
-        if d[0] == -32768 * defl_scale:
-            d[0] = d[1]
-        d = np.roll(d, s - sync_dist)  # TODO roll across two adjacent indents
-
-        # need to infer z from amp/height
-        z = self.z_basis + self.height_for_z[r, c]
-
-        return (z[:s], z[s:]), (d[:s], d[s:])
-
-
-class NanoscopeFile(BaseForceVolumeFile):
-    _basic_units_map = {
-        "Height Sensor": "m",
-        "Height": "m",
-    }
-    _default_heightmap_names = ("Height Sensor", "Height")
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        del state["_mm"]
-        del state["_worker"]
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        try:
-            mm, worker, path_lock = CACHED_OPEN_PATHS[self.path]
-        except KeyError:
-            self._mm = mm = mmap_path_read_only(self.path)
-            worker, _ = self._choose_worker(self.header)
-            path_lock = threading.Lock()
-            path_lock.acquire()
-            CACHED_OPEN_PATHS[self.path] = mm, worker, path_lock
-            threading.Thread(
-                target=eventually_evict_path, args=(self.path,), daemon=True
-            ).start()
-        else:
-            # reset thread countdown
-            try:
-                path_lock.release()
-            except RuntimeError:
-                pass  # no problem if unreleased
-        self._mm = mm
-        self._worker = worker
-
-    async def ainitialize(self):
-        self._mm = await trio.to_thread.run_sync(mmap_path_read_only, self.path)
-
-        # End of header is demarcated by a SUB byte (26 = 0x1A)
-        # Longest header so far was 80 kB, stop there to avoid searching gigabytes before fail
-        header_end_pos = await trs(self._mm.find, b"\x1A", 0, 80960)
-        if header_end_pos < 0:
-            raise ValueError(
-                "No stop byte found, are you sure this is a Nanoscope file?"
-            )
-        self.header = header = parse_nanoscope_header(
-            self._mm[:header_end_pos]  # will be cached from find call
-            .decode("windows-1252")
-            .splitlines()
-        )
-
-        # Header items that I should be reading someday
-        # \Frame direction: Down
-        # \Line Direction: Retrace
-        # \Z direction: Retract
-
-        # and in the image lists
-        # \Aspect Ratio: 1:1
-        # \Scan Size: 800 800 nm
-
-        self._file_image_names.update(header["Image"].keys())
-
-        data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
-
-        data_header = header["FV"][data_name]
-        self.split, *_ = map(int, data_header["Samps/line"].split())
-        self.npts = int(header["Ciao force list"]["force/line"].split()[0])
-        rate, unit = header["Ciao scan list"]["PFT Freq"].split()
-        assert unit.lower() == "khz"
-        self.rate = float(rate) * 1000
-        self.t_step = 1 / self.rate / self.npts
-
-        scansize, units = header["Ciao scan list"]["Scan Size"].split()
-        if units == "nm":
-            factor = 1.0
-        elif units == "pm":
-            factor = 0.001
-        elif units == "~m":  # microns?!
-            factor = 1000.0
-        else:
-            raise ValueError("unknown units:", units)
-
-        # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
-        fastpx = int(header["Ciao scan list"]["Samps/line"])
-        slowpx = int(header["Ciao scan list"]["Lines"])
-        ratio = float(scansize) * factor / max(fastpx, slowpx)
-        self.scansize = (fastpx * ratio, slowpx * ratio)
-
-        # self.scandown = {"Down": True, "Up": False}[
-        #     header["FV"]["Deflection Error"]["Frame direction"]
-        # ]
-
-        self.k = float(data_header["Spring Constant"])
-        self.defl_sens = float(header["Ciao scan list"]["@Sens. DeflSens"].split()[1])
-        value = data_header["@4:Z scale"]
-        self.defl_hard_scale = float(
-            value[1 + value.find("(") : value.find(")")].split()[0]
-        )
-
-        self._worker, self.sync_dist = await trs(self._choose_worker, header)
-
-    def _choose_worker(self, header):
-        if "Height Sensor" in header["FV"]:
-            return FFVWorker(header, self._mm, self.split), 0
-        else:
-            return (
-                QNMWorker(header, self._mm, self.split),
-                int(
-                    round(
-                        float(
-                            header["Ciao scan list"]["Sync Distance QNM"]
-                            if "Sync Distance QNM" in header["Ciao scan list"]
-                            else header["Ciao scan list"]["Sync Distance"]
-                        )
-                    )
-                ),
-            )
-
-    async def aclose(self):
-        self._worker = None
-        with trio.CancelScope(shield=True):
-            await trio.to_thread.run_sync(self._mm.close)
-
-    def get_force_curve_sync(self, r, c):
-        return self._worker.get_force_curve(r, c, self.defl_sens, self.sync_dist)
-
-    def get_image_sync(self, image_name):
-        return self._worker.get_image(image_name)
-
-
-# noinspection PyUnboundLocalVariable
-def parse_nanoscope_header(header_lines):
-    """Convert header from a Nanoscope file to a convenient nested dict
-
-    header_lines can be an opened file object or a list of strings or anything
-    that iterates the header line-by-line."""
-
-    header = {}
-    for line in header_lines:
-        assert line.startswith("\\")
-        line = line[1:].strip()  # strip leading slash and newline
-
-        if line.startswith("*"):
-            # we're starting a new section
-            section_name = line[1:]
-            if section_name == "File list end":
-                break  # THIS IS THE **NORMAL** WAY TO END THE FOR LOOP
-            if section_name in header:
-                # repeat section name, which we interpret as a list of sections
-                if header[section_name] is current_section:
-                    header[section_name] = [current_section]
-                current_section = {}
-                header[section_name].append(current_section)
-            else:
-                current_section = {}
-                header[section_name] = current_section
-        else:
-            # add key, value pairs for this section
-            key, value = line.split(":", maxsplit=1)
-            # Colon special case for "groups"
-            if key.startswith("@") and key[1].isdigit() and len(key) == 2:
-                key2, value = value.split(":", maxsplit=1)
-                key = key + ":" + key2
-
-            current_section[key] = value.strip()
-    else:
-        raise ValueError("File ended too soon")
-    if (not header) or ("" in header):
-        raise ValueError("File is empty or not a Bruker data file")
-
-    # link headers from [section][index][key] to [Image/FV][Image Data name][key]
-    header["Image"] = {}
-    for entry in header["Ciao image list"]:
-        if type(entry) is str:
-            # a single image in this file, rather than a list of images
-            name = header["Ciao image list"]["@2:Image Data"].split('"')[1]
-            header["Image"][name] = header["Ciao image list"]
-            break
-        name = entry["@2:Image Data"].split('"')[1]
-        # assert name not in header["Image"]  # assume data is redundant for now
-        header["Image"][name] = entry
-    header["FV"] = {}
-    for entry in header["Ciao force image list"]:
-        if type(entry) is str:
-            # a single force image in this file, rather than a list of images
-            name = header["Ciao force image list"]["@4:Image Data"].split('"')[1]
-            header["FV"][name] = header["Ciao force image list"]
-            break
-        name = entry["@4:Image Data"].split('"')[1]
-        # assert name not in header["FV"]  # assume data is redundant for now
-        header["FV"][name] = entry
-
-    return header
-
-
-def bruker_bpp_fix(bpp, version):
-    if (
-        version > "0x09200000"
-    ):  # Counting on lexical ordering here, hope zeros don't change...
-        return 4
-    else:
-        return int(bpp)
-
-
-def decode_cstring(cstring: bytes):
-    return cstring.rstrip(b"\0").decode("windows-1252")
-
-
-def parse_AR_note(note: str):
-    # The notes have a very regular key-value structure
-    # convert to dict for later access
-    return dict(
-        line.split(":", 1)
-        for line in note.split("\n")
-        if ":" in line and "@Line:" not in line
-    )
 
 
 @attrs.frozen
@@ -1112,25 +876,6 @@ class ARDFImage:
             raise ValueError("Malformed image layout.", gami_header)
         gami_header.validate()
         return arr
-
-
-Index: TypeAlias = tuple[int, ...]
-ZDArrays: TypeAlias = Collection[np.ndarray]
-ChanMap: TypeAlias = dict[str, tuple[int, str]]
-
-
-class FVReader(Protocol):
-    def get_curve(self, r: int, c: int) -> ZDArrays:
-        """Efficiently get a specific curve from disk."""
-        ...
-
-    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
-        """Iterate over curves lazily in on-disk order."""
-        ...
-
-    def get_all_curves(self) -> ZDArrays:
-        """Eagerly load all curves into memory."""
-        ...
 
 
 @attrs.frozen
@@ -1597,6 +1342,277 @@ class ARDFFile(BaseForceVolumeFile):
 
     def get_image_sync(self, image_name):
         return self._worker.images[image_name].get_ndarray()
+
+
+###############################################
+################### Bruker ####################
+###############################################
+
+class BrukerWorkerBase(metaclass=abc.ABCMeta):
+    def __init__(self, header, mm, s):
+        self.header = header  # get_image
+        self.mm = mm  # get_image
+        self.split = s  # get_force_curve
+        self.version = header["Force file list"]["Version"].strip()  # get_image
+
+    @abc.abstractmethod
+    def get_force_curve(self, r, c, defl_sens, sync_dist):
+        raise NotImplementedError
+
+    def get_image(self, image_name):
+        h = self.header["Image"][image_name]
+
+        value = h["@2:Z scale"]
+        bpp = bruker_bpp_fix(h["Bytes/pixel"], self.version)
+        hard_scale = float(value.split()[-2]) / (2 ** (bpp * 8))
+        hard_offset = float(h["@2:Z offset"].split()[-2]) / (2 ** (bpp * 8))
+        soft_scale_name = "@" + value[1 + value.find("[") : value.find("]")]
+        try:
+            soft_scale_string = self.header["Ciao scan list"][soft_scale_name]
+        except KeyError:
+            soft_scale_string = self.header["Scanner list"][soft_scale_name]
+        soft_scale = float(soft_scale_string.split()[1]) / NANOMETER_UNIT_CONVERSION
+        scale = np.float32(hard_scale * soft_scale)
+        data_length = int(h["Data length"])
+        offset = int(h["Data offset"])
+        r = int(h["Number of lines"])
+        c = int(h["Samps/line"])
+        assert data_length == r * c * bpp
+        # scandown = h["Frame direction"] == "Down"
+        z_ints = np.ndarray(
+            shape=(r, c), dtype=f"i{bpp}", buffer=self.mm, offset=offset
+        )
+        z_floats = z_ints * scale + np.float32(hard_offset * soft_scale)
+        return z_floats
+
+
+class FFVWorker(BrukerWorkerBase):
+    def __init__(self, header, mm, s):
+        super().__init__(header, mm, s)
+        arbitrary_image = next(iter(header["Image"].values()))
+        r = int(arbitrary_image["Number of lines"])
+        c = int(arbitrary_image["Samps/line"])
+        data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
+        for name in [data_name, "Height Sensor"]:
+            subheader = header["FV"][name]
+            offset = int(subheader["Data offset"])
+            bpp = bruker_bpp_fix(subheader["Bytes/pixel"], self.version)
+            length = int(subheader["Data length"])
+            npts = length // (r * c * bpp)
+            data = np.ndarray(
+                shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset
+            )
+            if name == "Height Sensor":
+                self.z_ints = data
+                value = subheader["@4:Z scale"]
+                soft_scale = float(
+                    header["Ciao scan list"]["@Sens. ZsensSens"].split()[1]
+                )
+                hard_scale = float(
+                    value[1 + value.find("(") : value.find(")")].split()[0]
+                )
+                self.z_scale = np.float32(soft_scale * hard_scale)
+            else:
+                self.d_ints = data
+                value = subheader["@4:Z scale"]
+                self.defl_hard_scale = float(
+                    value[1 + value.find("(") : value.find(")")].split()[0]
+                )
+
+    def get_force_curve(self, r, c, defl_sens, sync_dist):
+        s = self.split
+        defl_scale = np.float32(defl_sens * self.defl_hard_scale)
+
+        d = self.d_ints[r, c] * defl_scale
+        d[:s] = d[s - 1 :: -1]
+
+        if sync_dist:
+            d = np.roll(d, -sync_dist)
+
+        z = self.z_ints[r, c] * self.z_scale
+        return (z[s - 1 :: -1], z[s:]), (d[:s], d[s:])
+
+
+class QNMWorker(BrukerWorkerBase):
+    def __init__(self, header, mm, s):
+        super().__init__(header, mm, s)
+        arbitrary_image = next(iter(header["Image"].values()))
+        r = int(arbitrary_image["Number of lines"])
+        c = int(arbitrary_image["Samps/line"])
+        data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
+        subheader = header["FV"][data_name]
+        bpp = bruker_bpp_fix(subheader["Bytes/pixel"], self.version)
+        length = int(subheader["Data length"])
+        offset = int(subheader["Data offset"])
+        npts = length // (r * c * bpp)
+
+        self.d_ints = np.ndarray(
+            shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset
+        )
+        value = subheader["@4:Z scale"]
+        self.defl_hard_scale = float(
+            value[1 + value.find("(") : value.find(")")].split()[0]
+        )
+
+        try:
+            image = self.get_image("Height Sensor")
+        except KeyError:
+            image = self.get_image("Height")
+        image *= NANOMETER_UNIT_CONVERSION
+        self.height_for_z = image
+        amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
+        phase = s / npts * 2 * np.pi
+        self.z_basis = amp * np.cos(
+            np.linspace(
+                phase, phase + 2 * np.pi, npts, endpoint=False, dtype=np.float32
+            )
+        )
+
+    def get_force_curve(self, r, c, defl_sens, sync_dist):
+        s = self.split
+        defl_scale = np.float32(defl_sens * self.defl_hard_scale)
+
+        d = self.d_ints[r, c] * defl_scale
+        d[:s] = d[s - 1 :: -1]
+        # remove blip
+        if d[0] == -32768 * defl_scale:
+            d[0] = d[1]
+        d = np.roll(d, s - sync_dist)  # TODO roll across two adjacent indents
+
+        # need to infer z from amp/height
+        z = self.z_basis + self.height_for_z[r, c]
+
+        return (z[:s], z[s:]), (d[:s], d[s:])
+
+
+class NanoscopeFile(BaseForceVolumeFile):
+    _basic_units_map = {
+        "Height Sensor": "m",
+        "Height": "m",
+    }
+    _default_heightmap_names = ("Height Sensor", "Height")
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state["_mm"]
+        del state["_worker"]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        try:
+            mm, worker, path_lock = CACHED_OPEN_PATHS[self.path]
+        except KeyError:
+            self._mm = mm = mmap_path_read_only(self.path)
+            worker, _ = self._choose_worker(self.header)
+            path_lock = threading.Lock()
+            path_lock.acquire()
+            CACHED_OPEN_PATHS[self.path] = mm, worker, path_lock
+            threading.Thread(
+                target=eventually_evict_path, args=(self.path,), daemon=True
+            ).start()
+        else:
+            # reset thread countdown
+            try:
+                path_lock.release()
+            except RuntimeError:
+                pass  # no problem if unreleased
+        self._mm = mm
+        self._worker = worker
+
+    async def ainitialize(self):
+        self._mm = await trio.to_thread.run_sync(mmap_path_read_only, self.path)
+
+        # End of header is demarcated by a SUB byte (26 = 0x1A)
+        # Longest header so far was 80 kB, stop there to avoid searching gigabytes before fail
+        header_end_pos = await trs(self._mm.find, b"\x1A", 0, 80960)
+        if header_end_pos < 0:
+            raise ValueError(
+                "No stop byte found, are you sure this is a Nanoscope file?"
+            )
+        self.header = header = parse_nanoscope_header(
+            self._mm[:header_end_pos]  # will be cached from find call
+            .decode("windows-1252")
+            .splitlines()
+        )
+
+        # Header items that I should be reading someday
+        # \Frame direction: Down
+        # \Line Direction: Retrace
+        # \Z direction: Retract
+
+        # and in the image lists
+        # \Aspect Ratio: 1:1
+        # \Scan Size: 800 800 nm
+
+        self._file_image_names.update(header["Image"].keys())
+
+        data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
+
+        data_header = header["FV"][data_name]
+        self.split, *_ = map(int, data_header["Samps/line"].split())
+        self.npts = int(header["Ciao force list"]["force/line"].split()[0])
+        rate, unit = header["Ciao scan list"]["PFT Freq"].split()
+        assert unit.lower() == "khz"
+        self.rate = float(rate) * 1000
+        self.t_step = 1 / self.rate / self.npts
+
+        scansize, units = header["Ciao scan list"]["Scan Size"].split()
+        if units == "nm":
+            factor = 1.0
+        elif units == "pm":
+            factor = 0.001
+        elif units == "~m":  # microns?!
+            factor = 1000.0
+        else:
+            raise ValueError("unknown units:", units)
+
+        # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
+        fastpx = int(header["Ciao scan list"]["Samps/line"])
+        slowpx = int(header["Ciao scan list"]["Lines"])
+        ratio = float(scansize) * factor / max(fastpx, slowpx)
+        self.scansize = (fastpx * ratio, slowpx * ratio)
+
+        # self.scandown = {"Down": True, "Up": False}[
+        #     header["FV"]["Deflection Error"]["Frame direction"]
+        # ]
+
+        self.k = float(data_header["Spring Constant"])
+        self.defl_sens = float(header["Ciao scan list"]["@Sens. DeflSens"].split()[1])
+        value = data_header["@4:Z scale"]
+        self.defl_hard_scale = float(
+            value[1 + value.find("(") : value.find(")")].split()[0]
+        )
+
+        self._worker, self.sync_dist = await trs(self._choose_worker, header)
+
+    def _choose_worker(self, header):
+        if "Height Sensor" in header["FV"]:
+            return FFVWorker(header, self._mm, self.split), 0
+        else:
+            return (
+                QNMWorker(header, self._mm, self.split),
+                int(
+                    round(
+                        float(
+                            header["Ciao scan list"]["Sync Distance QNM"]
+                            if "Sync Distance QNM" in header["Ciao scan list"]
+                            else header["Ciao scan list"]["Sync Distance"]
+                        )
+                    )
+                ),
+            )
+
+    async def aclose(self):
+        self._worker = None
+        with trio.CancelScope(shield=True):
+            await trio.to_thread.run_sync(self._mm.close)
+
+    def get_force_curve_sync(self, r, c):
+        return self._worker.get_force_curve(r, c, self.defl_sens, self.sync_dist)
+
+    def get_image_sync(self, image_name):
+        return self._worker.get_image(image_name)
 
 
 SUFFIX_FVFILE_MAP = {
