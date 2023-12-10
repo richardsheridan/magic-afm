@@ -462,17 +462,7 @@ class ARH5File(BaseForceVolumeFile):
 
     async def ainitialize(self):
         self._h5data = h5data = await trio.to_thread.run_sync(open_h5, self.path)
-
-        # The notes have a very regular key-value structure
-        # convert to dict for later access
-        def note_parser():
-            return dict(
-                line.split(":", 1)
-                for line in h5data.attrs["Note"].split("\n")
-                if ":" in line and "@Line:" not in line
-            )
-
-        self.notes = await trs(note_parser)
+        self.notes = await trs(lambda: parse_AR_note(h5data.attrs["Note"]))
         worker = await trs(self._choose_worker, h5data)
         images, image_names = await trs(
             lambda: (h5data["Image"], set(h5data["Image"].keys()))
