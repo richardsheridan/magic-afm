@@ -326,7 +326,9 @@ class ForceMapWorker:
         curve = self.force_curves[f"{r}:{c}"]  # XXX Read h5data
         split = self.extlens[r, c]
 
-        return self._shared_get_part(curve, split)
+        z, d = self._shared_get_part(curve, split)
+        split = self.minext
+        return (z[:split], z[split:]), (d[:split], d[split:])
 
     def get_all_curves(self, cancel_poller=bool):
         im_r, im_c, num_segments = self.segments.shape
@@ -344,9 +346,7 @@ class ForceMapWorker:
             split = self.extlens[r, c]
 
             x[r, c, :, :] = self._shared_get_part(curve, split)
-        z = x[:, :, 0, :]
-        d = x[:, :, 1, :]
-        return z, d
+        return x.reshape(x.shape[:-1] + (2, -1))
 
 
 class FFMSingleWorker:
@@ -357,8 +357,8 @@ class FFMSingleWorker:
         self.split = self.npts // 2
 
     def get_force_curve(self, r, c):
-        z = self.raw[r, c]
-        d = self.defl[r, c]
+        z = self.raw[r, c].reshape((2, -1))
+        d = self.defl[r, c].reshape((2, -1))
         return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
 
     def get_all_curves(self, cancel_poller=bool):
@@ -382,11 +382,11 @@ class FFMTraceRetraceWorker:
 
     def get_force_curve(self, r, c):
         if self.trace:
-            z = self.raw_trace[r, c]
-            d = self.defl_trace[r, c]
+            z = self.raw_trace[r, c].reshape((2, -1))
+            d = self.defl_trace[r, c].reshape((2, -1))
         else:
-            z = self.raw_retrace[r, c]
-            d = self.defl_retrace[r, c]
+            z = self.raw_retrace[r, c].reshape((2, -1))
+            d = self.defl_retrace[r, c].reshape((2, -1))
         return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
 
     def get_all_curves(self, cancel_poller=bool):
@@ -493,6 +493,7 @@ class ARH5File(BaseForceVolumeFile):
         )
         self.rate = float(self.notes["FastMapZRate"])
         self.npts, self.split = worker.npts, worker.split
+        self.t_step = 1 / self.rate / self.npts
 
     async def aclose(self):
         with trio.CancelScope(shield=True):
@@ -521,16 +522,10 @@ class ARH5File(BaseForceVolumeFile):
         return worker
 
     def get_force_curve_sync(self, r, c):
-        z, d = self._worker.get_force_curve(r, c)
+        out = zxr, dxr = self._worker.get_force_curve(r, c)
         if self.defl_sens != self._defl_sens_orig:
-            d *= self.defl_sens / self._defl_sens_orig
-        return z, d
-
-    async def get_all_curves(self):
-        z, d = await trs(self._worker.get_all_curves, trio.from_thread.check_cancelled)
-        if self.defl_sens != self._defl_sens_orig:
-            d *= self.defl_sens / self._defl_sens_orig
-        return z, d
+            dxr *= self.defl_sens / self._defl_sens_orig
+        return out
 
     def get_image_sync(self, image_name):
         return self._images[image_name][:]
@@ -614,10 +609,11 @@ class FFVWorker(BrukerWorkerBase):
         d = self.d_ints[r, c] * defl_scale
         d[:s] = d[s - 1 :: -1]
 
-        z = self.z_ints[r, c] * self.z_scale
-        z[:s] = z[s - 1 :: -1]
+        if sync_dist:
+            d = np.roll(d, -sync_dist)
 
-        return z, np.roll(d, -sync_dist) if sync_dist else d
+        z = self.z_ints[r, c] * self.z_scale
+        return (z[s - 1 :: -1], z[s:]), (d[:s], d[s:])
 
 
 class QNMWorker(BrukerWorkerBase):
@@ -669,7 +665,7 @@ class QNMWorker(BrukerWorkerBase):
         # need to infer z from amp/height
         z = self.z_basis + self.height_for_z[r, c]
 
-        return z, d
+        return (z[:s], z[s:]), (d[:s], d[s:])
 
 
 class NanoscopeFile(BaseForceVolumeFile):
@@ -742,6 +738,7 @@ class NanoscopeFile(BaseForceVolumeFile):
         rate, unit = header["Ciao scan list"]["PFT Freq"].split()
         assert unit.lower() == "khz"
         self.rate = float(rate) * 1000
+        self.t_step = 1 / self.rate / self.npts
 
         scansize, units = header["Ciao scan list"]["Scan Size"].split()
         if units == "nm":
