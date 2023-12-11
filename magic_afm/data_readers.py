@@ -975,6 +975,10 @@ class ARDFForceMapReader:
     channels: ChanMap
     seen_vsets: dict[Index, ARDFVset] = attrs.field(init=False, factory=dict)
 
+    @property
+    def zname(self):
+        return "Raw" if "Raw" in self.channels else "ZSnsr"
+
     def traverse_vsets(self, pointer: int):
         while True:
             header = ARDFHeader.unpack(self.data, pointer)
@@ -1009,12 +1013,14 @@ class ARDFForceMapReader:
 
         if (r, c) not in self.seen_vsets:
             # bisect row pointer
-            if self.vtoc_lines[0]:
+            if self.vtoc_lines[0] > self.vtoc_lines[-1]:
                 # probably reversed
                 sl = np.s_[::-1]
             else:
                 sl = np.s_[:]
             i = self.vtoc_lines[sl].searchsorted(r)
+            if i >= len(self.vtoc_lines) or r != int(self.vtoc_lines[sl][i]):
+                return np.full(shape=(2, 2, 100), fill_value=np.nan, dtype=np.float32)
             # read entire line of the vtoc
             for vset in self.traverse_vsets(int(self.vtoc_pointers[sl][i])):
                 if vset.line != r:
@@ -1024,9 +1030,8 @@ class ARDFForceMapReader:
         vset = self.seen_vsets[r, c]
 
         for vdat in self.traverse_vdats(vset.offset + vset.size):
-            # zname = "Raw" if "Raw" in self.channels else "ZSnsr"
             s = vdat.seg_offsets
-            if vdat.channel == self.channels["ZSnsr"][0]:
+            if vdat.channel == self.channels[self.zname][0]:
                 z = vdat.get_ndarray()
                 zxr = z[: s[1]], z[s[1] : s[2]]
             elif vdat.channel == self.channels["Defl"][0]:
@@ -1036,11 +1041,11 @@ class ARDFForceMapReader:
 
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
-        # zname = "Raw" if "Raw" in self.channels else "ZSnsr"
+        zname = self.zname
         for vset in self.traverse_vsets(int(self.vtoc_pointers[0])):
             for vdat in self.traverse_vdats(vset.offset + vset.size):
                 s = vdat.seg_offsets
-                if vdat.channel == self.channels["ZSnsr"][0]:
+                if vdat.channel == self.channels[zname][0]:
                     z = vdat.get_ndarray()
                     zxr = z[: s[1]], z[s[1] : s[2]]
                 elif vdat.channel == self.channels["Defl"][0]:
@@ -1093,10 +1098,10 @@ class ARDFVolume:
         if volm_header.size != 32 or volm_header.name != b"VOLM":
             raise ValueError("Malformed volume header.", volm_header)
         volm_header.validate()
-        # NSET looks a lot like a table of contents, but the pointer is just nset
+        # NSET looks a lot like a table of contents, but the pointer is just nsets
         volm_toc = ARDFTableOfContents.unpack(data, volm_header.offset)
         assert len(volm_toc.entries) == 1
-        nset_header, nset = volm_toc.entries[0]
+        nset_header, nsets = volm_toc.entries[0]
         nset_header.validate()
         ttoc_header = ARDFHeader.unpack(data, volm_toc.offset + volm_toc.size)
         if ttoc_header.size != 32 or ttoc_header.name != b"TTOC":
@@ -1123,7 +1128,7 @@ class ARDFVolume:
             vdef_header.offset + 16,
         )
         assert sum(_) == 0, _
-        assert points * lines == nset, (points, lines, nset)
+        complete = points * lines == nsets
         x_units, y_units, t_units, seg_names = list(map(decode_cstring, cstrings))
         seg_names = seg_names.split(";")[:-1]
         assert nseg == len(seg_names)
@@ -1181,6 +1186,9 @@ class ARDFVolume:
                 "<LL4sLLLQQ", data, toc_offset
             )
             entry_header = ARDFHeader(data, toc_offset, *header)
+            if not entry_header.crc:
+                assert not complete, entry_header
+                break  # scan was interrupted, and vtoc is zero-filled
             if entry_header.name != b"VOFF":
                 raise ValueError("Malformed volume table entry.", entry_header)
             entry_header.validate()
@@ -1195,8 +1203,8 @@ class ARDFVolume:
         # Check if each offset is regularly spaced
         # optimize for LARGE regular case (FMaps are SMALL)
         pointer_arr = np.array(vtoc_pointers, np.int64)
-        voff_strides = np.diff(pointer_arr)
-        if np.all(voff_strides == voff_strides[0]):
+        if 0 and complete and not np.any(np.diff(np.diff(pointer_arr))):
+            assert False, "not yet reliable on scan up vs down"
             first_vset_header = ARDFHeader.unpack(data, vtoc_pointers[0])
             reader = ARDFFFMReader.parse(first_vset_header, points, lines, channels)
         else:
