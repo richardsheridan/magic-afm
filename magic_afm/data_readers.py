@@ -1021,7 +1021,8 @@ class ARDFForceMapReader:
         if not (0 <= r < self.lines and 0 <= c < self.points):
             raise ValueError("Invalid index:", (self.lines, self.points), (r, c))
 
-        if (r, c) not in self.seen_vsets:
+        curve = r, c, self.vtype
+        if curve not in self.seen_vsets:
             # bisect row pointer
             if self.vtoc_lines[0] > self.vtoc_lines[-1]:
                 # probably reversed
@@ -1037,7 +1038,7 @@ class ARDFForceMapReader:
                     break
                 # traverse_vsets implicitly fills in seen_vsets
 
-        vset = self.seen_vsets[r, c, self.vtype]
+        vset = self.seen_vsets[curve]
 
         for vdat in self.traverse_vdats(vset.offset + vset.size):
             s = vdat.seg_offsets
