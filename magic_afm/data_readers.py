@@ -740,12 +740,22 @@ class ARDFVset:
     force_index: int
     line: int
     point: int
-    vtype: int
+    # vtype seems to differ between different FV modes.
+    # FMAP with ext;ret;dwell shows 0b10 = 2 everywhere.
+    # FFM with just trace or just retrace shows 0b101 = 5 everywhere.
+    # FFM storing both shows 0b1010 = 10 for trace
+    # and 0b1011 = 11 for retrace.
+    vtype: int = attrs.field(repr=bin)
     prev_vset_offset: int
     next_vset_offset: int
 
     @classmethod
-    def unpack(cls, data: mmap, offset: int):
+    def unpack(cls, vset_header: ARDFHeader):
+        if vset_header.name != b"VSET":
+            raise ValueError("malformed VSET header", vset_header)
+        vset_header.validate()
+        data = vset_header.data
+        offset = vset_header.offset
         vset_format = "<LLLLQQ"
         size = 48  # 16 + struct.calcsize(vset_format)  # constant
         return cls(
@@ -972,6 +982,7 @@ class ARDFForceMapReader:
     vtoc_pointers: np.ndarray
     lines: int
     points: int
+    vtype: int
     channels: ChanMap
     seen_vsets: dict[Index, ARDFVset] = attrs.field(init=False, factory=dict)
 
@@ -984,9 +995,8 @@ class ARDFForceMapReader:
             header = ARDFHeader.unpack(self.data, pointer)
             if header.name != b"VSET":
                 break
-            header.validate()
-            vset = ARDFVset.unpack(self.data, pointer)
-            index = (vset.line, vset.point)
+            vset = ARDFVset.unpack(header)
+            index = (vset.line, vset.point, vset.vtype)
             if index not in self.seen_vsets:
                 self.seen_vsets[index] = vset
             yield vset  # .line, vset.point, vset.
@@ -1027,7 +1037,7 @@ class ARDFForceMapReader:
                     break
                 # traverse_vsets implicitly fills in seen_vsets
 
-        vset = self.seen_vsets[r, c]
+        vset = self.seen_vsets[r, c, self.vtype]
 
         for vdat in self.traverse_vdats(vset.offset + vset.size):
             s = vdat.seg_offsets
@@ -1043,6 +1053,8 @@ class ARDFForceMapReader:
         """Iterate over curves lazily in on-disk order."""
         zname = self.zname
         for vset in self.traverse_vsets(int(self.vtoc_pointers[0])):
+            if vset.vtype != self.vtype:
+                continue
             for vdat in self.traverse_vdats(vset.offset + vset.size):
                 s = vdat.seg_offsets
                 if vdat.channel == self.channels[zname][0]:
@@ -1058,6 +1070,8 @@ class ARDFForceMapReader:
         minext = 0xFFFFFFFF
         vdats = {}
         for vset in self.traverse_vsets(int(self.vtoc_pointers[0])):
+            if vset.vtype != self.vtype:
+                continue
             for vdat in self.traverse_vdats(vset.offset + vset.size):
                 if vdat.channel == self.channels["ZSnsr"][0]:
                     zvdat = vdat
@@ -1098,10 +1112,11 @@ class ARDFVolume:
         if volm_header.size != 32 or volm_header.name != b"VOLM":
             raise ValueError("Malformed volume header.", volm_header)
         volm_header.validate()
-        # NSET looks a lot like a table of contents, but the pointer is just nsets
+        # the next headers look a lot like VSET is a table of contents, but I've only
+        # seen NEXT and NSET headers. NEXT shows up if "both" trace and retrace data
+        # are inside. I'll assume the last entry is always NSET, the number of VSETs.
         volm_toc = ARDFTableOfContents.unpack(data, volm_header.offset)
-        assert len(volm_toc.entries) == 1
-        nset_header, nsets = volm_toc.entries[0]
+        nset_header, nsets = volm_toc.entries[-1]
         nset_header.validate()
         ttoc_header = ARDFHeader.unpack(data, volm_toc.offset + volm_toc.size)
         if ttoc_header.size != 32 or ttoc_header.name != b"TTOC":
@@ -1203,17 +1218,19 @@ class ARDFVolume:
         # Check if each offset is regularly spaced
         # optimize for LARGE regular case (FMaps are SMALL)
         pointer_arr = np.array(vtoc_pointers, np.int64)
+        first_vset_header = ARDFHeader.unpack(data, vtoc_pointers[0])
         if 0 and complete and not np.any(np.diff(np.diff(pointer_arr))):
             assert False, "not yet reliable on scan up vs down"
-            first_vset_header = ARDFHeader.unpack(data, vtoc_pointers[0])
             reader = ARDFFFMReader.parse(first_vset_header, points, lines, channels)
         else:
+            first_vset = ARDFVset.unpack(first_vset_header)
             reader = ARDFForceMapReader(
                 data,
                 np.array(vtoc_lines, np.uint32),
                 pointer_arr,
                 lines,
                 points,
+                first_vset.vtype,
                 channels,
             )
 
