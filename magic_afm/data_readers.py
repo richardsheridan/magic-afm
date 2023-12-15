@@ -52,7 +52,7 @@ NANOMETER_UNIT_CONVERSION = (
 ###############################################
 Index: TypeAlias = tuple[int, ...]
 ZDArrays: TypeAlias = Collection[np.ndarray]
-ChanMap: TypeAlias = dict[str, tuple[int, str]]
+ChanMap: TypeAlias = dict[str, tuple[int, "ARDFVchan"]]
 
 
 class FVReader(Protocol):
@@ -406,6 +406,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
 ################### Asylum ####################
 ###############################################
 
+
 class ForceMapWorker:
     def __init__(self, h5data):
         self.force_curves = h5data["ForceMap"]["0"]
@@ -675,7 +676,12 @@ class ARDFTableOfContents:
     entries: list[tuple[ARDFHeader, int]]
 
     @classmethod
-    def unpack(cls, data: mmap, offset: int):
+    def unpack(cls, header: ARDFHeader):
+        if header.size != 32:
+            raise ValueError("Malformed table of contents", header)
+        header.validate()
+        data = header.data
+        offset = header.offset
         size, nentries, stride = struct.unpack_from("<QLL", data, offset + 16)
         assert stride == 24
         assert size - 32 == nentries * stride, (size, nentries, stride)
@@ -700,7 +706,12 @@ class ARDFTextTableOfContents:
     entries: list[tuple[ARDFHeader, int]]
 
     @classmethod
-    def unpack(cls, data: mmap, offset: int):
+    def unpack(cls, header: ARDFHeader):
+        if header.size != 32 or header.name != b"TTOC":
+            raise ValueError("Malformed text table of contents.", header)
+        header.validate()
+        offset = header.offset
+        data = header.data
         size, nentries, stride = struct.unpack_from("<QLL", data, offset + 16)
         assert stride == 32, stride
         assert size - 32 == nentries * stride, (size, nentries, stride)
@@ -730,6 +741,87 @@ class ARDFTextTableOfContents:
         text = self.data.read(text_len)
         # self.data.seek(0)  # seems unneeded currently
         return text.replace(b"\r", b"\n").decode("windows-1252")
+
+
+@attrs.frozen
+class ARDFVolumeTableOfContents:
+    offset: int
+    size: int
+    lines: np.ndarray
+    points: np.ndarray
+    pointers: np.ndarray
+
+    @classmethod
+    def unpack(cls, header: ARDFHeader):
+        # cant reuse exact ARDFTableOfContents for VTOC, but structure is similar
+        data = header.data
+        offset = header.offset
+        if header.size != 32 or header.name != b"VTOC":
+            raise ValueError("Malformed volume table of contents.", header)
+        size, nentries, stride = struct.unpack_from("<QLL", data, offset + 16)
+        assert stride == 40, stride
+        assert size - 32 == nentries * stride, (size, nentries, stride)
+        vtoc_arr = np.zeros(
+            nentries,
+            dtype=[
+                ("force_index", "L"),
+                ("line", "L"),
+                ("point", "Q"),
+                ("pointer", "Q"),
+            ],
+        )
+        for i, toc_offset in enumerate(
+            range(header.offset + 32, header.offset + size, stride)
+        ):
+            entry_header = ARDFHeader.unpack(data, toc_offset)
+            if not entry_header.crc:
+                # scan was interrupted, and vtoc is zero-filled
+                vtoc_arr = vtoc_arr[:i].copy()
+                break
+            if entry_header.name != b"VOFF":
+                raise ValueError("Malformed volume table entry.", entry_header)
+            entry_header.validate()
+            vtoc_arr[i] = struct.unpack_from("<LLQQ", data, toc_offset + 16)
+        return cls(
+            offset, size, vtoc_arr["line"], vtoc_arr["point"], vtoc_arr["pointer"]
+        )
+
+
+@attrs.frozen
+class ARDFVchan:
+    name: str
+    unit: str
+
+    @classmethod
+    def unpack(cls, header: ARDFHeader):
+        if header.size != 80 or header.name != b"VCHN":
+            raise ValueError("Malformed channel definition.", header)
+        header.validate()
+        format = "<32s32s"
+        name, unit = struct.unpack_from(format, header.data, header.offset + 16)
+        return cls(decode_cstring(name), decode_cstring(unit))
+
+
+@attrs.frozen
+class ARDFXdef:
+    offset: int
+    size: int
+    xdef: list[str]
+
+    @classmethod
+    def unpack(cls, header: ARDFHeader):
+        if header.size != 96 or header.name != b"XDEF":
+            raise ValueError("Malformed experiment definition.", header)
+        header.validate()
+        # Experiment definition is just a string
+        _, nchars = struct.unpack_from("<LL", header.data, header.offset + 16)
+        assert _ == 0, _
+        if nchars > header.size:
+            raise ValueError("Experiment definition too long.", header, nchars)
+        header.data.seek(header.offset + 24)
+        xdef = header.data.read(nchars).decode("windows-1252").split(";")[:-1]
+        # data.seek(0)  # seems unneeded currently
+        return cls(header.offset, header.size, xdef)
 
 
 @attrs.frozen
@@ -821,17 +913,13 @@ class ARDFImage:
 
     @classmethod
     def parse_imag(cls, imag_header: ARDFHeader):
-        if imag_header.size != 32 or imag_header.name != b"IMAG":
+        if imag_header.name != b"IMAG":
             raise ValueError("Malformed image header.", imag_header)
-        imag_header.validate()
-        imag_toc = ARDFTableOfContents.unpack(imag_header.data, imag_header.offset)
+        imag_toc = ARDFTableOfContents.unpack(imag_header)
 
         # don't use NEXT or THMB data, step over
         ttoc_header = ARDFHeader.unpack(imag_toc.data, imag_toc.offset + imag_toc.size)
-        if ttoc_header.size != 32 or ttoc_header.name != b"TTOC":
-            raise ValueError("Malformed image text table of contents.", ttoc_header)
-        ttoc_header.validate()
-        ttoc = ARDFTextTableOfContents.unpack(ttoc_header.data, ttoc_header.offset)
+        ttoc = ARDFTextTableOfContents.unpack(ttoc_header)
 
         # don't use TTOC or TOFF, step over
         idef_header = ARDFHeader.unpack(ttoc.data, ttoc.offset + ttoc.size)
@@ -906,10 +994,7 @@ class ARDFFFMReader:
     def parse(cls, first_vset_header: ARDFHeader, points: int, lines: int, channels):
         data = first_vset_header.data
         # just walk past these first headers to find our data_offset
-        if first_vset_header.name != b"VSET":
-            raise ValueError("Malformed volume set", first_vset_header)
-        first_vset_header.validate()
-        first_vset = ARDFVset.unpack(first_vset_header.data, first_vset_header.offset)
+        first_vset = ARDFVset.unpack(first_vset_header)
         vset_stride = first_vset.next_vset_offset - first_vset_header.offset
 
         first_vnam_header = ARDFHeader.unpack(
@@ -975,16 +1060,15 @@ class ARDFFFMReader:
         return loaded_data.reshape(self.array_view.shape[:-1] + (2, -1))
 
 
-@attrs.frozen(eq=False)
+@attrs.frozen
 class ARDFForceMapReader:
     data: mmap
-    vtoc_lines: np.ndarray
-    vtoc_pointers: np.ndarray
+    vtoc: ARDFVolumeTableOfContents
     lines: int
     points: int
     vtype: int
     channels: ChanMap
-    seen_vsets: dict[Index, ARDFVset] = attrs.field(init=False, factory=dict)
+    _seen_vsets: dict[Index, ARDFVset] = attrs.field(init=False, factory=dict)
 
     @property
     def zname(self):
@@ -997,8 +1081,8 @@ class ARDFForceMapReader:
                 break
             vset = ARDFVset.unpack(header)
             index = (vset.line, vset.point, vset.vtype)
-            if index not in self.seen_vsets:
-                self.seen_vsets[index] = vset
+            if index not in self._seen_vsets:
+                self._seen_vsets[index] = vset
             yield vset  # .line, vset.point, vset.
             pointer = vset.next_vset_offset
 
@@ -1022,23 +1106,23 @@ class ARDFForceMapReader:
             raise ValueError("Invalid index:", (self.lines, self.points), (r, c))
 
         curve = r, c, self.vtype
-        if curve not in self.seen_vsets:
+        if curve not in self._seen_vsets:
             # bisect row pointer
-            if self.vtoc_lines[0] > self.vtoc_lines[-1]:
+            if self.vtoc.lines[0] > self.vtoc.lines[-1]:
                 # probably reversed
                 sl = np.s_[::-1]
             else:
                 sl = np.s_[:]
-            i = self.vtoc_lines[sl].searchsorted(r)
-            if i >= len(self.vtoc_lines) or r != int(self.vtoc_lines[sl][i]):
+            i = self.vtoc.lines[sl].searchsorted(r)
+            if i >= len(self.vtoc.lines) or r != int(self.vtoc.lines[sl][i]):
                 return np.full(shape=(2, 2, 100), fill_value=np.nan, dtype=np.float32)
             # read entire line of the vtoc
-            for vset in self.traverse_vsets(int(self.vtoc_pointers[sl][i])):
+            for vset in self.traverse_vsets(int(self.vtoc.pointers[sl][i])):
                 if vset.line != r:
                     break
                 # traverse_vsets implicitly fills in seen_vsets
 
-        vset = self.seen_vsets[curve]
+        vset = self._seen_vsets[curve]
 
         for vdat in self.traverse_vdats(vset.offset + vset.size):
             s = vdat.seg_offsets
@@ -1053,7 +1137,7 @@ class ARDFForceMapReader:
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
         zname = self.zname
-        for vset in self.traverse_vsets(int(self.vtoc_pointers[0])):
+        for vset in self.traverse_vsets(int(self.vtoc.pointers[0])):
             if vset.vtype != self.vtype:
                 continue
             for vdat in self.traverse_vdats(vset.offset + vset.size):
@@ -1070,7 +1154,7 @@ class ARDFForceMapReader:
         """Eagerly load all curves into memory."""
         minext = 0xFFFFFFFF
         vdats = {}
-        for vset in self.traverse_vsets(int(self.vtoc_pointers[0])):
+        for vset in self.traverse_vsets(int(self.vtoc.pointers[0])):
             if vset.vtype != self.vtype:
                 continue
             for vdat in self.traverse_vdats(vset.offset + vset.size):
@@ -1097,35 +1181,33 @@ class ARDFForceMapReader:
 class ARDFVolume:
     volm_offset: int
     reader: FVReader
-    shape: tuple[int, int]
+    shape: Index
     x_step: float
     y_step: float
     t_step: float
     x_units: str
     y_units: str
     t_units: str
-    xdef: list[str]
+    xdef: ARDFXdef
 
     @classmethod
     def parse_volm(cls, volm_header: ARDFHeader):
         data = volm_header.data
-        # TODO: wrap every struct.unpack_from with a new attrs class with .unpack()
         if volm_header.size != 32 or volm_header.name != b"VOLM":
             raise ValueError("Malformed volume header.", volm_header)
-        volm_header.validate()
         # the next headers look a lot like VSET is a table of contents, but I've only
         # seen NEXT and NSET headers. NEXT shows up if "both" trace and retrace data
         # are inside. I'll assume the last entry is always NSET, the number of VSETs.
-        volm_toc = ARDFTableOfContents.unpack(data, volm_header.offset)
+        volm_toc = ARDFTableOfContents.unpack(volm_header)
         nset_header, nsets = volm_toc.entries[-1]
         nset_header.validate()
         ttoc_header = ARDFHeader.unpack(data, volm_toc.offset + volm_toc.size)
-        if ttoc_header.size != 32 or ttoc_header.name != b"TTOC":
-            raise ValueError("Malformed volume text table of contents.", ttoc_header)
-        ttoc_header.validate()
-        ttoc = ARDFTextTableOfContents.unpack(data, ttoc_header.offset)
+        ttoc = ARDFTextTableOfContents.unpack(ttoc_header)
 
         # don't use TTOC or TOFF, step over
+
+        # cls essentially represents VDEF plus its linkage down to VSET
+        # so this unpacking is intentionally inlined here.
         vdef_header = ARDFHeader.unpack(data, ttoc.offset + ttoc.size)
         vdef_format = "<LL24sddd32s32s32s32sQ"
         if (
@@ -1156,79 +1238,38 @@ class ARDFVolume:
             header = ARDFHeader.unpack(data, offset)
             if header.name != b"VCHN":
                 break
-            if header.size != 80:
-                raise ValueError("Unexpected channel definition size.", header)
-            header.validate()
-            name, unit = list(
-                map(
-                    decode_cstring,
-                    struct.unpack_from("<32s32s", data, header.offset + 16),
-                )
-            )
+            vchn = ARDFVchan.unpack(header)
             offset = header.offset + header.size
             # TODO: apply NANOMETER_UNIT_CONVERSION depending on this
-            assert unit == "m"
-            channels[name] = (i, "nm")
+            assert vchn.unit == "m"
+            channels[vchn.name] = (i, vchn)
         else:
             raise RuntimeError("Got too many channels.", channels)
 
-        if header.size != 96 or header.name != b"XDEF":
-            raise ValueError("Malformed experiment definition.", header)
-        header.validate()
-        # Experiment definition is just a string
-        _, nchars = struct.unpack_from("<LL", data, header.offset + 16)
-        assert _ == 0, _
-        if nchars > header.size:
-            raise ValueError("Experiment definition too long.", header, nchars)
-        data.seek(header.offset + 24)
-        xdef = data.read(nchars).decode("windows-1252").split(";")[:-1]
-        # data.seek(0)  # seems unneeded currently
+        xdef = ARDFXdef.unpack(header)
+        vtoc_header = ARDFHeader.unpack(data, xdef.offset + xdef.size)
+        vtoc = ARDFVolumeTableOfContents.unpack(vtoc_header)
 
-        vtoc_header = ARDFHeader.unpack(data, header.offset + header.size)
-        if vtoc_header.size != 32 or vtoc_header.name != b"VTOC":
-            raise ValueError("Malformed volume table of contents.", vtoc_header)
-        # cant reuse exact ARDFTableOfContents, but structure is similar
-        size, nentries, stride = struct.unpack_from(
-            "<QLL", data, vtoc_header.offset + 16
-        )
-        assert stride == 40, stride
-        assert size - 32 == nentries * stride, (size, nentries, stride)
-        vtoc_lines = []
-        vtoc_pointers = []
-        for toc_offset in range(
-            vtoc_header.offset + 32, vtoc_header.offset + size, stride
-        ):
-            *header, force_index, line, point, pointer = struct.unpack_from(
-                "<LL4sLLLQQ", data, toc_offset
-            )
-            entry_header = ARDFHeader(data, toc_offset, *header)
-            if not entry_header.crc:
-                assert not complete, entry_header
-                break  # scan was interrupted, and vtoc is zero-filled
-            if entry_header.name != b"VOFF":
-                raise ValueError("Malformed volume table entry.", entry_header)
-            entry_header.validate()
-            vtoc_lines.append(line)
-            vtoc_pointers.append(pointer)
-
-        mlov_header = ARDFHeader.unpack(data, vtoc_header.offset + size)
+        mlov_header = ARDFHeader.unpack(data, vtoc.offset + vtoc.size)
         if mlov_header.size != 16 or mlov_header.name != b"MLOV":
             raise ValueError("Malformed volume table of contents.", mlov_header)
         mlov_header.validate()
 
         # Check if each offset is regularly spaced
         # optimize for LARGE regular case (FMaps are SMALL)
-        pointer_arr = np.array(vtoc_pointers, np.int64)
-        first_vset_header = ARDFHeader.unpack(data, vtoc_pointers[0])
-        if 0 and complete and not np.any(np.diff(np.diff(pointer_arr))):
+        first_vset_header = ARDFHeader.unpack(data, int(vtoc.pointers[0]))
+        if (
+            0
+            and complete
+            and not np.any(np.diff(np.diff(vtoc.pointers.astype(np.uint64))))
+        ):
             assert False, "not yet reliable on scan up vs down"
             reader = ARDFFFMReader.parse(first_vset_header, points, lines, channels)
         else:
             first_vset = ARDFVset.unpack(first_vset_header)
             reader = ARDFForceMapReader(
                 data,
-                np.array(vtoc_lines, np.uint32),
-                pointer_arr,
+                vtoc,
                 lines,
                 points,
                 first_vset.vtype,
@@ -1262,15 +1303,11 @@ class ARDFWorker:
             raise ValueError("Not an ARDF file.", file_header)
         file_header.validate()
         ftoc_header = ARDFHeader.unpack(ardf_mmap, offset=file_header.size)
-        if ftoc_header.size != 32 or ftoc_header.name != b"FTOC":
+        if ftoc_header.name != b"FTOC":
             raise ValueError("Malformed ARDF file table of contents.", ftoc_header)
-        ftoc_header.validate()
-        ftoc = ARDFTableOfContents.unpack(ardf_mmap, offset=file_header.size)
+        ftoc = ARDFTableOfContents.unpack(ftoc_header)
         ttoc_header = ARDFHeader.unpack(ardf_mmap, offset=ftoc.offset + ftoc.size)
-        if ttoc_header.size != 32 or ttoc_header.name != b"TTOC":
-            raise ValueError("Malformed ARDF text table of contents.", ftoc_header)
-        ttoc_header.validate()
-        ttoc = ARDFTextTableOfContents.unpack(ardf_mmap, offset=ftoc.offset + ftoc.size)
+        ttoc = ARDFTextTableOfContents.unpack(ttoc_header)
         assert len(ttoc.entries) == 1
         notes = parse_AR_note(ttoc.decode_entry(0))
         images = {}
@@ -1373,6 +1410,7 @@ class ARDFFile(BaseForceVolumeFile):
 ###############################################
 ################### Bruker ####################
 ###############################################
+
 
 class BrukerWorkerBase(metaclass=abc.ABCMeta):
     def __init__(self, header, mm, s):
