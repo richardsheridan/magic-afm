@@ -47,9 +47,15 @@ from .async_tools import trs
 NANOMETER_UNIT_CONVERSION = (
     1e9  # maybe we can intelligently read this from the file someday
 )
+NANCURVE = np.full(shape=(2, 2, 100), fill_value=np.nan, dtype=np.float32)
+NANCURVE.setflags(write=False)
+
+
 ###############################################
 ############### Typing stuff ##################
 ###############################################
+
+
 Index: TypeAlias = tuple[int, ...]
 ZDArrays: TypeAlias = Collection[np.ndarray]
 ChanMap: TypeAlias = dict[str, tuple[int, "ARDFVchan"]]
@@ -1105,8 +1111,8 @@ class ARDFForceMapReader:
         if not (0 <= r < self.lines and 0 <= c < self.points):
             raise ValueError("Invalid index:", (self.lines, self.points), (r, c))
 
-        curve = r, c, self.vtype
-        if curve not in self._seen_vsets:
+        index = r, c, self.vtype
+        if index not in self._seen_vsets:
             # bisect row pointer
             if self.vtoc.lines[0] > self.vtoc.lines[-1]:
                 # probably reversed
@@ -1115,15 +1121,16 @@ class ARDFForceMapReader:
                 sl = np.s_[:]
             i = self.vtoc.lines[sl].searchsorted(r)
             if i >= len(self.vtoc.lines) or r != int(self.vtoc.lines[sl][i]):
-                return np.full(shape=(2, 2, 100), fill_value=np.nan, dtype=np.float32)
+                return NANCURVE
             # read entire line of the vtoc
             for vset in self.traverse_vsets(int(self.vtoc.pointers[sl][i])):
                 if vset.line != r:
                     break
                 # traverse_vsets implicitly fills in seen_vsets
 
-        vset = self._seen_vsets[curve]
+        vset = self._seen_vsets[index]
 
+        zxr, dxr = NANCURVE
         for vdat in self.traverse_vdats(vset.offset + vset.size):
             s = vdat.seg_offsets
             if vdat.channel == self.channels[self.zname][0]:
@@ -1140,6 +1147,7 @@ class ARDFForceMapReader:
         for vset in self.traverse_vsets(int(self.vtoc.pointers[0])):
             if vset.vtype != self.vtype:
                 continue
+            zxr, dxr = NANCURVE
             for vdat in self.traverse_vdats(vset.offset + vset.size):
                 s = vdat.seg_offsets
                 if vdat.channel == self.channels[zname][0]:
@@ -1158,12 +1166,12 @@ class ARDFForceMapReader:
             if vset.vtype != self.vtype:
                 continue
             for vdat in self.traverse_vdats(vset.offset + vset.size):
+                x = vdats[vset.line, vset.point] = [None, None]
                 if vdat.channel == self.channels["ZSnsr"][0]:
-                    zvdat = vdat
+                    x[0] = vdat  # zvdat
                 elif vdat.channel == self.channels["Defl"][0]:
-                    dvdat = vdat
-            vdats[vset.line, vset.point] = zvdat, dvdat
-            minext = min(minext, vdat.seg_offsets[1])
+                    x[1] = vdat  # dvdat
+                minext = min(minext, vdat.seg_offsets[1])
         del vset, vdat
         minfloats = 2 * minext
         x = np.empty((self.lines, self.points, 2, minfloats), dtype=np.float32)
@@ -1264,7 +1272,7 @@ class ARDFVolume:
             and not np.any(np.diff(np.diff(vtoc.pointers.astype(np.uint64))))
         ):
             assert False, "not yet reliable on scan up vs down"
-            reader = ARDFFFMReader.parse(first_vset_header, points, lines, channels)
+            # reader = ARDFFFMReader.parse(first_vset_header, points, lines, channels)
         else:
             first_vset = ARDFVset.unpack(first_vset_header)
             reader = ARDFForceMapReader(
