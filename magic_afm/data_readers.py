@@ -48,7 +48,7 @@ NANOMETER_UNIT_CONVERSION = (
 )
 NANCURVE = np.full(shape=(2, 2, 100), fill_value=np.nan, dtype=np.float32)
 NANCURVE.setflags(write=False)
-
+TOC_STRUCT = struct.Struct("<QLL")
 
 ###############################################
 ############### Typing stuff ##################
@@ -58,6 +58,7 @@ NANCURVE.setflags(write=False)
 Index: TypeAlias = tuple[int, ...]
 ZDArrays: TypeAlias = Collection[np.ndarray]
 ChanMap: TypeAlias = dict[str, tuple[int, "ARDFVchan"]]
+StepInfo: TypeAlias = tuple[tuple[float, str], ...]
 
 
 class FVReader(Protocol):
@@ -660,10 +661,11 @@ class ARDFHeader:
     size: int
     name: bytes
     flags: int = attrs.field(repr=hex)
+    _struct = struct.Struct("<LL4sL")
 
     @classmethod
     def unpack(cls, data: mmap, offset: int):
-        return cls(data, offset, *struct.unpack_from("<LL4sL", data, offset))
+        return cls(data, offset, *cls._struct.unpack_from(data, offset))
 
     def validate(self):
         # ImHex poly 0x4c11db7 init 0xffffffff xor out 0xffffffff reflect in and out
@@ -685,6 +687,7 @@ class ARDFTableOfContents:
     offset: int
     size: int
     entries: list[tuple[ARDFHeader, int]]
+    _entry_struct = struct.Struct("<LL4sLQ")
 
     @classmethod
     def unpack(cls, header: ARDFHeader):
@@ -693,12 +696,12 @@ class ARDFTableOfContents:
         header.validate()
         data = header.data
         offset = header.offset
-        size, nentries, stride = struct.unpack_from("<QLL", data, offset + 16)
+        size, nentries, stride = TOC_STRUCT.unpack_from(data, offset + 16)
         assert stride == 24
         assert size - 32 == nentries * stride, (size, nentries, stride)
         entries = []
         for toc_offset in range(offset + 32, offset + size, stride):
-            *header, pointer = struct.unpack_from("<LL4sLQ", data, toc_offset)
+            *header, pointer = cls._entry_struct.unpack_from(data, toc_offset)
             if not pointer:
                 break  # rest is null padding
             entry_header = ARDFHeader(data, toc_offset, *header)
@@ -715,6 +718,7 @@ class ARDFTextTableOfContents:
     offset: int
     size: int
     entries: list[tuple[ARDFHeader, int]]
+    _entry_struct = struct.Struct("<LL4sLQQ")
 
     @classmethod
     def unpack(cls, header: ARDFHeader):
@@ -723,12 +727,12 @@ class ARDFTextTableOfContents:
         header.validate()
         offset = header.offset
         data = header.data
-        size, nentries, stride = struct.unpack_from("<QLL", data, offset + 16)
+        size, nentries, stride = TOC_STRUCT.unpack_from(data, offset + 16)
         assert stride == 32, stride
         assert size - 32 == nentries * stride, (size, nentries, stride)
         entries = []
         for toc_offset in range(offset + 32, offset + size, stride):
-            *header, _, pointer = struct.unpack_from("<LL4sLQQ", data, toc_offset)
+            *header, _, pointer = cls._entry_struct.unpack_from(data, toc_offset)
             if not pointer:
                 break  # rest is null padding
             entry_header = ARDFHeader(data, toc_offset, *header)
@@ -739,12 +743,13 @@ class ARDFTextTableOfContents:
         return cls(data, offset, size, entries)
 
     def decode_entry(self, index: int):
+        # maybe could be another TEXT class but we'll read it straight in
         entry_header, pointer = self.entries[index]
-        *header, i, text_len = struct.unpack_from("<LL4sLLL", self.data, pointer)
-        text_header = ARDFHeader(self.data, pointer, *header)
+        text_header = ARDFHeader.unpack(self.data, pointer)
         if text_header.name != b"TEXT":
             raise ValueError("Malformed text section.", text_header)
         text_header.validate()
+        i, text_len = struct.unpack_from("<LL", self.data, pointer + 16)
         assert i == index, (i, index)
         offset = text_header.offset + 24
         assert text_len < text_header.size - 24, (text_len, text_header)
@@ -761,6 +766,7 @@ class ARDFVolumeTableOfContents:
     lines: np.ndarray
     points: np.ndarray
     pointers: np.ndarray
+    _voff_struct = struct.Struct("<LLQQ")
 
     @classmethod
     def unpack(cls, header: ARDFHeader):
@@ -769,12 +775,12 @@ class ARDFVolumeTableOfContents:
         offset = header.offset
         if header.size != 32 or header.name != b"VTOC":
             raise ValueError("Malformed volume table of contents.", header)
-        size, nentries, stride = struct.unpack_from("<QLL", data, offset + 16)
+        size, nentries, stride = TOC_STRUCT.unpack_from(data, offset + 16)
         assert stride == 40, stride
         assert size - 32 == nentries * stride, (size, nentries, stride)
         vtoc_arr = np.zeros(
             nentries,
-            dtype=[
+            dtype=[  # match _voff_struct.format
                 ("force_index", "L"),
                 ("line", "L"),
                 ("point", "Q"),
@@ -792,7 +798,7 @@ class ARDFVolumeTableOfContents:
             if entry_header.name != b"VOFF":
                 raise ValueError("Malformed volume table entry.", entry_header)
             entry_header.validate()
-            vtoc_arr[i] = struct.unpack_from("<LLQQ", data, toc_offset + 16)
+            vtoc_arr[i] = cls._voff_struct.unpack_from(data, toc_offset + 16)
         return cls(
             offset, size, vtoc_arr["line"], vtoc_arr["point"], vtoc_arr["pointer"]
         )
@@ -802,14 +808,14 @@ class ARDFVolumeTableOfContents:
 class ARDFVchan:
     name: str
     unit: str
+    _struct = struct.Struct("<32s32s")
 
     @classmethod
     def unpack(cls, header: ARDFHeader):
         if header.size != 80 or header.name != b"VCHN":
             raise ValueError("Malformed channel definition.", header)
         header.validate()
-        format = "<32s32s"
-        name, unit = struct.unpack_from(format, header.data, header.offset + 16)
+        name, unit = cls._struct.unpack_from(header.data, header.offset + 16)
         return cls(decode_cstring(name), decode_cstring(unit))
 
 
@@ -818,6 +824,7 @@ class ARDFXdef:
     offset: int
     size: int
     xdef: list[str]
+    _struct = struct.Struct("<LL")
 
     @classmethod
     def unpack(cls, header: ARDFHeader):
@@ -825,7 +832,7 @@ class ARDFXdef:
             raise ValueError("Malformed experiment definition.", header)
         header.validate()
         # Experiment definition is just a string
-        _, nchars = struct.unpack_from("<LL", header.data, header.offset + 16)
+        _, nchars = cls._struct.unpack_from(header.data, header.offset + 16)
         assert _ == 0, _
         if nchars > header.size:
             raise ValueError("Experiment definition too long.", header, nchars)
@@ -851,6 +858,7 @@ class ARDFVset:
     vtype: int = attrs.field(repr=bin)
     prev_vset_offset: int
     next_vset_offset: int
+    _struct = struct.Struct("<LLLLQQ")
 
     @classmethod
     def unpack(cls, vset_header: ARDFHeader):
@@ -859,41 +867,41 @@ class ARDFVset:
         vset_header.validate()
         data = vset_header.data
         offset = vset_header.offset
-        vset_format = "<LLLLQQ"
-        size = 48  # 16 + struct.calcsize(vset_format)  # constant
-        return cls(
-            data, offset, size, *struct.unpack_from(vset_format, data, offset + 16)
-        )
+        size = cls._struct.size + 16
+        return cls(data, offset, size, *cls._struct.unpack_from(data, offset + 16))
 
 
 @attrs.frozen
 class ARDFVdata:
     data: mmap
     offset: int
-    size: int
     force_index: int
     line: int
     point: int
     nfloats: int
     channel: int
     seg_offsets: tuple[int, ...]
+    _struct = struct.Struct("<10L")
 
     @classmethod
     def unpack(cls, header: ARDFHeader):
         data = header.data
         offset = header.offset
-        vdat_format = "<10L"
-        size = 56  # struct.calcsize(vdat_format) + 16  # constant
-        (force_index, line, point, nfloats, channel, *seg_offsets) = struct.unpack_from(
-            vdat_format, data, offset + 16
-        )
+        (
+            force_index,
+            line,
+            point,
+            nfloats,
+            channel,
+            *seg_offsets,
+        ) = cls._struct.unpack_from(data, offset + 16)
         return cls(
-            data, offset, size, force_index, line, point, nfloats, channel, seg_offsets
+            data, offset, force_index, line, point, nfloats, channel, seg_offsets
         )
 
     @property
     def array_offset(self):
-        return self.offset + self.size
+        return self.offset + self._struct.size + 16
 
     @property
     def next_offset(self):
@@ -917,10 +925,8 @@ class ARDFImage:
     ibox_offset: int
     name: str
     units: str
-    x_step: float
-    y_step: float
-    x_units: str
-    y_units: str
+    step_info: StepInfo
+    _struct = struct.Struct("<LLQQdd32s32s32s32s")
 
     @classmethod
     def parse_imag(cls, imag_header: ARDFHeader):
@@ -934,30 +940,22 @@ class ARDFImage:
 
         # don't use TTOC or TOFF, step over
         idef_header = ARDFHeader.unpack(ttoc.data, ttoc.offset + ttoc.size)
-        idef_format = "<LLQQdd32s32s32s32s"
-        if (
-            idef_header.name != b"IDEF"
-            or idef_header.size != struct.calcsize(idef_format) + 16
-        ):
+        if idef_header.name != b"IDEF" or idef_header.size != cls._struct.size + 16:
             raise ValueError("Malformed image definition.", idef_header)
         idef_header.validate()
-        points, lines, _, __, x_step, y_step, *cstrings = struct.unpack_from(
-            idef_format,
+        points, lines, _, __, x_step, y_step, *cstrings = cls._struct.unpack_from(
             idef_header.data,
             idef_header.offset + 16,
         )
         assert not (_ or __), (_, __)
-        x_units, y_units, name, units = list(map(decode_cstring, cstrings))
+        x_unit, y_unit, name, units = list(map(decode_cstring, cstrings))
 
         return cls(
             imag_header.data,
             idef_header.offset + idef_header.size,
             name,
             units,
-            x_step,
-            y_step,
-            x_units,
-            y_units,
+            ((x_step, x_unit), (y_step, y_unit)),
         )
 
     def get_ndarray(self):
@@ -966,8 +964,8 @@ class ARDFImage:
             raise ValueError("Malformed image layout.", ibox_header)
         ibox_header.validate()
         data_offset = ibox_header.offset + ibox_header.size + 16  # past IDAT header
-        ibox_size, lines, stride = struct.unpack_from(
-            "<QLL", ibox_header.data, ibox_header.offset + 16
+        ibox_size, lines, stride = TOC_STRUCT.unpack_from(
+            ibox_header.data, ibox_header.offset + 16
         )  # TODO: invert lines? it's just a negative sign on stride
         points = (stride - 16) // 4  # less IDAT header
         # elide image data validation and map into an array directly
@@ -1224,13 +1222,9 @@ class ARDFVolume:
     volm_offset: int
     reader: FVReader
     shape: Index
-    x_step: float
-    y_step: float
-    t_step: float
-    x_units: str
-    y_units: str
-    t_units: str
+    step_info: StepInfo
     xdef: ARDFXdef
+    _struct = struct.Struct("<LL24sddd32s32s32s32sQ")
 
     @classmethod
     def parse_volm(cls, volm_header: ARDFHeader):
@@ -1251,25 +1245,16 @@ class ARDFVolume:
         # cls essentially represents VDEF plus its linkage down to VSET
         # so this unpacking is intentionally inlined here.
         vdef_header = ARDFHeader.unpack(data, ttoc.offset + ttoc.size)
-        vdef_format = "<LL24sddd32s32s32s32sQ"
-        if (
-            vdef_header.name != b"VDEF"
-            or vdef_header.size != struct.calcsize(vdef_format) + 16
-        ):
-            raise ValueError(
-                "Malformed volume definition.",
-                vdef_header,
-                struct.calcsize(vdef_format),
-            )
+        if vdef_header.name != b"VDEF" or vdef_header.size != cls._struct.size + 16:
+            raise ValueError("Malformed volume definition.", vdef_header)
         vdef_header.validate()
-        points, lines, _, x_step, y_step, t_step, *cstrings, nseg = struct.unpack_from(
-            vdef_format,
-            vdef_header.data,
-            vdef_header.offset + 16,
+        unpack_from = cls._struct.unpack_from  # line wrapping
+        points, lines, _, x_step, y_step, t_step, *cstrings, nseg = unpack_from(
+            vdef_header.data, vdef_header.offset + 16
         )
         assert sum(_) == 0, _
         complete = points * lines == nsets
-        x_units, y_units, t_units, seg_names = list(map(decode_cstring, cstrings))
+        x_unit, y_unit, t_unit, seg_names = list(map(decode_cstring, cstrings))
         seg_names = seg_names.split(";")[:-1]
         assert nseg == len(seg_names)
 
@@ -1317,12 +1302,7 @@ class ARDFVolume:
             volm_header.offset,
             reader,
             (points, lines),
-            x_step,
-            y_step,
-            t_step,
-            x_units,
-            y_units,
-            t_units,
+            ((x_step, x_unit), (y_step, y_unit), (t_step, t_unit)),
             xdef,
         )
 
@@ -1427,7 +1407,7 @@ class ARDFFile(BaseForceVolumeFile):
         self.defl_sens = self._defl_sens_orig = (
             float(self._worker.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
         )
-        self.t_step = self._worker.volumes[0].t_step
+        self.t_step = self._worker.volumes[0].step_info[-1][0]
 
     async def aclose(self):
         if self._mm is not None:
