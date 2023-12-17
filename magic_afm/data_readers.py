@@ -65,7 +65,11 @@ class FVReader(Protocol):
         """Efficiently get a specific curve from disk."""
         ...
 
-    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+    def iter_indices(self) -> Iterable[Index]:
+        """Iterate over force curve indices in on-disk order"""
+        ...
+
+    def iter_curves(self) -> Iterable[tuple[ZDArrays, Index]]:
         """Iterate over curves lazily in on-disk order."""
         ...
 
@@ -994,7 +998,7 @@ class ARDFFFMReader:
     # and nonexistent segments get a zero. For regular/FFM data, we'll just
     # assume that the second offset maps to our "split" concept.
     seg_offsets: tuple
-    scandown: bool
+    up: bool
     trace: bool
 
     @classmethod
@@ -1003,6 +1007,12 @@ class ARDFFFMReader:
         # just walk past these first headers to find our data_offset
         first_vset = ARDFVset.unpack(first_vset_header)
         vset_stride = first_vset.next_vset_offset - first_vset_header.offset
+        if first_vset.vtype == 5:
+            line_stride = vset_stride * points
+        else:
+            # better be "both" setting see ARDFVset
+            assert first_vset.vtype in {10, 11}, first_vset
+            line_stride = vset_stride * points * 2
 
         first_vnam_header = ARDFHeader.unpack(
             data, first_vset_header.offset + first_vset_header.size
@@ -1016,6 +1026,8 @@ class ARDFFFMReader:
         if first_vdat_header.name != b"VDAT":
             raise ValueError("Malformed volume data")
         first_vdat = ARDFVdata.unpack(first_vdat_header)
+        up = first_vdat.line == 0
+        trace = first_vdat.point == 0
         return cls(
             data=data,
             array_view=np.ndarray(
@@ -1024,17 +1036,18 @@ class ARDFFFMReader:
                 buffer=data,
                 offset=first_vdat.array_offset,
                 strides=(
-                    vset_stride * points,
+                    line_stride,
                     vset_stride,
                     first_vdat_header.size,
                     4,
                 ),
-            ),
+                # match up array and image coordinates
+            )[:: 1 if up else -1, :: 1 if trace else -1],
             array_offset=first_vdat.array_offset,
             channels=[channels["Raw"][0], channels["Defl"][0]],
             seg_offsets=first_vdat.seg_offsets,
-            scandown=first_vdat.line != 0,
-            trace=first_vdat.point == 0,
+            up=up,
+            trace=trace,
         )
 
     def get_curve(self, r, c):
@@ -1049,12 +1062,25 @@ class ARDFFFMReader:
             * NANOMETER_UNIT_CONVERSION
         ).reshape((len(self.channels), 2, -1))
 
+    def iter_indices(self) -> Iterable[Index]:
+        """Iterate over force curve indices in on-disk order"""
+        # undo the array reversals in the constructor method
+        lines, points = self.array_view.shape[:2]
+        lines_iter = range(lines)
+        if not self.up:
+            lines_iter = reversed(lines_iter)
+        for line in lines_iter:
+            points_iter = range(points)
+            if not self.trace:
+                points_iter = reversed(points_iter)
+            for point in points_iter:
+                yield line, point
+
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
-        # For now assume our strides don't bounce around
         # TODO: cleverly use np.nditer?
-        for point in np.ndindex(self.array_view.shape[:2]):
-            yield point, self.get_curve(*point)
+        for index in self.iter_indices():
+            yield index, self.get_curve(*index)
 
     def get_all_curves(self) -> ZDArrays:
         """Eagerly load all curves into memory."""
@@ -1141,6 +1167,13 @@ class ARDFForceMapReader:
                 d = vdat.get_ndarray()
                 dxr = d[: s[1]], d[s[1] : s[2]]
         return zxr, dxr
+
+    def iter_indices(self) -> Iterable[Index]:
+        """Iterate over force curve indices in on-disk order"""
+        for vset in self.traverse_vsets(int(self.vtoc.pointers[0])):
+            if vset.vtype != self.vtype:
+                continue
+            yield vset.line, vset.point
 
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
@@ -1267,13 +1300,8 @@ class ARDFVolume:
         # Check if each offset is regularly spaced
         # optimize for LARGE regular case (FMaps are SMALL)
         first_vset_header = ARDFHeader.unpack(data, int(vtoc.pointers[0]))
-        if (
-            0
-            and complete
-            and not np.any(np.diff(np.diff(vtoc.pointers.astype(np.uint64))))
-        ):
-            assert False, "not yet reliable on scan up vs down"
-            # reader = ARDFFFMReader.parse(first_vset_header, points, lines, channels)
+        if complete and not np.any(np.diff(np.diff(vtoc.pointers.astype(np.uint64)))):
+            reader = ARDFFFMReader.parse(first_vset_header, points, lines, channels)
         else:
             first_vset = ARDFVset.unpack(first_vset_header)
             reader = ARDFForceMapReader(
@@ -1405,6 +1433,9 @@ class ARDFFile(BaseForceVolumeFile):
         if self._mm is not None:
             with trio.CancelScope(shield=True):
                 await trio.to_thread.run_sync(self._mm.close)
+
+    def __iter__(self):
+        return self._worker.volumes[0].reader.iter_indices()
 
     def get_force_curve_sync(self, r, c):
         out = zxr, dxr = self._worker.volumes[0].reader.get_curve(r, c)
