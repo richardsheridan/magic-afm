@@ -81,7 +81,7 @@ from tqdm.std import TqdmExperimentalWarning
 from tqdm.tk import tqdm_tk
 
 from . import async_tools, calculation, data_readers
-from .async_tools import LONGEST_IMPERCEPTIBLE_DELAY, TOOLTIP_CANCEL, tooltip_task, trs
+from .async_tools import LONGEST_IMPERCEPTIBLE_DELAY, TOOLTIP_CANCEL, tooltip_task
 
 warnings.simplefilter("ignore", TqdmExperimentalWarning)
 tqdm_tk.monitor_interval = 0
@@ -254,11 +254,11 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             try:
                 while True:
                     draw_fn = self.draw_recv.receive_nowait()
-                    await trs(draw_fn)
+                    await trio.to_thread.run_sync(draw_fn)
             except trio.WouldBlock:
                 self._maybe_resize()
                 # don't set delay based on this, it is exceptionally lengthy
-                await trs(self.draw)
+                await trio.to_thread.run_sync(self.draw)
         while True:
             # Sleep until someone sends artist calls
             draw_fn = await self.draw_recv.receive()
@@ -266,7 +266,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             deadline = trio.current_time() + delay
             async with self.spinner_scope():
                 # if draw_fn returns a truthy value, no draw needed
-                if await trs(draw_fn):
+                if await trio.to_thread.run_sync(draw_fn):
                     continue
                 # Batch rapid artist call requests if a draw is incoming
                 # spend roughly equal time building artists and drawing
@@ -275,10 +275,10 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                         draw_fn = await self.draw_recv.receive()
                     if delay_scope.cancelled_caught:
                         break
-                    await trs(draw_fn)
+                    await trio.to_thread.run_sync(draw_fn)
                 self._maybe_resize()
                 t = trio.current_time()
-                await trs(self.draw)
+                await trio.to_thread.run_sync(self.draw)
                 # previous delay is not great predictor of next delay
                 # for now try exponential moving average
                 delay = ((trio.current_time() - t) + delay) / 2.0
@@ -1368,7 +1368,9 @@ async def force_volume_task(
         if name not in opened_fvol.image_names:
             manip_fn = calculation.MANIPULATIONS[manip_name]
             async with spinner_scope():
-                manip_img = await trs(manip_fn, axesimage.get_array().data)
+                manip_img = await trio.to_thread.run_sync(
+                    manip_fn, axesimage.get_array().data
+                )
             opened_fvol.add_image(name, unit, manip_img)
             if name not in current_names:
                 current_names.append(name)
@@ -1401,7 +1403,7 @@ async def force_volume_task(
                 opened_fvol.sync_dist = options.sync_dist
                 opened_fvol.defl_sens = options.defl_sens
                 force_curve = await opened_fvol.get_force_curve(point.r, point.c)
-                force_curve_data = await trs(
+                force_curve_data = await trio.to_thread.run_sync(
                     calculate_force_data,
                     *force_curve,
                     opened_fvol.t_step,
@@ -1721,9 +1723,9 @@ def calculate_force_data(zxr, dxr, t_step, options, cancel_poller=bool):
         t_step *= npts / rnpts
         npts = rnpts
     # Transform data to model units
-    t = np.linspace(0, npts*t_step, num=npts, endpoint=False, dtype=dxr[0].dtype)
+    t = np.linspace(0, npts * t_step, num=npts, endpoint=False, dtype=dxr[0].dtype)
     txr = t[: len(dxr[0])], t[len(dxr[0]) :]
-    assert npts == sum(map(len,txr))
+    assert npts == sum(map(len, txr))
     fxr = tuple(map(np.multiply, dxr, (options.k,) * len(dxr)))
     deltaxr = tuple(map(np.subtract, zxr, dxr))
 
@@ -2034,7 +2036,8 @@ async def main_task(root):
         )
         for _ in range(async_tools.cpu_bound_limiter.total_tokens):
             nursery.start_soon(tprs, bool)  # start workers while compiling
-        await trs(calculation.warmup_jit)  # don't race workers to compile first
+        # don't race workers to compile first
+        await trio.to_thread.run_sync(calculation.warmup_jit)
         for _ in range(async_tools.cpu_bound_limiter.total_tokens):
             nursery.start_soon(tprs, calculation.warmup_jit)  # only compile cache=false
         await trio.sleep_forever()  # needed if nursery never starts a long running child

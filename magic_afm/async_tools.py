@@ -22,7 +22,6 @@ It is meant to be easy to lift individual items out into other projects.
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 from contextlib import asynccontextmanager, nullcontext
-from functools import partial
 from itertools import islice
 from math import inf
 
@@ -32,7 +31,6 @@ TOOLTIP_CANCEL = None, None, None
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 
 cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count() or 1)
-trs = partial(trio.to_thread.run_sync, abandon_on_cancel=True)
 
 
 def _chunk_producer(fn, job_items, chunksize):
@@ -58,13 +56,15 @@ def _chunk_consumer(chunk):
     return tuple(map(*chunk))
 
 
-async def _asyncify_iterator(iter, limiter=None, *, task_status):
+async def _asyncify_iterator(iter_, limiter=None, *, task_status):
     sentinel = object()
     send_chan, recv_chan = trio.open_memory_channel(0)
     task_status.started(recv_chan)
     with send_chan:
         while (
-            result := await trs(next, iter, sentinel, limiter=limiter)
+            result := await trio.to_thread.run_sync(
+                next, iter_, sentinel, limiter=limiter
+            )
         ) is not sentinel:
             await send_chan.send(result)
 
@@ -74,7 +74,6 @@ async def to_sync_runner_map_unordered(
     sync_fn,
     job_items,
     chunksize=1,
-    cancellable=False,
     limiter=cpu_bound_limiter,
     task_status=trio.TASK_STATUS_IGNORED,
 ):
@@ -106,9 +105,7 @@ async def to_sync_runner_map_unordered(
 
     async def worker():
         async for job_item in job_items:
-            result = await sync_runner(
-                sync_fn, job_item, cancellable=cancellable, limiter=limiter
-            )
+            result = await sync_runner(sync_fn, job_item, limiter=limiter)
             if chunky:
                 for r in result:
                     await send(r)
@@ -117,11 +114,13 @@ async def to_sync_runner_map_unordered(
 
     async with send_chan, trio.open_nursery() as nursery:
         try:
-            job_items = iter(job_items)  # Duck type any iterable
+            # Duck type any iterable
+            job_items = iter(job_items)
         except TypeError as e:
             if not str(e).endswith("object is not iterable"):
                 raise e
-            job_items = aiter(job_items)  # Duck type any async iterable
+            # Duck type any async iterable
+            job_items = aiter(job_items)
             if chunky:
                 job_items = await nursery.start(
                     _async_chunk_producer, sync_fn, job_items, chunksize

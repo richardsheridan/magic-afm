@@ -41,7 +41,6 @@ import numpy as np
 import trio
 
 from . import calculation
-from .async_tools import trs
 
 
 NANOMETER_UNIT_CONVERSION = (
@@ -352,7 +351,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
         return image_name
 
     async def get_force_curve(self, r, c):
-        return await trs(self.get_force_curve_sync, r, c)
+        return await trio.to_thread.run_sync(self.get_force_curve_sync, r, c)
 
     @abc.abstractmethod
     def get_force_curve_sync(self, r, c):
@@ -363,7 +362,7 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
             await trio.sleep(0)
             image = self._image_cache[image_name]
         else:
-            image = await trs(self.get_image_sync, image_name)
+            image = await trio.to_thread.run_sync(self.get_image_sync, image_name)
             self._image_cache[image_name] = image
         return image
 
@@ -588,9 +587,11 @@ class ARH5File(BaseForceVolumeFile):
 
     async def ainitialize(self):
         self._h5data = h5data = await trio.to_thread.run_sync(open_h5, self.path)
-        self.notes = await trs(lambda: parse_AR_note(h5data.attrs["Note"]))
-        worker = await trs(self._choose_worker, h5data)
-        images, image_names = await trs(
+        self.notes = await trio.to_thread.run_sync(
+            lambda: parse_AR_note(h5data.attrs["Note"])
+        )
+        worker = await trio.to_thread.run_sync(self._choose_worker, h5data)
+        images, image_names = await trio.to_thread.run_sync(
             lambda: (h5data["Image"], set(h5data["Image"].keys()))
         )
         self._worker = worker
@@ -1597,7 +1598,7 @@ class NanoscopeFile(BaseForceVolumeFile):
 
         # End of header is demarcated by a SUB byte (26 = 0x1A)
         # Longest header so far was 80 kB, stop there to avoid searching gigabytes before fail
-        header_end_pos = await trs(self._mm.find, b"\x1A", 0, 80960)
+        header_end_pos = await trio.to_thread.run_sync(self._mm.find, b"\x1A", 0, 80960)
         if header_end_pos < 0:
             raise ValueError(
                 "No stop byte found, are you sure this is a Nanoscope file?"
@@ -1656,7 +1657,9 @@ class NanoscopeFile(BaseForceVolumeFile):
             value[1 + value.find("(") : value.find(")")].split()[0]
         )
 
-        self._worker, self.sync_dist = await trs(self._choose_worker, header)
+        self._worker, self.sync_dist = await trio.to_thread.run_sync(
+            self._choose_worker, header
+        )
 
     def _choose_worker(self, header):
         if "Height Sensor" in header["FV"]:
