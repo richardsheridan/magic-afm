@@ -2063,8 +2063,9 @@ def main():
         host.run(main_task, root)
     except KeyboardInterrupt:
         pass
-    except BaseException as exc:
+    except BaseException:
+        import datetime, traceback
         date = datetime.datetime.now().isoformat().replace(":", ";")
         with open(f"traceback-{date}.dump", "w", encoding="utf8") as file:
-            traceback.print_exception(type(exc), exc, exc.__traceback__, file=file)
-        raise exc
+            traceback.print_exc(file=file)
+        raise
