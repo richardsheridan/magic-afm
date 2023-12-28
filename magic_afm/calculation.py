@@ -46,6 +46,8 @@ gkern = np.array([0.25, 0.5, 0.25], dtype=np.float32)
 PROPERTY_UNITS_DICT = {
     "IndentationModulus": "Pa",
     "AdhesionForce": "N",
+    "IndentationModulusErr": "Pa",
+    "AdhesionForceErr": "N",
     "Deflection": "m",
     "Indentation": "m",
     "TrueHeight": "m",  # Hi z -> lo h
@@ -901,6 +903,8 @@ def calc_properties_imap(delta_f_rc, **kwargs):
         return rc, None
     ind_mod = beta[0]
     adh_force = beta[1]
+    ind_mod_err = beta_err[0]
+    adh_force_err = beta_err[1]
     (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(
         force, beta, **kwargs
     )
@@ -909,9 +913,12 @@ def calc_properties_imap(delta_f_rc, **kwargs):
     beta_perturb, *_ = fitfun(*perturb_k(delta, force, eps, k), p0=beta, **kwargs)
     ind_mod_perturb = beta_perturb[0]
     ind_mod_sens_k = (ind_mod_perturb - ind_mod) / ind_mod / eps
+    # XXX Must match PROPERTY_UNITS_DICT order
     properties = (
         ind_mod * 1e9,
         adh_force / 1e9,
+        ind_mod_err * 1e9,
+        adh_force_err / 1e9,
         deflection / 1e9,
         indentation / 1e9,
         -z_true_surface / 1e9,

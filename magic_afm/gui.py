@@ -1015,7 +1015,7 @@ class ForceVolumeTkDisplay:
     def reset_image_name_menu(self, names):
         names = list(names)
         longest = max(map(len, names))
-        self.image_name_menu.configure(values=names, width=min(longest - 1, 20))
+        self.image_name_menu.configure(values=names, width=min(longest - 1, 40))
 
     def replot(self):
         pass
