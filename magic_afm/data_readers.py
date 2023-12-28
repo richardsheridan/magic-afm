@@ -946,7 +946,7 @@ class ARDFVdata:
         return (
             np.ndarray(
                 shape=self.nfloats,
-                dtype=np.float32,
+                dtype="<f4",
                 buffer=self.data,
                 offset=self.array_offset,
             )
@@ -1006,11 +1006,11 @@ class ARDFImage(Image):
         # elide image data validation and map into an array directly
         arr = np.ndarray(
             shape=(lines, points),
-            dtype=np.float32,
+            dtype="<f4",
             buffer=self.data,
             offset=data_offset,
             strides=(stride, 4),
-        ).copy()
+        ).astype("f4")
         gami_header = ARDFHeader.unpack(
             ibox_header.data, ibox_header.offset + ibox_size
         )
@@ -1065,7 +1065,7 @@ class ARDFFFMReader(FVReader):
             data=data,
             array_view=np.ndarray(
                 shape=(lines, points, len(channels), first_vdat.nfloats),
-                dtype=np.float32,
+                dtype="<f4",
                 buffer=data,
                 offset=first_vdat.array_offset,
                 strides=(
@@ -1472,7 +1472,7 @@ class BrukerImage(Image):
     def get_image(self) -> np.ndarray:
         assert not self.data.closed
         z_ints = np.ndarray(
-            shape=self.shape, dtype=f"i{self.bpp}", buffer=self.data, offset=self.offset
+            shape=self.shape, dtype=f"<i{self.bpp}", buffer=self.data, offset=self.offset
         )
         z_floats = np.zeros_like(z_ints, dtype=np.float32)
         z_floats += z_ints
@@ -1508,7 +1508,7 @@ class FFVReader:
         length = int(subheader["Data length"])
         npts = length // (r * c * bpp)
         ints = np.ndarray(
-            shape=(r, c, npts), dtype=f"i{bpp}", buffer=data, offset=offset
+            shape=(r, c, npts), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
         value = subheader["@4:Z scale"]
         soft_scale = float(
@@ -1555,7 +1555,7 @@ class QNMDReader:
         offset = int(subheader["Data offset"])
         npts = length // (r * c * bpp)
         d_ints = np.ndarray(
-            shape=(r, c, npts), dtype=f"i{bpp}", buffer=data, offset=offset
+            shape=(r, c, npts), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
 
         value = subheader["@4:Z scale"]
