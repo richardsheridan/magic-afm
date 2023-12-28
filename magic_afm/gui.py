@@ -1158,9 +1158,7 @@ async def force_volume_task(
                 half_green = np.array((0, 1, 0, 0.5), dtype="f4")
                 property_map = np.empty(
                     img_shape,
-                    dtype=np.dtype(
-                        [(name, "f4") for name in calculation.PROPERTY_UNITS_DICT]
-                    ),
+                    dtype=calculation.PROPERTY_DTYPE,
                 )
 
                 def make_progress_image_draw_fn():

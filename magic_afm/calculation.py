@@ -56,6 +56,8 @@ PROPERTY_UNITS_DICT = {
     "SumSquaredError": None,
 }
 
+PROPERTY_DTYPE = np.dtype([(name, "f4") for name in PROPERTY_UNITS_DICT])
+
 
 @jit(nopython=True, nogil=True, cache=True)
 def gauss3x3(img):
@@ -913,19 +915,22 @@ def calc_properties_imap(delta_f_rc, **kwargs):
     beta_perturb, *_ = fitfun(*perturb_k(delta, force, eps, k), p0=beta, **kwargs)
     ind_mod_perturb = beta_perturb[0]
     ind_mod_sens_k = (ind_mod_perturb - ind_mod) / ind_mod / eps
-    # XXX Must match PROPERTY_UNITS_DICT order
-    properties = (
-        ind_mod * 1e9,
-        adh_force / 1e9,
-        ind_mod_err * 1e9,
-        adh_force_err / 1e9,
-        deflection / 1e9,
-        indentation / 1e9,
-        -z_true_surface / 1e9,
-        deflection / indentation,
-        ind_mod_sens_k,
-        sse,
-    )
+
+    # pack up properties, ensuring all fields are filled in order
+    properties = np.void(np.nan, dtype=PROPERTY_DTYPE)
+    properties["IndentationModulus"] = ind_mod * 1e9
+    properties["AdhesionForce"] = adh_force / 1e9
+    properties["IndentationModulusErr"] = ind_mod_err * 1e9
+    properties["AdhesionForceErr"] = adh_force_err / 1e9
+    properties["Deflection"] = deflection / 1e9
+    properties["Indentation"] = indentation / 1e9
+    properties["TrueHeight"] = -z_true_surface / 1e9
+    properties["IndentationRatio"] = deflection / indentation
+    properties["SensIndMod_k"] = ind_mod_sens_k
+    properties["SumSquaredError"] = sse
+    # .item() coerces structured dtype to tuple
+    assert not np.any(np.isnan(properties.item()))
+
     return rc, properties
 
 
