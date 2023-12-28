@@ -21,14 +21,14 @@ asyncifies the worker's disk reads with threads, although this is not a rule.
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import abc
-import mmap
+import pathlib
 import struct
 import threading
 from collections.abc import Collection, Iterable
 from functools import partial
+from mmap import mmap
 from subprocess import PIPE
-from typing import Protocol, TypeAlias
+from typing import Protocol, TypeAlias, Any
 
 try:
     from subprocess import STARTF_USESHOWWINDOW, STARTUPINFO
@@ -61,6 +61,14 @@ ChanMap: TypeAlias = dict[str, tuple[int, "ARDFVchan"]]
 StepInfo: TypeAlias = tuple[tuple[float, str], ...]
 
 
+class Image(Protocol):
+    name: str
+
+    def get_image(self) -> np.ndarray:
+        """Get the image from disk."""
+        ...
+
+
 class FVReader(Protocol):
     def get_curve(self, r: int, c: int) -> ZDArrays:
         """Efficiently get a specific curve from disk."""
@@ -70,12 +78,49 @@ class FVReader(Protocol):
         """Iterate over force curve indices in on-disk order"""
         ...
 
-    def iter_curves(self) -> Iterable[tuple[ZDArrays, Index]]:
+    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
         ...
 
     def get_all_curves(self) -> ZDArrays:
         """Eagerly load all curves into memory."""
+        ...
+
+
+class Volume(Protocol):
+    name: str
+    shape: Index
+    # step_info: StepInfo
+
+    def get_curve(self, r: int, c: int) -> ZDArrays:
+        """Efficiently get a specific curve from disk."""
+        ...
+
+    def iter_indices(self) -> Iterable[Index]:
+        """Iterate over force curve indices in on-disk order"""
+        ...
+
+    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+        """Iterate over curves lazily in on-disk order."""
+        ...
+
+    def get_all_curves(self) -> ZDArrays:
+        """Eagerly load all curves into memory."""
+        ...
+
+
+class FVFile(Protocol):
+    headers: dict[str, Any]
+    images: dict[str, Image]
+    volumes: list[Volume]
+    k: float
+    defl_sens: float
+    t_step: float
+    scansize: tuple[float, float]
+
+    @classmethod
+    def parse(cls, data) -> "FVFile":
+        # TODO: data should be data: Buffer after 3.12
         ...
 
 
@@ -120,7 +165,7 @@ def decode_cstring(cstring: bytes):
 
 
 # noinspection PyUnboundLocalVariable
-def parse_nanoscope_header(header_lines):
+def parse_nanoscope_header(header_lines: Iterable[str]):
     """Convert header from a Nanoscope file to a convenient nested dict
 
     header_lines can be an opened file object or a list of strings or anything
@@ -134,17 +179,13 @@ def parse_nanoscope_header(header_lines):
         if line.startswith("*"):
             # we're starting a new section
             section_name = line[1:]
+            current_section = {}
             if section_name == "File list end":
                 break  # THIS IS THE **NORMAL** WAY TO END THE FOR LOOP
             if section_name in header:
-                # repeat section name, which we interpret as a list of sections
-                if header[section_name] is current_section:
-                    header[section_name] = [current_section]
-                current_section = {}
                 header[section_name].append(current_section)
             else:
-                current_section = {}
-                header[section_name] = current_section
+                header[section_name] = [current_section]
         else:
             # add key, value pairs for this section
             key, value = line.split(":", maxsplit=1)
@@ -162,21 +203,11 @@ def parse_nanoscope_header(header_lines):
     # link headers from [section][index][key] to [Image/FV][Image Data name][key]
     header["Image"] = {}
     for entry in header["Ciao image list"]:
-        if type(entry) is str:
-            # a single image in this file, rather than a list of images
-            name = header["Ciao image list"]["@2:Image Data"].split('"')[1]
-            header["Image"][name] = header["Ciao image list"]
-            break
         name = entry["@2:Image Data"].split('"')[1]
         # assert name not in header["Image"]  # assume data is redundant for now
         header["Image"][name] = entry
     header["FV"] = {}
     for entry in header["Ciao force image list"]:
-        if type(entry) is str:
-            # a single force image in this file, rather than a list of images
-            name = header["Ciao force image list"]["@4:Image Data"].split('"')[1]
-            header["FV"][name] = header["Ciao force image list"]
-            break
         name = entry["@4:Image Data"].split('"')[1]
         # assert name not in header["FV"]  # assume data is redundant for now
         header["FV"][name] = entry
@@ -193,14 +224,18 @@ def bruker_bpp_fix(bpp, version):
         return int(bpp)
 
 
-def parse_AR_note(note: str):
+def parse_ar_note(note: Iterable[str]):
     # The notes have a very regular key-value structure
     # convert to dict for later access
     return dict(
-        line.split(":", 1)
-        for line in note.split("\n")
-        if ":" in line and "@Line:" not in line
+        line.split(":", 1) for line in note if ":" in line and "@Line:" not in line
     )
+
+
+def strip_trace(image_name):
+    for suffix in ("retrace", "Retrace", "trace", "Trace"):
+        image_name = image_name.removesuffix(suffix)
+    return image_name
 
 
 async def convert_ardf(
@@ -264,12 +299,12 @@ async def convert_ardf(
             if pbar is not None:
                 nursery.start_soon(reading_stdout)
                 nursery.start_soon(reading_stderr)
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         raise FileNotFoundError(
             "Please acquire ARDFtoHDF5.exe and "
             "place it in the application's root folder."
         ) from None
-    except:
+    except BaseException:
         with trio.CancelScope(shield=True):
             await h5file_path.unlink(missing_ok=True)
         raise
@@ -280,39 +315,56 @@ async def convert_ardf(
 ###############################################
 ################## FVFiles ####################
 ###############################################
-class BaseForceVolumeFile(metaclass=abc.ABCMeta):
+
+
+@attrs.define
+class AsyncFVFile:
     """Consistent interface across filetypes for Magic AFM GUI
 
-    I would not recommend re-using this or its subclasses for an external application.
-    Prefer wrapping a worker class."""
+    I would not recommend re-using this for an external application."""
 
-    _basic_units_map = {}
-    _default_heightmap_names = ()
+    _units_map = {
+        "Adhesion": "N",
+        "Height": "m",
+        "Height Sensor": "m",
+        "IndentationHertz": "m",
+        "YoungsHertz": "Pa",
+        "YoungsJKR": "Pa",
+        "YoungsDMT": "Pa",
+        "ZSensor": "m",
+        "MapAdhesion": "N",
+        "MapHeight": "m",
+        "Force": "N",
+    }
+    _default_heightmap_names = {
+        "MapHeight",
+        "ZSensorTrace",
+        "ZSensorRetrace",
+        "Height Sensor",
+        "Height",
+    }
 
-    def __init__(self, path):
-        self.scansize = None
-        self.path = path
-        self._units_map = self._basic_units_map.copy()
-        self._image_cache = {}
-        self._file_image_names = set()
-        self._trace = None
-        self._worker = None
-        self.k = None
-        self.defl_sens = None
-        self.t_step = None
-        self.sync_dist = 0
+    path: pathlib.Path  # this is just for pickling now... maybe don't pickle?
+    fvfile: FVFile
+    k: float
+    defl_sens: float
+    sync_dist: int = 0
+    trace: bool = True
+    _image_cache: dict[str, np.ndarray] = attrs.field(
+        factory=dict, init=False, repr=False
+    )
 
-    @property
-    def trace(self):
-        return self._trace
+    @classmethod
+    def from_fvfile(cls, path, fvfile: FVFile):
+        return cls(path, fvfile, fvfile.k, fvfile.defl_sens)
 
     @property
     def image_names(self):
-        return self._image_cache.keys() | self._file_image_names
+        return self._image_cache.keys() | self.fvfile.images.keys()
 
     @property
     def initial_image_name(self):
-        for name in self._file_image_names.intersection(self._default_heightmap_names):
+        for name in self.fvfile.images.keys() & self._default_heightmap_names:
             return name
         else:
             return None
@@ -325,67 +377,100 @@ class BaseForceVolumeFile(metaclass=abc.ABCMeta):
             sync_dist=self.sync_dist,
         )
 
-    @abc.abstractmethod
-    async def ainitialize(self):
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    async def aclose(self):
-        raise NotImplementedError
-
-    async def __aenter__(self):
-        await self.ainitialize()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.aclose()
-
     def get_image_units(self, image_name):
-        image_name = self.strip_trace(image_name)
+        # TODO: check FVFile for units
+        image_name = strip_trace(image_name)
         return self._units_map.get(image_name, "V")
 
     def add_image(self, image_name, units, image):
         self._image_cache[image_name] = image
-        image_name = self.strip_trace(image_name)
+        image_name = strip_trace(image_name)
         self._units_map[image_name] = units
 
-    @staticmethod
-    def strip_trace(image_name):
-        for suffix in ("trace", "Trace", "retrace", "Retrace"):
-            image_name = image_name.removesuffix(suffix)
-        return image_name
-
     async def get_force_curve(self, r, c):
-        return await trio.to_thread.run_sync(self.get_force_curve_sync, r, c)
+        return await trio.to_thread.run_sync(self.get_curve, r, c)
 
-    @abc.abstractmethod
-    def get_force_curve_sync(self, r, c):
-        raise NotImplementedError
+    def get_curve(self, r, c):
+        return self.fvfile.volumes[0].get_curve(r, c)
 
     async def get_image(self, image_name):
         if image_name in self._image_cache:
             await trio.sleep(0)
             image = self._image_cache[image_name]
         else:
-            image = await trio.to_thread.run_sync(self.get_image_sync, image_name)
+            image = await trio.to_thread.run_sync(
+                self.fvfile.images[image_name].get_image
+            )
             self._image_cache[image_name] = image
         return image
 
-    @abc.abstractmethod
-    def get_image_sync(self, image_name):
-        raise NotImplementedError
+    def __getstate__(self):
+        return (
+            self.path,
+            type(self.fvfile),
+            self.k,
+            self.defl_sens,
+            self.trace,
+            self.sync_dist,
+        )
+
+    def __setstate__(self, state):
+        path, fvfile_cls, k, defl_sens, trace, sync_dist = state
+        try:
+            fvfile, path_lock = CACHED_OPEN_PATHS[path]
+        except KeyError:
+            if path.suffix == ".h5":
+                data = open_h5(path)
+            else:
+                data = mmap_path_read_only(path)
+            fvfile = fvfile_cls.parse(data)
+            path_lock = threading.Lock()
+            path_lock.acquire()
+            CACHED_OPEN_PATHS[path] = fvfile, path_lock
+            threading.Thread(
+                target=eventually_evict_path, args=(path,), daemon=True
+            ).start()
+        else:
+            # reset thread countdown
+            try:
+                path_lock.release()
+            except RuntimeError:
+                pass  # no problem if unreleased
+        self.path = path
+        self.fvfile = fvfile
+        self.k = k
+        self.defl_sens = defl_sens
+        self.trace = trace
+        self.sync_dist = sync_dist
+
+    def __iter__(self):
+        return self.fvfile.volumes[0].iter_indices()
 
 
-class DemoForceVolumeFile(BaseForceVolumeFile):
-    def __init__(self, path):
-        path = trio.Path(path)
-        super().__init__(path)
-        self._file_image_names.add("Demo")
-        self._default_heightmap_names = ("Demo",)
-        self.scansize = 100, 100
-        self.k = 10
-        self.defl_sens = 5
-        self.t_step = 5e-6
+@attrs.frozen
+class DemoFVFile:
+    scansize: object = 100, 100
+    t_step: object = 5e-6
+
+
+@attrs.define(slots=False)
+class DemoForceVolumeFile(AsyncFVFile):
+    k: float = attrs.field(default=10.0)
+    defl_sens: float = attrs.field(default=5.0)
+    sync_dist: int = attrs.field(default=0)
+    delta: np.ndarray = attrs.field(
+        default=-15 * (np.cos(np.linspace(0, np.pi * 2, 1000, endpoint=False)) + 0.5)
+    )
+    path: pathlib.Path = attrs.field(default=pathlib.Path("Demo"))
+    fvfile: DemoFVFile = attrs.field(default=DemoFVFile())
+
+    @property
+    def image_names(self):
+        return ("Demo",)
+
+    @property
+    def initial_image_name(self):
+        return "Demo"
 
     async def ainitialize(self):
         await trio.sleep(0)
@@ -395,8 +480,11 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
     async def aclose(self):
         pass
 
-    def get_force_curve_sync(self, r, c):
-        gen = np.random.default_rng(seed=(r, c))
+    async def get_force_curve(self, r, c):
+        return self.get_curve(r, c)
+
+    def get_curve(self, r, c):
+        gen = np.random.default_rng(seed=(int(r), int(c)))
         parms = (1, 10, 0.1, -2, 1, 0, 0, 1)
         deltaext = self.delta[: self.delta.size // 2]
         deltaret = self.delta[self.delta.size // 2 :]
@@ -408,8 +496,21 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
         zret = deltaret + dret + gen.normal(scale=0.01, size=fret.size)
         return (zext, zret), (dext, dret)
 
-    def get_image_sync(self, image_name):
+    async def get_image(self, image_name):
         return np.zeros((64, 64), dtype=np.float32)
+
+    def __iter__(self):
+        return np.ndindex((64, 64))
+
+    def __getstate__(self):
+        # noinspection PyTypeChecker
+        d = attrs.asdict(self)
+        assert "k" in d
+        return d
+
+    def __setstate__(self, state):
+        for x in state:
+            setattr(self, x, state[x])
 
 
 ###############################################
@@ -419,6 +520,7 @@ class DemoForceVolumeFile(BaseForceVolumeFile):
 
 class ForceMapWorker:
     def __init__(self, h5data):
+        self.name = "FMAP"
         self.force_curves = h5data["ForceMap"]["0"]
         # ForceMap Segments can contain 3 or 4 endpoint indices for each indent array
         self.segments = self.force_curves["Segments"][:, :, :]  # XXX Read h5data
@@ -456,7 +558,7 @@ class ForceMapWorker:
             * NANOMETER_UNIT_CONVERSION
         )
 
-    def get_force_curve(self, r, c):
+    def get_curve(self, r, c):
         # Because of the nonuniform arrays, each indent gets its own dataset
         # indexed by 'row:column' e.g. '1:1'.
         curve = self.force_curves[f"{r}:{c}"]  # XXX Read h5data
@@ -466,191 +568,124 @@ class ForceMapWorker:
         split = self.minext
         return (z[:split], z[split:]), (d[:split], d[split:])
 
-    def get_all_curves(self, cancel_poller=bool):
-        im_r, im_c, num_segments = self.segments.shape
-        x = np.empty((im_r, im_c, 2, self.minext + self.minret), dtype=np.float32)
+    def iter_curves(self):
         for index, curve in self.force_curves.items():
             # Unfortunately they threw in segments here too, so we skip over it
             if index == "Segments":
                 continue
-            cancel_poller()
             # Because of the nonuniform arrays, each indent gets its own dataset
             # indexed by 'row:column' e.g. '1:1'. We could start with the shape and index
             # manually, but the string munging is easier for me to think about
-            r, c = index.split(":")
-            r, c = int(r), int(c)
+            r, c = list(map(int, index.split(":")))
             split = self.extlens[r, c]
+            yield (r, c), self._shared_get_part(curve, split)
 
-            x[r, c, :, :] = self._shared_get_part(curve, split)
+    def get_all_curves(self):
+        im_r, im_c, num_segments = self.segments.shape
+        x = np.empty((im_r, im_c, 2, self.minext + self.minret), dtype=np.float32)
+        for index, curve in self.iter_curves():
+            x[*index, :, :] = curve
         return x.reshape(x.shape[:-1] + (2, -1))
 
 
-class FFMSingleWorker:
-    def __init__(self, raw, defl):
-        self.raw = raw
-        self.defl = defl
-        self.npts = raw.shape[-1]
-        self.split = self.npts // 2
+@attrs.frozen
+class ARH5Image(Image):
+    data: dict
+    name: str
 
-    def get_force_curve(self, r, c):
-        z = self.raw[r, c].reshape((2, -1))
-        d = self.defl[r, c].reshape((2, -1))
+    def get_image(self) -> np.ndarray:
+        """Get the image from disk."""
+        return self.data[self.name][:]
+
+
+@attrs.frozen
+class ARH5FFMVolume(Volume):
+    name: str
+    shape: Index
+    # step_info: StepInfo
+    _zreader: np.ndarray
+    _dreader: np.ndarray
+
+    def get_curve(self, r, c):
+        z = self._zreader[r, c].reshape((2, -1))
+        d = self._dreader[r, c].reshape((2, -1))
         return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
 
-    def get_all_curves(self, cancel_poller=bool):
-        cancel_poller()
-        z = self.raw[:] * NANOMETER_UNIT_CONVERSION
-        cancel_poller()
-        d = self.defl[:] * NANOMETER_UNIT_CONVERSION
-        cancel_poller()
+    def iter_indices(self) -> Iterable[Index]:
+        return np.ndindex(self.shape)
+
+    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+        for index in self.iter_indices():
+            yield index, self.get_curve(*index)
+
+    def get_all_curves(self):
+        z = self._zreader[:] * NANOMETER_UNIT_CONVERSION
+        d = self._dreader[:] * NANOMETER_UNIT_CONVERSION
         return z, d
 
 
-class FFMTraceRetraceWorker:
-    def __init__(self, raw_trace, defl_trace, raw_retrace, defl_retrace):
-        self.raw_trace = raw_trace
-        self.defl_trace = defl_trace
-        self.raw_retrace = raw_retrace
-        self.defl_retrace = defl_retrace
-        self.trace = True
-        self.npts = raw_trace.shape[-1]
-        self.split = self.npts // 2
+@attrs.frozen
+class ARH5File(FVFile):
+    headers: dict[str, Any]
+    images: dict[str, Image]
+    volumes: list[Volume]
+    k: float
+    defl_sens: float
+    t_step: float
+    scansize: tuple[float, float]
 
-    def get_force_curve(self, r, c):
-        if self.trace:
-            z = self.raw_trace[r, c].reshape((2, -1))
-            d = self.defl_trace[r, c].reshape((2, -1))
-        else:
-            z = self.raw_retrace[r, c].reshape((2, -1))
-            d = self.defl_retrace[r, c].reshape((2, -1))
-        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
+    @classmethod
+    def parse(cls, h5data):
+        notes = parse_ar_note(h5data.attrs["Note"].splitlines())
+        print(notes)
+        images = {name: ARH5Image(h5data["Image"], name) for name in h5data["Image"]}
 
-    def get_all_curves(self, cancel_poller=bool):
-        cancel_poller()
-        if self.trace:
-            z = self.raw_trace[:] * NANOMETER_UNIT_CONVERSION
-            cancel_poller()
-            d = self.defl_trace[:] * NANOMETER_UNIT_CONVERSION
-        else:
-            z = self.raw_retrace[:] * NANOMETER_UNIT_CONVERSION
-            cancel_poller()
-            d = self.defl_retrace[:] * NANOMETER_UNIT_CONVERSION
-        cancel_poller()
-        return z, d
-
-
-class ARH5File(BaseForceVolumeFile):
-    _basic_units_map = {
-        "Adhesion": "N",
-        "Height": "m",
-        "IndentationHertz": "m",
-        "YoungsHertz": "Pa",
-        "YoungsJKR": "Pa",
-        "YoungsDMT": "Pa",
-        "ZSensor": "m",
-        "MapAdhesion": "N",
-        "MapHeight": "m",
-        "Force": "N",
-    }
-    _default_heightmap_names = ("MapHeight", "ZSensorTrace", "ZSensorRetrace")
-
-    @BaseForceVolumeFile.trace.setter
-    def trace(self, trace):
-        self._worker.trace = trace
-        self._trace = trace
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        del state["_h5data"]
-        del state["_worker"]
-        del state["_images"]
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        try:
-            h5data, images, worker, path_lock = CACHED_OPEN_PATHS[self.path]
-        except KeyError:
-            h5data = open_h5(self.path)
-            images = h5data["Image"]
-            worker = self._choose_worker(h5data)
-            path_lock = threading.Lock()
-            path_lock.acquire()
-            CACHED_OPEN_PATHS[self.path] = h5data, images, worker, path_lock
-            threading.Thread(
-                target=eventually_evict_path, args=(self.path,), daemon=True
-            ).start()
-        else:
-            # reset thread countdown
-            try:
-                path_lock.release()
-            except RuntimeError:
-                pass  # no problem if unreleased
-        self._h5data = h5data
-        self._images = images
-        self._worker = worker
-
-    async def ainitialize(self):
-        self._h5data = h5data = await trio.to_thread.run_sync(open_h5, self.path)
-        self.notes = await trio.to_thread.run_sync(
-            lambda: parse_AR_note(h5data.attrs["Note"])
-        )
-        worker = await trio.to_thread.run_sync(self._choose_worker, h5data)
-        images, image_names = await trio.to_thread.run_sync(
-            lambda: (h5data["Image"], set(h5data["Image"].keys()))
-        )
-        self._worker = worker
-        self._images = images
-        self._file_image_names.update(image_names)
-
-        self.k = float(self.notes["SpringConstant"])
-        self.scansize = (
-            float(self.notes["FastScanSize"]) * NANOMETER_UNIT_CONVERSION,
-            float(self.notes["SlowScanSize"]) * NANOMETER_UNIT_CONVERSION,
+        k = float(notes["SpringConstant"])
+        scansize = (
+            float(notes["FastScanSize"]) * NANOMETER_UNIT_CONVERSION,
+            float(notes["SlowScanSize"]) * NANOMETER_UNIT_CONVERSION,
         )
         # NOTE: aspect is redundant to scansize
         # self.aspect = float(self.notes["SlowRatio"]) / float(self.notes["FastRatio"])
-        self.defl_sens = self._defl_sens_orig = (
-            float(self.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
-        )
-        self.rate = float(self.notes["FastMapZRate"])
-        self.npts, self.split = worker.npts, worker.split
-        self.t_step = 1 / self.rate / self.npts
-
-    async def aclose(self):
-        with trio.CancelScope(shield=True):
-            await trio.to_thread.run_sync(self._h5data.close)
-
-    def _choose_worker(self, h5data):
+        defl_sens = float(notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
+        rate = float(notes["FastMapZRate"])
+        volumes = []
         if "FFM" in h5data:
             # self.scandown = bool(self.notes["ScanDown"])
+            if "0" in h5data["FFM"]:
+                volumes.append(
+                    ARH5FFMVolume(
+                        "Trace",
+                        h5data["FFM"]["0"]["Raw"].shape[:2],
+                        h5data["FFM"]["0"]["Raw"],
+                        h5data["FFM"]["0"]["Defl"],
+                    )
+                )
             if "1" in h5data["FFM"]:
-                worker = FFMTraceRetraceWorker(
-                    h5data["FFM"]["0"]["Raw"],
-                    h5data["FFM"]["0"]["Defl"],
-                    h5data["FFM"]["1"]["Raw"],
-                    h5data["FFM"]["1"]["Defl"],
+                volumes.append(
+                    ARH5FFMVolume(
+                        "Retrace",
+                        h5data["FFM"]["1"]["Raw"].shape[:2],
+                        h5data["FFM"]["1"]["Raw"],
+                        h5data["FFM"]["1"]["Defl"],
+                    )
                 )
-                self._trace = True
-            elif "0" in h5data["FFM"]:
-                worker = FFMSingleWorker(
-                    h5data["FFM"]["0"]["Raw"], h5data["FFM"]["0"]["Defl"]
+            if "Raw" in h5data["FFM"]:
+                volumes.append(
+                    ARH5FFMVolume(
+                        "Trace",
+                        h5data["FFM"]["Raw"].shape[:2],
+                        h5data["FFM"]["Raw"],
+                        h5data["FFM"]["Defl"],
+                    )
                 )
-            else:
-                worker = FFMSingleWorker(h5data["FFM"]["Raw"], h5data["FFM"]["Defl"])
+            npts = volumes[0]._zreader.shape[-1]
         else:
             # self.scandown = bool(self.notes["FMapScanDown"])
             worker = ForceMapWorker(h5data)
-        return worker
-
-    def get_force_curve_sync(self, r, c):
-        out = zxr, dxr = self._worker.get_force_curve(r, c)
-        if self.defl_sens != self._defl_sens_orig:
-            dxr *= self.defl_sens / self._defl_sens_orig
-        return out
-
-    def get_image_sync(self, image_name):
-        return self._images[image_name][:]
+            npts = worker.npts
+        t_step = 1 / rate / npts
+        return cls(notes, images, volumes, k, defl_sens, t_step, scansize)
 
 
 @attrs.frozen
@@ -920,7 +955,7 @@ class ARDFVdata:
 
 
 @attrs.frozen
-class ARDFImage:
+class ARDFImage(Image):
     data: mmap
     ibox_offset: int
     name: str
@@ -958,7 +993,7 @@ class ARDFImage:
             ((x_step, x_unit), (y_step, y_unit)),
         )
 
-    def get_ndarray(self):
+    def get_image(self):
         ibox_header = ARDFHeader.unpack(self.data, self.ibox_offset)
         if ibox_header.size != 32 or ibox_header.name != b"IBOX":
             raise ValueError("Malformed image layout.", ibox_header)
@@ -986,7 +1021,7 @@ class ARDFImage:
 
 
 @attrs.frozen
-class ARDFFFMReader:
+class ARDFFFMReader(FVReader):
     data: mmap  # keep checking our mmap is open so array_view cannot segfault
     array_view: np.ndarray = attrs.field(repr=False)
     array_offset: int  # hard to recover from views
@@ -1011,6 +1046,8 @@ class ARDFFFMReader:
             # better be "both" setting see ARDFVset
             assert first_vset.vtype in {10, 11}, first_vset
             line_stride = vset_stride * points * 2
+        up = first_vset.line == 0
+        trace = first_vset.point == 0
 
         first_vnam_header = ARDFHeader.unpack(
             data, first_vset_header.offset + first_vset_header.size
@@ -1024,8 +1061,6 @@ class ARDFFFMReader:
         if first_vdat_header.name != b"VDAT":
             raise ValueError("Malformed volume data")
         first_vdat = ARDFVdata.unpack(first_vdat_header)
-        up = first_vdat.line == 0
-        trace = first_vdat.point == 0
         return cls(
             data=data,
             array_view=np.ndarray(
@@ -1092,7 +1127,7 @@ class ARDFFFMReader:
 
 
 @attrs.frozen
-class ARDFForceMapReader:
+class ARDFForceMapReader(FVReader):
     data: mmap
     vtoc: ARDFVolumeTableOfContents
     lines: int
@@ -1218,12 +1253,13 @@ class ARDFForceMapReader:
 
 
 @attrs.frozen
-class ARDFVolume:
+class ARDFVolume(Volume):
     volm_offset: int
-    reader: FVReader
+    name: str
     shape: Index
     step_info: StepInfo
     xdef: ARDFXdef
+    _reader: FVReader
     _struct = struct.Struct("<LL24sddd32s32s32s32sQ")
 
     @classmethod
@@ -1287,6 +1323,7 @@ class ARDFVolume:
         first_vset_header = ARDFHeader.unpack(data, int(vtoc.pointers[0]))
         if complete and not np.any(np.diff(np.diff(vtoc.pointers.astype(np.uint64)))):
             reader = ARDFFFMReader.parse(first_vset_header, points, lines, channels)
+            name = "Trace" if reader.trace else "Retrace"
         else:
             first_vset = ARDFVset.unpack(first_vset_header)
             reader = ARDFForceMapReader(
@@ -1297,134 +1334,89 @@ class ARDFVolume:
                 first_vset.vtype,
                 channels,
             )
+            name = "FMAP"
 
         return cls(
             volm_header.offset,
-            reader,
+            name,
             (points, lines),
             ((x_step, x_unit), (y_step, y_unit), (t_step, t_unit)),
             xdef,
+            reader,
         )
+
+    def get_curve(self, r: int, c: int) -> ZDArrays:
+        """Efficiently get a specific curve from disk."""
+        return self._reader.get_curve(r, c)
+
+    def iter_indices(self) -> Iterable[Index]:
+        """Iterate over force curve indices in on-disk order"""
+        return self._reader.iter_indices()
+
+    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+        """Iterate over curves lazily in on-disk order."""
+        return self._reader.iter_curves()
+
+    def get_all_curves(self) -> ZDArrays:
+        """Eagerly load all curves into memory."""
+        return self._reader.get_all_curves()
 
 
 @attrs.define
-class ARDFWorker:
-    notes: dict[str, str] = attrs.field(repr=False)
-    images: dict[str, ARDFImage]
-    volumes: list[ARDFVolume]
+class ARDFFile:
+    headers: dict[str, str] = attrs.field(
+        repr=lambda x: f"<dict with {len(x)} entries>"
+    )
+    images: dict[str, Image]
+    volumes: list[Volume]
+    k: float
+    defl_sens: float
+    t_step: float
+    scansize: tuple[float, float]
 
     @classmethod
-    def parse_ardf(cls, ardf_mmap: mmap):
-        file_header = ARDFHeader.unpack(ardf_mmap, 0)
+    def parse(cls, data: mmap):
+        file_header = ARDFHeader.unpack(data, 0)
         if file_header.size != 16 or file_header.name != b"ARDF":
             raise ValueError("Not an ARDF file.", file_header)
         file_header.validate()
-        ftoc_header = ARDFHeader.unpack(ardf_mmap, offset=file_header.size)
+        ftoc_header = ARDFHeader.unpack(data, offset=file_header.size)
         if ftoc_header.name != b"FTOC":
             raise ValueError("Malformed ARDF file table of contents.", ftoc_header)
         ftoc = ARDFTableOfContents.unpack(ftoc_header)
-        ttoc_header = ARDFHeader.unpack(ardf_mmap, offset=ftoc.offset + ftoc.size)
+        ttoc_header = ARDFHeader.unpack(data, offset=ftoc.offset + ftoc.size)
         ttoc = ARDFTextTableOfContents.unpack(ttoc_header)
         assert len(ttoc.entries) == 1
-        notes = parse_AR_note(ttoc.decode_entry(0))
+        notes = parse_ar_note(ttoc.decode_entry(0).splitlines())
         images = {}
         volumes = []
         for item, pointer in ftoc.entries:
             item.validate()
-            item = ARDFHeader.unpack(ardf_mmap, pointer)
+            item = ARDFHeader.unpack(data, pointer)
             if item.name == b"IMAG":
                 item = ARDFImage.parse_imag(item)
                 images[item.name] = item
-                # assert isinstance(item.get_ndarray(), np.ndarray)
             elif item.name == b"VOLM":
-                volumes.append(ARDFVolume.parse_volm(item))
+                item = ARDFVolume.parse_volm(item)
+                # volumes[item.name] = item
+                volumes.append(item)
             else:
                 raise RuntimeError(f"Unknown TOC entry {item.name}.", item)
-        return cls(notes, images, volumes)
 
-
-class ARDFFile(BaseForceVolumeFile):
-    _basic_units_map = {
-        "Adhesion": "N",
-        "Height": "m",
-        "IndentationHertz": "m",
-        "YoungsHertz": "Pa",
-        "YoungsJKR": "Pa",
-        "YoungsDMT": "Pa",
-        "ZSensor": "m",
-        "MapAdhesion": "N",
-        "MapHeight": "m",
-        "Force": "N",
-    }
-    _default_heightmap_names = ("MapHeight", "ZSensorTrace", "ZSensorRetrace")
-    _worker: ARDFWorker | None = None
-    _mm = None
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        del state["_mm"]
-        del state["_worker"]
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        try:
-            mm, worker, path_lock = CACHED_OPEN_PATHS[self.path]
-        except KeyError:
-            self._mm = mm = mmap_path_read_only(self.path)
-            worker = ARDFWorker.parse_ardf(mm)
-            path_lock = threading.Lock()
-            path_lock.acquire()
-            CACHED_OPEN_PATHS[self.path] = mm, worker, path_lock
-            threading.Thread(
-                target=eventually_evict_path, args=(self.path,), daemon=True
-            ).start()
-        else:
-            # reset thread countdown
-            try:
-                path_lock.release()
-            except RuntimeError:
-                pass  # no problem if unreleased
-        self._mm = mm
-        self._worker = worker
-
-    async def ainitialize(self):
-        self._mm = await trio.to_thread.run_sync(mmap_path_read_only, self.path)
-        self._worker = await trio.to_thread.run_sync(ARDFWorker.parse_ardf, self._mm)
-        self._file_image_names.update(self._worker.images.keys())
-
-        self.k = float(self._worker.notes["SpringConstant"])
+        k = float(notes["SpringConstant"])
         # slight numerical differences here
-        # lines, points = self._worker.volumes[0].shape
-        # xsize = lines * self._worker.volumes[0].x_step
-        # ysize = points * self._worker.volumes[0].y_step
-        self.scansize = (
-            float(self._worker.notes["FastScanSize"]) * NANOMETER_UNIT_CONVERSION,
-            float(self._worker.notes["SlowScanSize"]) * NANOMETER_UNIT_CONVERSION,
+        # lines, points = volumes[0].shape
+        # xsize = lines * volumes[0].step_info[0][0]
+        # ysize = points * volumes[0].step_info[1][0]
+        scansize = (
+            float(notes["FastScanSize"]) * NANOMETER_UNIT_CONVERSION,
+            float(notes["SlowScanSize"]) * NANOMETER_UNIT_CONVERSION,
         )
         # NOTE: aspect is redundant to scansize
         # self.aspect = float(self.notes["SlowRatio"]) / float(self.notes["FastRatio"])
-        self.defl_sens = self._defl_sens_orig = (
-            float(self._worker.notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
-        )
-        self.t_step = self._worker.volumes[0].step_info[-1][0]
-
-    async def aclose(self):
-        if self._mm is not None:
-            with trio.CancelScope(shield=True):
-                await trio.to_thread.run_sync(self._mm.close)
-
-    def __iter__(self):
-        return self._worker.volumes[0].reader.iter_indices()
-
-    def get_force_curve_sync(self, r, c):
-        out = zxr, dxr = self._worker.volumes[0].reader.get_curve(r, c)
-        if self.defl_sens != self._defl_sens_orig:
-            dxr *= self.defl_sens / self._defl_sens_orig
-        return out
-
-    def get_image_sync(self, image_name):
-        return self._worker.images[image_name].get_ndarray()
+        defl_sens = float(notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
+        t_step = volumes[0].step_info[-1][0]
+        return cls(notes, images, volumes, k, defl_sens, t_step, scansize)
 
 
 ###############################################
@@ -1432,192 +1424,283 @@ class ARDFFile(BaseForceVolumeFile):
 ###############################################
 
 
-class BrukerWorkerBase(metaclass=abc.ABCMeta):
-    def __init__(self, header, mm, s):
-        self.header = header  # get_image
-        self.mm = mm  # get_image
-        self.split = s  # get_force_curve
-        self.version = header["Force file list"]["Version"].strip()  # get_image
+@attrs.define
+class BrukerImage(Image):
+    data: mmap
+    name: str
+    offset: int
+    length: int
+    bpp: int
+    unit_scale: float
+    unit_offset: float
+    shape: Index
 
-    @abc.abstractmethod
-    def get_force_curve(self, r, c, defl_sens, sync_dist):
-        raise NotImplementedError
-
-    def get_image(self, image_name):
-        h = self.header["Image"][image_name]
+    @classmethod
+    def parse_image(cls, data, header, name):
+        h = header["Image"][name]
 
         value = h["@2:Z scale"]
-        bpp = bruker_bpp_fix(h["Bytes/pixel"], self.version)
+        bpp = bruker_bpp_fix(
+            h["Bytes/pixel"], header["Force file list"][0]["Version"].strip()
+        )
         hard_scale = float(value.split()[-2]) / (2 ** (bpp * 8))
         hard_offset = float(h["@2:Z offset"].split()[-2]) / (2 ** (bpp * 8))
         soft_scale_name = "@" + value[1 + value.find("[") : value.find("]")]
         try:
-            soft_scale_string = self.header["Ciao scan list"][soft_scale_name]
+            soft_scale_string = header["Ciao scan list"][0][soft_scale_name]
         except KeyError:
-            soft_scale_string = self.header["Scanner list"][soft_scale_name]
+            soft_scale_string = header["Scanner list"][0][soft_scale_name]
         soft_scale = float(soft_scale_string.split()[1]) / NANOMETER_UNIT_CONVERSION
-        scale = np.float32(hard_scale * soft_scale)
-        data_length = int(h["Data length"])
+        unit_scale = np.float32(hard_scale * soft_scale)
+        unit_offset = np.float32(hard_offset * soft_scale)
+        length = int(h["Data length"])
         offset = int(h["Data offset"])
         r = int(h["Number of lines"])
         c = int(h["Samps/line"])
-        assert data_length == r * c * bpp
-        # scandown = h["Frame direction"] == "Down"
-        z_ints = np.ndarray(
-            shape=(r, c), dtype=f"i{bpp}", buffer=self.mm, offset=offset
+        assert length == r * c * bpp
+        return cls(
+            data=data,
+            name=name,
+            offset=offset,
+            length=length,
+            bpp=bpp,
+            unit_scale=unit_scale,
+            unit_offset=unit_offset,
+            shape=(r, c),
         )
-        z_floats = z_ints * scale + np.float32(hard_offset * soft_scale)
+
+    def get_image(self) -> np.ndarray:
+        assert not self.data.closed
+        z_ints = np.ndarray(
+            shape=self.shape, dtype=f"i{self.bpp}", buffer=self.data, offset=self.offset
+        )
+        z_floats = np.zeros_like(z_ints, dtype=np.float32)
+        z_floats += z_ints
+        z_floats *= self.unit_scale
+        z_floats += self.unit_offset
         return z_floats
 
 
-class FFVWorker(BrukerWorkerBase):
-    def __init__(self, header, mm, s):
-        super().__init__(header, mm, s)
-        arbitrary_image = next(iter(header["Image"].values()))
-        r = int(arbitrary_image["Number of lines"])
-        c = int(arbitrary_image["Samps/line"])
-        data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
-        for name in [data_name, "Height Sensor"]:
-            subheader = header["FV"][name]
-            offset = int(subheader["Data offset"])
-            bpp = bruker_bpp_fix(subheader["Bytes/pixel"], self.version)
-            length = int(subheader["Data length"])
-            npts = length // (r * c * bpp)
-            data = np.ndarray(
-                shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset
-            )
-            if name == "Height Sensor":
-                self.z_ints = data
-                value = subheader["@4:Z scale"]
-                soft_scale = float(
-                    header["Ciao scan list"]["@Sens. ZsensSens"].split()[1]
-                )
-                hard_scale = float(
-                    value[1 + value.find("(") : value.find(")")].split()[0]
-                )
-                self.z_scale = np.float32(soft_scale * hard_scale)
-            else:
-                self.d_ints = data
-                value = subheader["@4:Z scale"]
-                self.defl_hard_scale = float(
-                    value[1 + value.find("(") : value.find(")")].split()[0]
-                )
+@attrs.frozen
+class FFVReader:
+    data: mmap
+    name: str
+    ints: np.ndarray = attrs.field(repr=False)
+    scale: np.float32
+    split: int
+    _soft_scale_map = {
+        "Height Sensor": "@Sens. ZsensSens",
+        "Height": "@Sens. ZSens",
+        "Deflection Error": "@Sens. DeflSens",
+    }
 
-    def get_force_curve(self, r, c, defl_sens, sync_dist):
+    @classmethod
+    def parse(cls, header, data, subheader):
+        c = int(header["Ciao scan list"][0]["Samps/line"])
+        r = int(header["Ciao scan list"][0]["Lines"])
+        name = subheader["@4:Image Data"].split('"')[1]
+        split, split2 = map(int, subheader["Samps/line"].split())
+        offset = int(subheader["Data offset"])
+        bpp = bruker_bpp_fix(
+            subheader["Bytes/pixel"],
+            header["Force file list"][0]["Version"].strip(),
+        )
+        length = int(subheader["Data length"])
+        npts = length // (r * c * bpp)
+        ints = np.ndarray(
+            shape=(r, c, npts), dtype=f"i{bpp}", buffer=data, offset=offset
+        )
+        value = subheader["@4:Z scale"]
+        soft_scale = float(
+            header["Ciao scan list"][0][cls._soft_scale_map[name]].split()[1]
+        )
+        hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
+        scale = np.float32(soft_scale * hard_scale)
+        return cls(data, name, ints, scale, split)
+
+    def get_curve(self, r, c):
+        assert not self.data.closed
         s = self.split
-        defl_scale = np.float32(defl_sens * self.defl_hard_scale)
-
-        d = self.d_ints[r, c] * defl_scale
-        d[:s] = d[s - 1 :: -1]
-
-        if sync_dist:
-            d = np.roll(d, -sync_dist)
-
-        z = self.z_ints[r, c] * self.z_scale
-        return (z[s - 1 :: -1], z[s:]), (d[:s], d[s:])
+        f = self.ints[r, c] * self.scale
+        return f[s - 1 :: -1], f[s:]
 
 
-class QNMWorker(BrukerWorkerBase):
-    def __init__(self, header, mm, s):
-        super().__init__(header, mm, s)
-        arbitrary_image = next(iter(header["Image"].values()))
-        r = int(arbitrary_image["Number of lines"])
-        c = int(arbitrary_image["Samps/line"])
-        data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
-        subheader = header["FV"][data_name]
-        bpp = bruker_bpp_fix(subheader["Bytes/pixel"], self.version)
+@attrs.frozen
+class QNMDReader:
+    data: mmap
+    name: str
+    ints: np.ndarray = attrs.field(repr=False)
+    scale: np.float32
+    sync_dist: int
+
+    @classmethod
+    def parse(cls, header, data, subheader, shape):
+        # QNM doesn't have its own height data, so it must be synthesized
+        # I've chosen to do this by combining a height image with a sine wave
+
+        r, c = shape
+        sync_dist = int(
+            round(
+                float(
+                    header["Ciao scan list"][0]["Sync Distance QNM"]
+                    if "Sync Distance QNM" in header["Ciao scan list"][0]
+                    else header["Ciao scan list"][0]["Sync Distance"]
+                )
+            )
+        )
+        bpp = bruker_bpp_fix(
+            subheader["Bytes/pixel"], header["Force file list"][0]["Version"].strip()
+        )
         length = int(subheader["Data length"])
         offset = int(subheader["Data offset"])
         npts = length // (r * c * bpp)
-
-        self.d_ints = np.ndarray(
-            shape=(r, c, npts), dtype=f"i{bpp}", buffer=mm, offset=offset
+        d_ints = np.ndarray(
+            shape=(r, c, npts), dtype=f"i{bpp}", buffer=data, offset=offset
         )
+
         value = subheader["@4:Z scale"]
-        self.defl_hard_scale = float(
-            value[1 + value.find("(") : value.find(")")].split()[0]
-        )
+        soft_scale = float(header["Ciao scan list"][0]["@Sens. DeflSens"].split()[1])
+        hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
+        d_scale = np.float32(soft_scale * hard_scale)
+        name = subheader["@4:Image Data"].split('"')[1]
+        return cls(data, name, d_ints, d_scale, sync_dist)
 
-        try:
-            image = self.get_image("Height Sensor")
-        except KeyError:
-            image = self.get_image("Height")
-        image *= NANOMETER_UNIT_CONVERSION
-        self.height_for_z = image
-        amp = np.float32(header["Ciao scan list"]["Peak Force Amplitude"])
-        phase = s / npts * 2 * np.pi
-        self.z_basis = amp * np.cos(
+    def get_curve(self, r, c):
+        assert not self.data.closed
+        d = self.ints[r, c] * self.scale
+        s = len(d) // 2
+        d[:s] = d[s - 1 :: -1]
+        # remove blip
+        if d[0] == -32768 * self.scale:
+            d[0] = d[1]
+        d = np.roll(d, s - self.sync_dist)  # TODO roll across two adjacent indents
+        return d.reshape((2, -1))
+
+
+@attrs.frozen
+class QNMZReader:
+    name: str
+    z_basis: np.ndarray = attrs.field(repr=False)
+    height_for_z: np.ndarray = attrs.field(repr=False)
+
+    @classmethod
+    def parse(cls, header, d_reader: QNMDReader, height_for_z):
+        # QNM doesn't have its own height data, so it must be synthesized
+        # I've chosen to do this by combining a height image with a sine wave
+
+        amp = np.float32(header["Ciao scan list"][0]["Peak Force Amplitude"])
+        npts = d_reader.ints.shape[-1]
+        # phase = d_reader.sync_dist / npts * 2 * np.pi
+        phase = np.pi
+        # TODO: apply sync dist here rather than d?
+        z_basis = amp * np.cos(
             np.linspace(
                 phase, phase + 2 * np.pi, npts, endpoint=False, dtype=np.float32
             )
         )
+        return cls(d_reader.name + " z_basis", z_basis, height_for_z)
 
-    def get_force_curve(self, r, c, defl_sens, sync_dist):
-        s = self.split
-        defl_scale = np.float32(defl_sens * self.defl_hard_scale)
-
-        d = self.d_ints[r, c] * defl_scale
-        d[:s] = d[s - 1 :: -1]
-        # remove blip
-        if d[0] == -32768 * defl_scale:
-            d[0] = d[1]
-        d = np.roll(d, s - sync_dist)  # TODO roll across two adjacent indents
-
+    def get_curve(self, r, c):
         # need to infer z from amp/height
         z = self.z_basis + self.height_for_z[r, c]
+        return z.reshape((2, -1))
 
-        return (z[:s], z[s:]), (d[:s], d[s:])
 
+@attrs.frozen
+class BrukerVolume(Volume):
+    name: str
+    shape: Index
+    step_info: StepInfo
+    _zreader: FFVReader | QNMZReader
+    _dreader: FFVReader | QNMDReader
 
-class NanoscopeFile(BaseForceVolumeFile):
-    _basic_units_map = {
-        "Height Sensor": "m",
-        "Height": "m",
-    }
-    _default_heightmap_names = ("Height Sensor", "Height")
+    @classmethod
+    def parse(cls, header, z_reader, d_reader):
+        npts = int(header["Ciao force list"][0]["force/line"].split()[0])
+        rate, unit = header["Ciao scan list"][0]["PFT Freq"].split()
+        assert unit.lower() == "khz"
+        rate = float(rate) * 1000
+        t_step = 1 / rate / npts
 
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        del state["_mm"]
-        del state["_worker"]
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        try:
-            mm, worker, path_lock = CACHED_OPEN_PATHS[self.path]
-        except KeyError:
-            self._mm = mm = mmap_path_read_only(self.path)
-            worker, _ = self._choose_worker(self.header)
-            path_lock = threading.Lock()
-            path_lock.acquire()
-            CACHED_OPEN_PATHS[self.path] = mm, worker, path_lock
-            threading.Thread(
-                target=eventually_evict_path, args=(self.path,), daemon=True
-            ).start()
+        scansize, units = header["Ciao scan list"][0]["Scan Size"].split()
+        if units == "nm":
+            factor = 1.0
+        elif units == "pm":
+            factor = 0.001
+        elif units == "~m":  # microns?!
+            factor = 1000.0
         else:
-            # reset thread countdown
-            try:
-                path_lock.release()
-            except RuntimeError:
-                pass  # no problem if unreleased
-        self._mm = mm
-        self._worker = worker
+            raise ValueError("unknown units:", units)
+        scansize = float(scansize)
 
-    async def ainitialize(self):
-        self._mm = await trio.to_thread.run_sync(mmap_path_read_only, self.path)
+        # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
+        fastpx = int(header["Ciao scan list"][0]["Samps/line"])
+        slowpx = int(header["Ciao scan list"][0]["Lines"])
+        shape = (slowpx, fastpx)
+        # TODO: nonsquare images
+        x_step = scansize * factor / NANOMETER_UNIT_CONVERSION / (fastpx - 1)
+        y_step = scansize * factor / NANOMETER_UNIT_CONVERSION / (slowpx - 1)
 
+        # self.scandown = {"Down": True, "Up": False}[
+        #     header["FV"]["Deflection Error"]["Frame direction"]
+        # ]
+        return cls(
+            d_reader.name,
+            shape,
+            ((x_step, "m"), (y_step, "m"), (t_step, "s")),
+            z_reader,
+            d_reader,
+        )
+
+    def get_curve(self, r: int, c: int) -> ZDArrays:
+        """Efficiently get a specific curve from disk."""
+        return self._zreader.get_curve(r, c), self._dreader.get_curve(r, c)
+
+    def iter_indices(self) -> Iterable[Index]:
+        """Iterate over force curve indices in on-disk order"""
+        # TODO: ensure on-disk order
+        for index in np.ndindex(self.shape):
+            yield index
+
+    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+        """Iterate over curves lazily in on-disk order."""
+        for index in self.iter_indices():
+            yield index, self.get_curve(*index)
+
+    def get_all_curves(self) -> ZDArrays:
+        """Eagerly load all curves into memory."""
+        x = np.empty(
+            self.shape + (2, 2, self._dreader.ints.shape[-1] // 2), dtype=np.float32
+        )
+        for index, curve in self.iter_curves():
+            x[*index, ...] = curve
+        return x
+
+
+@attrs.define
+class NanoscopeFile(FVFile):
+    headers: dict[str, Any] = attrs.field(
+        repr=lambda x: f"<dict with {len(x)} entries>"
+    )
+    images: dict[str, Image]
+    volumes: list[Volume]
+    k: float
+    defl_sens: float
+    t_step: float
+    scansize: tuple[float, float]
+
+    @classmethod
+    def parse(cls, data: mmap):
         # End of header is demarcated by a SUB byte (26 = 0x1A)
-        # Longest header so far was 80 kB, stop there to avoid searching gigabytes before fail
-        header_end_pos = await trio.to_thread.run_sync(self._mm.find, b"\x1A", 0, 80960)
+        # Longest header so far was 80 kB,
+        # stop there to avoid searching gigabytes before fail
+        header_end_pos = data.find(b"\x1A", 0, 80960)
         if header_end_pos < 0:
             raise ValueError(
                 "No stop byte found, are you sure this is a Nanoscope file?"
             )
-        self.header = header = parse_nanoscope_header(
-            self._mm[:header_end_pos]  # will be cached from find call
-            .decode("windows-1252")
-            .splitlines()
+        header = parse_nanoscope_header(
+            data[:header_end_pos].decode("windows-1252").splitlines()
         )
 
         # Header items that I should be reading someday
@@ -1628,20 +1711,57 @@ class NanoscopeFile(BaseForceVolumeFile):
         # and in the image lists
         # \Aspect Ratio: 1:1
         # \Scan Size: 800 800 nm
+        fastpx = int(header["Ciao scan list"][0]["Samps/line"])
+        slowpx = int(header["Ciao scan list"][0]["Lines"])
+        shape = slowpx, fastpx
 
-        self._file_image_names.update(header["Image"].keys())
-
-        data_name = header["Ciao force list"]["@4:Image Data"].split('"')[1]
-
-        data_header = header["FV"][data_name]
-        self.split, *_ = map(int, data_header["Samps/line"].split())
-        self.npts = int(header["Ciao force list"]["force/line"].split()[0])
-        rate, unit = header["Ciao scan list"]["PFT Freq"].split()
+        images = {}
+        for name in header["Image"]:
+            images[name] = BrukerImage.parse_image(data, header, name)
+        # deflection and height data are separate "force images"
+        # we've got to pair them up
+        heights = []
+        deflections = []
+        for subheader in header["Ciao force image list"]:
+            name = subheader["@4:Image Data"].split('"')[1]
+            if "Height" in name:
+                heights.append(subheader)
+            else:
+                deflections.append(subheader)
+        if not heights:
+            # QNM data doesn't contain height data which we synthesize from an image
+            try:
+                height_for_z = images["Height Sensor"].get_image()
+            except KeyError:
+                height_for_z = images["Height"].get_image()
+            volumes = [
+                BrukerVolume.parse(
+                    header, QNMZReader.parse(header, d_reader, height_for_z), d_reader
+                )
+                for d_reader in (
+                    QNMDReader.parse(header, data, d_subh, shape)
+                    for d_subh in deflections
+                )
+            ]
+        else:
+            volumes = [
+                BrukerVolume.parse(
+                    header,
+                    FFVReader.parse(header, data, z_subh),
+                    FFVReader.parse(header, data, d_subh),
+                )
+                for z_subh, d_subh in zip(heights, deflections)
+            ]
+        # volumes = {v.name:v for v in volumes}
+        k = float(header["Ciao force image list"][0]["Spring Constant"])
+        defl_sens = float(header["Ciao scan list"][0]["@Sens. DeflSens"].split()[1])
+        npts = int(header["Ciao force list"][0]["force/line"].split()[0])
+        rate, unit = header["Ciao scan list"][0]["PFT Freq"].split()
         assert unit.lower() == "khz"
-        self.rate = float(rate) * 1000
-        self.t_step = 1 / self.rate / self.npts
+        rate = float(rate) * 1000
+        t_step = 1 / rate / npts
 
-        scansize, units = header["Ciao scan list"]["Scan Size"].split()
+        scansize, units = header["Ciao scan list"][0]["Scan Size"].split()
         if units == "nm":
             factor = 1.0
         elif units == "pm":
@@ -1652,58 +1772,14 @@ class NanoscopeFile(BaseForceVolumeFile):
             raise ValueError("unknown units:", units)
 
         # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
-        fastpx = int(header["Ciao scan list"]["Samps/line"])
-        slowpx = int(header["Ciao scan list"]["Lines"])
         ratio = float(scansize) * factor / max(fastpx, slowpx)
-        self.scansize = (fastpx * ratio, slowpx * ratio)
-
-        # self.scandown = {"Down": True, "Up": False}[
-        #     header["FV"]["Deflection Error"]["Frame direction"]
-        # ]
-
-        self.k = float(data_header["Spring Constant"])
-        self.defl_sens = float(header["Ciao scan list"]["@Sens. DeflSens"].split()[1])
-        value = data_header["@4:Z scale"]
-        self.defl_hard_scale = float(
-            value[1 + value.find("(") : value.find(")")].split()[0]
-        )
-
-        self._worker, self.sync_dist = await trio.to_thread.run_sync(
-            self._choose_worker, header
-        )
-
-    def _choose_worker(self, header):
-        if "Height Sensor" in header["FV"]:
-            return FFVWorker(header, self._mm, self.split), 0
-        else:
-            return (
-                QNMWorker(header, self._mm, self.split),
-                int(
-                    round(
-                        float(
-                            header["Ciao scan list"]["Sync Distance QNM"]
-                            if "Sync Distance QNM" in header["Ciao scan list"]
-                            else header["Ciao scan list"]["Sync Distance"]
-                        )
-                    )
-                ),
-            )
-
-    async def aclose(self):
-        self._worker = None
-        with trio.CancelScope(shield=True):
-            await trio.to_thread.run_sync(self._mm.close)
-
-    def get_force_curve_sync(self, r, c):
-        return self._worker.get_force_curve(r, c, self.defl_sens, self.sync_dist)
-
-    def get_image_sync(self, image_name):
-        return self._worker.get_image(image_name)
+        scansize = (fastpx * ratio, slowpx * ratio)
+        return cls(header, images, volumes, k, defl_sens, t_step, scansize)
 
 
 SUFFIX_FVFILE_MAP = {
-    ".ardf": ARDFFile,
-    ".h5": ARH5File,
-    ".spm": NanoscopeFile,
-    ".pfc": NanoscopeFile,
+    ".ardf": (ARDFFile, mmap_path_read_only),
+    ".h5": (ARH5File, open_h5),
+    ".spm": (NanoscopeFile, mmap_path_read_only),
+    ".pfc": (NanoscopeFile, mmap_path_read_only),
 }

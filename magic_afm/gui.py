@@ -43,21 +43,21 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import ctypes
-import datetime
 import enum
 import itertools
+import math
 import os
+import pathlib
 import tkinter as tk
 import tkinter.filedialog
 import tkinter.messagebox
-import traceback
 import warnings
 import webbrowser
 from contextlib import nullcontext
 from functools import partial, wraps
-from math import exp, inf
+from math import inf
 from tkinter import ttk
-from typing import Callable, ClassVar, Optional
+from typing import Callable, ClassVar, Optional, Literal
 
 import attrs
 import imageio
@@ -92,7 +92,7 @@ except AttributeError:
     pass
 
 matplotlib.rcParams["savefig.dpi"] = 300
-LAYOUT_ENGINE = "constrained"
+LAYOUT_ENGINE: Literal["constrained"] = "constrained"
 
 COLORMAPS = [
     "viridis",
@@ -188,7 +188,9 @@ class ImagePoint:
         rows, cols = axesimage.get_size()
         if axesimage.origin == "upper":
             ymin, ymax = ymax, ymin
+        # noinspection PyTypeChecker
         data_extent = Bbox([[ymin, xmin], [ymax, xmax]])
+        # noinspection PyTypeChecker
         array_extent = Bbox([[-0.5, -0.5], [rows - 0.5, cols - 0.5]])
         trans = BboxTransform(boxin=data_extent, boxout=array_extent)
         invtrans = trans.inverted()
@@ -1116,7 +1118,7 @@ class ForceVolumeTkDisplay:
 
 
 async def force_volume_task(
-    display: ForceVolumeTkDisplay, opened_fvol: data_readers.BaseForceVolumeFile
+    display: ForceVolumeTkDisplay, opened_fvol: data_readers.AsyncFVFile
 ):
     # plot_curve_event_response
     plot_curve_cancels_pending = set()
@@ -1198,7 +1200,7 @@ async def force_volume_task(
                             options.fit_mode,
                             options.k,
                         ),
-                        np.ndindex(img_shape),
+                        opened_fvol,  # np.ndindex(img_shape),
                         chunksize * 8,
                     )
                     d = attrs.asdict(options)
@@ -1286,7 +1288,7 @@ async def force_volume_task(
                     )
                 )
 
-        fastscansize, slowscansize = opened_fvol.scansize
+        fastscansize, slowscansize = opened_fvol.fvfile.scansize
 
         def change_image_draw_fn():
             nonlocal axesimage, colorbar
@@ -1400,13 +1402,11 @@ async def force_volume_task(
 
                 # Calculation phase
                 # Do a few long-running jobs, likely to be canceled
-                opened_fvol.sync_dist = options.sync_dist
-                opened_fvol.defl_sens = options.defl_sens
                 force_curve = await opened_fvol.get_force_curve(point.r, point.c)
                 force_curve_data = await trio.to_thread.run_sync(
                     calculate_force_data,
                     *force_curve,
-                    opened_fvol.t_step,
+                    opened_fvol.fvfile.t_step,
                     options,
                     trio.from_thread.check_cancelled,
                 )
@@ -1702,7 +1702,7 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
             aex(plot_ax.plot(data.txr[options.fit_mode - 1], data.d_fit, label="Model"))
 
     else:
-        raise ValueError("Unknown DispKind: ", data.disp_kind)
+        raise ValueError("Unknown DispKind: ", options.disp_kind)
     plot_ax.legend(handles=artists)
     return artists, artists[0].get_color()
 
@@ -1818,7 +1818,7 @@ async def open_task(root, nursery):
 
 async def open_one(root, path):
     """Open the supplied path and create a window for data analysis"""
-    path = trio.Path(path)
+    path = pathlib.Path(path)
 
     # choose handler based on file suffix
     suffix = path.suffix.lower()
@@ -1850,17 +1850,24 @@ async def open_one(root, path):
     #     else:
     #         suffix = path.suffix.lower()
 
-    async with data_readers.SUFFIX_FVFILE_MAP[suffix](path) as opened_fv:
+    fvfile_cls, opener = data_readers.SUFFIX_FVFILE_MAP[suffix]
+    open_thing = await trio.to_thread.run_sync(opener, path)
+    try:
+        fvfile = await trio.to_thread.run_sync(fvfile_cls.parse, open_thing)
+        opened_fv = data_readers.AsyncFVFile.from_fvfile(path, fvfile)
         display = ForceVolumeTkDisplay(root, path.name, opened_fv.parameters)
         await force_volume_task(display, opened_fv)
         display.destroy()
+    finally:
+        with trio.CancelScope(shield=True):
+            await trio.to_thread.run_sync(open_thing.close)
 
 
 async def demo_task(root):
-    async with data_readers.DemoForceVolumeFile("Demo") as opened_fv:
-        display = ForceVolumeTkDisplay(root, "Demo", opened_fv.parameters)
-        await force_volume_task(display, opened_fv)
-        display.destroy()
+    opened_fv = data_readers.DemoForceVolumeFile()
+    display = ForceVolumeTkDisplay(root, "Demo", opened_fv.parameters)
+    await force_volume_task(display, opened_fv)
+    display.destroy()
 
 
 class MyInstrument(trio.abc.Instrument):
@@ -1875,13 +1882,13 @@ class MyInstrument(trio.abc.Instrument):
 
     def before_io_wait(self, timeout):
         t = trio.current_time()
-        b = exp(-self.cycle_time / self.tau)  # b = 1 - alpha
+        b = math.exp(-self.cycle_time / self.tau)  # b = 1 - alpha
         self.wake_time = (t - self.t) * (1 - b) + b * self.wake_time
         self.t = t
 
     def after_io_wait(self, timeout):
         t = trio.current_time()
-        b = exp(-self.cycle_time / self.tau)  # b = 1 - alpha
+        b = math.exp(-self.cycle_time / self.tau)  # b = 1 - alpha
         self.sleep_time = (t - self.t) * (1 - b) + b * self.sleep_time
         self.t = t
 
