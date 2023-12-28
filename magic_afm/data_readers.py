@@ -1472,7 +1472,10 @@ class BrukerImage(Image):
     def get_image(self) -> np.ndarray:
         assert not self.data.closed
         z_ints = np.ndarray(
-            shape=self.shape, dtype=f"<i{self.bpp}", buffer=self.data, offset=self.offset
+            shape=self.shape,
+            dtype=f"<i{self.bpp}",
+            buffer=self.data,
+            offset=self.offset,
         )
         z_floats = np.zeros_like(z_ints, dtype=np.float32)
         z_floats += z_ints
@@ -1539,21 +1542,24 @@ class QNMDReader:
         # I've chosen to do this by combining a height image with a sine wave
 
         r, c = shape
-        sync_dist = int(
-            round(
-                float(
-                    header["Ciao scan list"][0]["Sync Distance QNM"]
-                    if "Sync Distance QNM" in header["Ciao scan list"][0]
-                    else header["Ciao scan list"][0]["Sync Distance"]
-                )
-            )
-        )
         bpp = bruker_bpp_fix(
             subheader["Bytes/pixel"], header["Force file list"][0]["Version"].strip()
         )
         length = int(subheader["Data length"])
         offset = int(subheader["Data offset"])
         npts = length // (r * c * bpp)
+        csl = header["Ciao scan list"][0]
+        sync_dist = int(
+            round(
+                float(
+                    csl["Sync Distance QNM"]
+                    if "Sync Distance QNM" in csl
+                    else csl["Sync Distance"]
+                )
+                * float(csl["PFT Freq"].split()[0])
+                / 2
+            )
+        )
         d_ints = np.ndarray(
             shape=(r, c, npts), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
