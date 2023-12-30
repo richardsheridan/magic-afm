@@ -214,6 +214,7 @@ async def convert_ardf(
         h5file_path = ardf_path.with_suffix(".h5")
     else:
         h5file_path = trio.Path(h5file_path)
+    conv_path = trio.Path(conv_path)
 
     if pbar is None:
         # Just display the raw subprocess output
@@ -248,7 +249,8 @@ async def convert_ardf(
                     pass
                 else:
                     pbar.update(n - pbar.n)
-
+    if not await conv_path.is_file():
+        raise FileNotFoundError(f"Could not locate converter at conv_path={conv_path}")
     try:
         async with trio.open_nursery() as nursery:
             proc = await nursery.start(
@@ -264,12 +266,7 @@ async def convert_ardf(
             if pbar is not None:
                 nursery.start_soon(reading_stdout)
                 nursery.start_soon(reading_stderr)
-    except FileNotFoundError as e:
-        raise FileNotFoundError(
-            "Please acquire ARDFtoHDF5.exe and "
-            "place it in the application's root folder."
-        ) from None
-    except:
+    except BaseException:
         with trio.CancelScope(shield=True):
             await h5file_path.unlink(missing_ok=True)
         raise
