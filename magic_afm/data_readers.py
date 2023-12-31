@@ -630,7 +630,6 @@ class ARH5File:
     @classmethod
     def parse(cls, h5data):
         notes = parse_ar_note(h5data.attrs["Note"].splitlines())
-        print(notes)
         images = {name: ARH5Image(h5data["Image"], name) for name in h5data["Image"]}
 
         k = float(notes["SpringConstant"])
