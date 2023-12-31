@@ -69,24 +69,6 @@ class Image(Protocol):
         ...
 
 
-class FVReader(Protocol):
-    def get_curve(self, r: int, c: int) -> ZDArrays:
-        """Efficiently get a specific curve from disk."""
-        ...
-
-    def iter_indices(self) -> Iterable[Index]:
-        """Iterate over force curve indices in on-disk order"""
-        ...
-
-    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
-        """Iterate over curves lazily in on-disk order."""
-        ...
-
-    def get_all_curves(self) -> ZDArrays:
-        """Eagerly load all curves into memory."""
-        ...
-
-
 class Volume(Protocol):
     name: str
     shape: Index
@@ -518,13 +500,17 @@ class DemoForceVolumeFile(AsyncFVFile):
 ###############################################
 
 
-class ForceMapWorker:
+class ARH5ForceMapVolume:
+    name: str
+    shape: Index
+
     def __init__(self, h5data):
         self.name = "FMAP"
         self.force_curves = h5data["ForceMap"]["0"]
         # ForceMap Segments can contain 3 or 4 endpoint indices for each indent array
         self.segments = self.force_curves["Segments"][:, :, :]  # XXX Read h5data
         im_r, im_c, num_segments = self.segments.shape
+        self.shape = im_r, im_c
 
         # Generally segments are [Ext, Dwell, Ret, Away] or [Ext, Ret, Away]
         # for magic, we don't dwell. new converter ensures this assertion
@@ -568,6 +554,13 @@ class ForceMapWorker:
         split = self.minext
         return (z[:split], z[split:]), (d[:split], d[split:])
 
+    def iter_indices(self) -> Iterable[Index]:
+        for index in self.force_curves:
+            if index == "Segments":
+                continue
+            r, c = list(map(int, index.split(":")))
+            yield r, c
+
     def iter_curves(self):
         for index, curve in self.force_curves.items():
             # Unfortunately they threw in segments here too, so we skip over it
@@ -589,7 +582,7 @@ class ForceMapWorker:
 
 
 @attrs.frozen
-class ARH5Image(Image):
+class ARH5Image:
     data: dict
     name: str
 
@@ -599,7 +592,7 @@ class ARH5Image(Image):
 
 
 @attrs.frozen
-class ARH5FFMVolume(Volume):
+class ARH5FFMVolume:
     name: str
     shape: Index
     # step_info: StepInfo
@@ -625,7 +618,7 @@ class ARH5FFMVolume(Volume):
 
 
 @attrs.frozen
-class ARH5File(FVFile):
+class ARH5File:
     headers: dict[str, Any]
     images: dict[str, Image]
     volumes: list[Volume]
@@ -682,8 +675,8 @@ class ARH5File(FVFile):
             npts = volumes[0]._zreader.shape[-1]
         else:
             # self.scandown = bool(self.notes["FMapScanDown"])
-            worker = ForceMapWorker(h5data)
-            npts = worker.npts
+            volumes.append(ARH5ForceMapVolume(h5data))
+            npts = volumes[0].npts
         t_step = 1 / rate / npts
         return cls(notes, images, volumes, k, defl_sens, t_step, scansize)
 
@@ -955,7 +948,7 @@ class ARDFVdata:
 
 
 @attrs.frozen
-class ARDFImage(Image):
+class ARDFImage:
     data: mmap
     ibox_offset: int
     name: str
@@ -1021,7 +1014,7 @@ class ARDFImage(Image):
 
 
 @attrs.frozen
-class ARDFFFMReader(FVReader):
+class ARDFFFMReader:
     data: mmap  # keep checking our mmap is open so array_view cannot segfault
     array_view: np.ndarray = attrs.field(repr=False)
     array_offset: int  # hard to recover from views
@@ -1127,7 +1120,7 @@ class ARDFFFMReader(FVReader):
 
 
 @attrs.frozen
-class ARDFForceMapReader(FVReader):
+class ARDFForceMapReader:
     data: mmap
     vtoc: ARDFVolumeTableOfContents
     lines: int
@@ -1253,13 +1246,13 @@ class ARDFForceMapReader(FVReader):
 
 
 @attrs.frozen
-class ARDFVolume(Volume):
+class ARDFVolume:
     volm_offset: int
     name: str
     shape: Index
     step_info: StepInfo
     xdef: ARDFXdef
-    _reader: FVReader
+    _reader: ARDFForceMapReader | ARDFFFMReader
     _struct = struct.Struct("<LL24sddd32s32s32s32sQ")
 
     @classmethod
@@ -1425,7 +1418,7 @@ class ARDFFile:
 
 
 @attrs.define
-class BrukerImage(Image):
+class BrukerImage:
     data: mmap
     name: str
     offset: int
@@ -1613,7 +1606,7 @@ class QNMZReader:
 
 
 @attrs.frozen
-class BrukerVolume(Volume):
+class BrukerVolume:
     name: str
     shape: Index
     step_info: StepInfo
@@ -1684,7 +1677,7 @@ class BrukerVolume(Volume):
 
 
 @attrs.define
-class NanoscopeFile(FVFile):
+class NanoscopeFile:
     headers: dict[str, Any] = attrs.field(
         repr=lambda x: f"<dict with {len(x)} entries>"
     )
