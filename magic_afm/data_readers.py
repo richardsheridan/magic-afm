@@ -935,15 +935,16 @@ class ARDFVdata:
         return self.array_offset + self.nfloats * 4
 
     def get_ndarray(self):
-        return (
-            np.ndarray(
-                shape=self.nfloats,
-                dtype="<f4",
-                buffer=self.data,
-                offset=self.array_offset,
+        with memoryview(self.data):  # assert data is open, and hold it open
+            return (
+                np.ndarray(
+                    shape=self.nfloats,
+                    dtype="<f4",
+                    buffer=self.data,
+                    offset=self.array_offset,
+                )
+                * NANOMETER_UNIT_CONVERSION
             )
-            * NANOMETER_UNIT_CONVERSION
-        )
 
 
 @attrs.frozen
@@ -996,13 +997,14 @@ class ARDFImage:
         )  # TODO: invert lines? it's just a negative sign on stride
         points = (stride - 16) // 4  # less IDAT header
         # elide image data validation and map into an array directly
-        arr = np.ndarray(
-            shape=(lines, points),
-            dtype="<f4",
-            buffer=self.data,
-            offset=data_offset,
-            strides=(stride, 4),
-        ).astype("f4")
+        with memoryview(self.data):  # assert data is open, and hold it open
+            arr = np.ndarray(
+                shape=(lines, points),
+                dtype="<f4",
+                buffer=self.data,
+                offset=data_offset,
+                strides=(stride, 4),
+            ).astype("f4")
         gami_header = ARDFHeader.unpack(
             ibox_header.data, ibox_header.offset + ibox_size
         )
@@ -1077,15 +1079,9 @@ class ARDFFFMReader:
 
     def get_curve(self, r, c):
         """Efficiently get a specific curve from disk."""
-        assert not self.data.closed
-        return (
-            self.array_view[
-                r,
-                c,
-                self.channels,
-            ]
-            * NANOMETER_UNIT_CONVERSION
-        ).reshape((len(self.channels), 2, -1))
+        with memoryview(self.data):  # assert data is open, and hold it open
+            x = self.array_view[r, c, self.channels]  # advanced indexing copies
+        return x.reshape((len(self.channels), 2, -1)) * NANOMETER_UNIT_CONVERSION
 
     def iter_indices(self) -> Iterable[Index]:
         """Iterate over force curve indices in on-disk order"""
@@ -1109,9 +1105,9 @@ class ARDFFFMReader:
 
     def get_all_curves(self) -> ZDArrays:
         """Eagerly load all curves into memory."""
-        assert not self.data.closed
-        # advanced indexing triggers a copy
-        loaded_data = self.array_view[:, :, self.channels, :]
+        with memoryview(self.data):  # assert data is open, and hold it open
+            # advanced indexing triggers a copy
+            loaded_data = self.array_view[:, :, self.channels, :]
         # avoid a second copy with inplace op
         loaded_data *= NANOMETER_UNIT_CONVERSION
         # reshape assuming equal points on extend and retract
@@ -1462,15 +1458,15 @@ class BrukerImage:
         )
 
     def get_image(self) -> np.ndarray:
-        assert not self.data.closed
-        z_ints = np.ndarray(
-            shape=self.shape,
-            dtype=f"<i{self.bpp}",
-            buffer=self.data,
-            offset=self.offset,
-        )
-        z_floats = np.zeros_like(z_ints, dtype=np.float32)
-        z_floats += z_ints
+        z_floats = np.zeros(self.shape, dtype=np.float32)
+        with memoryview(self.data):  # assert data is open, and hold it open
+            z_ints = np.ndarray(
+                shape=self.shape,
+                dtype=f"<i{self.bpp}",
+                buffer=self.data,
+                offset=self.offset,
+            )
+            z_floats += z_ints
         z_floats *= self.unit_scale
         z_floats += self.unit_offset
         return z_floats
@@ -1514,9 +1510,9 @@ class FFVReader:
         return cls(data, name, ints, scale, split)
 
     def get_curve(self, r, c):
-        assert not self.data.closed
+        with memoryview(self.data):  # assert data is open, and hold it open
+            f = self.ints[r, c] * self.scale
         s = self.split
-        f = self.ints[r, c] * self.scale
         return f[s - 1 :: -1], f[s:]
 
 
@@ -1564,8 +1560,8 @@ class QNMDReader:
         return cls(data, name, d_ints, d_scale, sync_dist)
 
     def get_curve(self, r, c):
-        assert not self.data.closed
-        d = self.ints[r, c] * self.scale
+        with memoryview(self.data):  # assert data is open, and hold it open
+            d = self.ints[r, c] * self.scale
         s = len(d) // 2
         d[:s] = d[s - 1 :: -1]
         # remove blip
