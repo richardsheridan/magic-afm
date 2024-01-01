@@ -1193,14 +1193,13 @@ async def force_volume_task(
                 async with trio.open_nursery() as pipeline_nursery:
                     force_curve_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
-                        trio_parallel.run_sync,
+                        trio.to_thread.run_sync,
                         partial(
-                            calculation.load_force_curve,
-                            opened_fvol,
-                            options.fit_mode,
-                            options.k,
+                            calculation.process_force_curve,
+                            k=options.k,
+                            fit_mode=options.fit_mode,
                         ),
-                        opened_fvol,  # np.ndindex(img_shape),
+                        opened_fvol,
                         chunksize * 8,
                     )
                     d = attrs.asdict(options)

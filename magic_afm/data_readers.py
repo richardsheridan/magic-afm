@@ -23,7 +23,6 @@ asyncifies the worker's disk reads with threads, although this is not a rule.
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import pathlib
 import struct
-import threading
 from collections.abc import Collection, Iterable
 from functools import partial
 from mmap import mmap
@@ -116,17 +115,6 @@ class ForceVolumeParams:
 ###############################################
 ################## Helpers ####################
 ###############################################
-CACHED_OPEN_PATHS = {}
-
-
-def eventually_evict_path(path):
-    path_lock = CACHED_OPEN_PATHS[path][-1]
-    while path_lock.acquire(timeout=10.0):
-        # someone reset our countdown
-        pass
-    # time's up, kick it out
-    del CACHED_OPEN_PATHS[path]
-    return
 
 
 def open_h5(path):
@@ -386,47 +374,8 @@ class AsyncFVFile:
             self._image_cache[image_name] = image
         return image
 
-    def __getstate__(self):
-        return (
-            self.path,
-            type(self.fvfile),
-            self.k,
-            self.defl_sens,
-            self.trace,
-            self.sync_dist,
-        )
-
-    def __setstate__(self, state):
-        path, fvfile_cls, k, defl_sens, trace, sync_dist = state
-        try:
-            fvfile, path_lock = CACHED_OPEN_PATHS[path]
-        except KeyError:
-            if path.suffix == ".h5":
-                data = open_h5(path)
-            else:
-                data = mmap_path_read_only(path)
-            fvfile = fvfile_cls.parse(data)
-            path_lock = threading.Lock()
-            path_lock.acquire()
-            CACHED_OPEN_PATHS[path] = fvfile, path_lock
-            threading.Thread(
-                target=eventually_evict_path, args=(path,), daemon=True
-            ).start()
-        else:
-            # reset thread countdown
-            try:
-                path_lock.release()
-            except RuntimeError:
-                pass  # no problem if unreleased
-        self.path = path
-        self.fvfile = fvfile
-        self.k = k
-        self.defl_sens = defl_sens
-        self.trace = trace
-        self.sync_dist = sync_dist
-
     def __iter__(self):
-        return self.fvfile.volumes[0].iter_indices()
+        return self.fvfile.volumes[0].iter_curves()
 
 
 @attrs.frozen
@@ -482,17 +431,8 @@ class DemoForceVolumeFile(AsyncFVFile):
         return np.zeros((64, 64), dtype=np.float32)
 
     def __iter__(self):
-        return np.ndindex((64, 64))
-
-    def __getstate__(self):
-        # noinspection PyTypeChecker
-        d = attrs.asdict(self)
-        assert "k" in d
-        return d
-
-    def __setstate__(self, state):
-        for x in state:
-            setattr(self, x, state[x])
+        for r, c in np.ndindex((64, 64)):
+            yield (r, c), self.get_curve(r, c)
 
 
 ###############################################

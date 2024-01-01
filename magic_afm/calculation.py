@@ -963,11 +963,11 @@ def nice_workers():
 
 def load_force_curve(opened_fvol, fit_mode, k, rc):
     x = opened_fvol.get_curve(*rc)
-    return process_force_curve((x, rc), fit_mode, k)
+    return process_force_curve((rc, x), fit_mode, k)
 
 
 def process_force_curve(x, fit_mode, k):
-    (zxr, dxr), rc = x
+    rc, (zxr, dxr) = x
     npts = sum(map(len, zxr))
     if npts > RESAMPLE_NPTS:
         split = len(zxr[0]) * RESAMPLE_NPTS // npts
