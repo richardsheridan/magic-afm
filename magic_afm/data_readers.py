@@ -1633,6 +1633,11 @@ class NanoscopeFile:
 
     @classmethod
     def parse(cls, data: mmap):
+        # Check for magic string indicating nanoscope
+        magic = b"\\*Force file list\r\n"
+        start = data[: len(magic)]
+        if not start == magic:
+            raise ValueError("Not a nanoscope file.", start)
         # End of header is demarcated by a SUB byte (26 = 0x1A)
         # Longest header so far was 80 kB,
         # stop there to avoid searching gigabytes before fail
