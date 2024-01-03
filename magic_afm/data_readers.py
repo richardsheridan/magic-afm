@@ -62,6 +62,7 @@ StepInfo: TypeAlias = tuple[tuple[float, str], ...]
 
 class Image(Protocol):
     name: str
+    shape: Index
 
     def get_image(self) -> np.ndarray:
         """Get the image from disk."""
@@ -525,10 +526,11 @@ class ARH5ForceMapVolume:
 class ARH5Image:
     data: dict
     name: str
+    shape: Index
 
     def get_image(self) -> np.ndarray:
         """Get the image from disk."""
-        return self.data[self.name][:]
+        return self.data[:]
 
 
 @attrs.frozen
@@ -570,7 +572,10 @@ class ARH5File:
     @classmethod
     def parse(cls, h5data):
         notes = parse_ar_note(h5data.attrs["Note"].splitlines())
-        images = {name: ARH5Image(h5data["Image"], name) for name in h5data["Image"]}
+        images = {
+            name: ARH5Image(img, name, img.shape)
+            for name, img in h5data["Image"].items()
+        }
 
         k = float(notes["SpringConstant"])
         scansize = (
@@ -892,6 +897,7 @@ class ARDFImage:
     data: mmap
     ibox_offset: int
     name: str
+    shape: Index
     units: str
     step_info: StepInfo
     _struct = struct.Struct("<LLQQdd32s32s32s32s")
@@ -922,6 +928,7 @@ class ARDFImage:
             imag_header.data,
             idef_header.offset + idef_header.size,
             name,
+            (points, lines),
             units,
             ((x_step, x_unit), (y_step, y_unit)),
         )
@@ -934,8 +941,9 @@ class ARDFImage:
         data_offset = ibox_header.offset + ibox_header.size + 16  # past IDAT header
         ibox_size, lines, stride = TOC_STRUCT.unpack_from(
             ibox_header.data, ibox_header.offset + 16
-        )  # TODO: invert lines? it's just a negative sign on stride
+        )
         points = (stride - 16) // 4  # less IDAT header
+        assert (lines, points) == self.shape
         # elide image data validation and map into an array directly
         with memoryview(self.data):  # assert data is open, and hold it open
             arr = np.ndarray(
