@@ -1,10 +1,11 @@
 """Magic AFM Data Readers
 
 This module abstracts the different file types that this package supports.
-Generally, they have the structure of a BaseForceVolumeFile subclass that has-a
-worker class. The File class opens file objects and parses metadata, while
-the worker class does the actual reads from the disk. Generally, the File class
-asyncifies the worker's disk reads with threads, although this is not a rule.
+Generally, they have the structure of a FVFile that has a dict of Images
+and a list of Volumes. Only minimal metadata is read from the storage until
+one of the get_* methods is called. FVFiles are constructed via a `parse`
+classmethod that takes an opened mmap or h5py.File. It's your responsibility
+to ensure that it stays open as long as you intend to use the FVFile.
 """
 
 # Copyright (C) Richard J. Sheridan
