@@ -1169,14 +1169,15 @@ class ARDFForceMapReader:
         for vset in self.traverse_vsets(int(self.vtoc.pointers[0])):
             if vset.vtype != self.vtype:
                 continue
+            x = vdats[vset.line, vset.point] = [None, None]
             for vdat in self.traverse_vdats(vset.offset + vset.size):
-                x = vdats[vset.line, vset.point] = [None, None]
                 if vdat.channel == self.channels["ZSnsr"][0]:
                     x[0] = vdat  # zvdat
                 elif vdat.channel == self.channels["Defl"][0]:
                     x[1] = vdat  # dvdat
                 minext = min(minext, vdat.seg_offsets[1])
-        del vset, vdat
+            assert None not in x, f"missing vdat channel: {x}, {self.channels}"
+        del vset, vdat, x
         minfloats = 2 * minext
         x = np.empty((self.lines, self.points, 2, minfloats), dtype=np.float32)
         for (r, c), (zvdat, dvdat) in vdats.items():
