@@ -361,7 +361,7 @@ class AsyncFVFile:
         self._units_map[image_name] = units
 
     def get_curve(self, r, c):
-        return self.fvfile.volumes[0].get_curve(r, c)
+        return self.fvfile.volumes[not self.trace].get_curve(r, c)
 
     async def get_image(self, image_name):
         if image_name in self._image_cache:
@@ -375,13 +375,14 @@ class AsyncFVFile:
         return image
 
     def __iter__(self):
-        return self.fvfile.volumes[0].iter_curves()
+        return self.fvfile.volumes[not self.trace].iter_curves()
 
 
 @frozen
 class DemoFVFile:
     scansize: object = 100, 100
     t_step: object = 5e-6
+    volumes: tuple = (None, None)
 
 
 @mutable

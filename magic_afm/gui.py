@@ -668,9 +668,8 @@ def unbind_mousewheel(widget_with_bind):
 
 
 class ForceVolumeTkDisplay:
-    def __init__(
-        self, root, name, initial_values: data_readers.ForceVolumeParams, **kwargs
-    ):
+    def __init__(self, root, name, opened_fvfile: data_readers.AsyncFVFile, **kwargs):
+        initial_values = opened_fvfile.parameters
         self._traces: list[tuple[tk.Variable, str]] = []
         self._nursery = None
         self._prev_defl_sens = 1.0
@@ -753,7 +752,32 @@ class ForceVolumeTkDisplay:
         manipulate_menu.pack(fill="x")
         manipulate_labelframe.pack(fill="x")
 
-        image_opts_frame.grid(row=1, column=0, rowspan=2)
+        image_opts_frame.grid(row=2, column=0, rowspan=2)
+        data_select_frame = ttk.Labelframe(
+            self.options_frame, text="Select data source"
+        )
+        self.data_select_intvar = tk.IntVar(data_select_frame, value=True)
+        # XXX this stateful connection seems real bad
+        self.opened_fvfile = opened_fvfile
+        self._add_trace(self.data_select_intvar, self.change_data_select_callback)
+        data_trace_button = ttk.Radiobutton(
+            data_select_frame,
+            text="Trace",
+            value=True,
+            variable=self.data_select_intvar,
+            padding=4,
+        )
+        data_trace_button.pack(side="left")
+        disp_retrace_button = ttk.Radiobutton(
+            data_select_frame,
+            text="Retrace",
+            value=False,
+            variable=self.data_select_intvar,
+            padding=4,
+            state="disabled" if len(opened_fvfile.fvfile.volumes) <2 else "enabled",
+        )
+        disp_retrace_button.pack(side="left")
+        data_select_frame.grid(row=1, column=0)
 
         disp_labelframe = ttk.Labelframe(self.options_frame, text="Force curve display")
         self.disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
@@ -1116,6 +1140,11 @@ class ForceVolumeTkDisplay:
     def change_disp_kind_callback(self, *args):
         self.replot_tight()
 
+    def change_data_select_callback(self, *args):
+        # XXX this stateful connection seems real bad
+        self.opened_fvfile.trace = bool(self.data_select_intvar.get())
+        self.replot()
+
 
 async def force_volume_task(
     display: ForceVolumeTkDisplay, opened_fvol: data_readers.AsyncFVFile
@@ -1190,6 +1219,7 @@ async def force_volume_task(
                     display.canvas.restore_region(bg)
                     return True
 
+                trace = opened_fvol.trace  # capture trace just before opening iterator
                 async with trio.open_nursery() as pipeline_nursery:
                     force_curve_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
@@ -1233,6 +1263,7 @@ async def force_volume_task(
         combobox_values = list(display.image_name_menu.cget("values"))
 
         # Actually write out results to external world
+        trace = "Trace" if trace else "Retrace"
         if options.fit_mode == calculation.FitMode.EXTEND:
             extret = "Ext"
         elif options.fit_mode == calculation.FitMode.RETRACT:
@@ -1240,13 +1271,14 @@ async def force_volume_task(
         else:
             extret = "Both"
         for name in calculation.PROPERTY_UNITS_DICT:
+            newname = "Calc" + extret + name + trace
             opened_fvol.add_image(
-                image_name="Calc" + extret + name,
+                image_name=newname,
                 units=calculation.PROPERTY_UNITS_DICT[name],
                 image=property_map[name].squeeze(),
             )
-            if "Calc" + extret + name not in combobox_values:
-                combobox_values.append("Calc" + extret + name)
+            if newname not in combobox_values:
+                combobox_values.append(newname)
 
         display.reset_image_name_menu(combobox_values)
 
@@ -1856,7 +1888,7 @@ async def open_one(root, path):
     try:
         fvfile = await trio.to_thread.run_sync(fvfile_cls.parse, open_thing)
         opened_fv = data_readers.AsyncFVFile.from_fvfile(path, fvfile)
-        display = ForceVolumeTkDisplay(root, path.name, opened_fv.parameters)
+        display = ForceVolumeTkDisplay(root, path.name, opened_fv)
         await force_volume_task(display, opened_fv)
         display.destroy()
     finally:
@@ -1866,7 +1898,7 @@ async def open_one(root, path):
 
 async def demo_task(root):
     opened_fv = data_readers.DemoForceVolumeFile()
-    display = ForceVolumeTkDisplay(root, "Demo", opened_fv.parameters)
+    display = ForceVolumeTkDisplay(root, "Demo", opened_fv)
     await force_volume_task(display, opened_fv)
     display.destroy()
 
@@ -2066,6 +2098,7 @@ def main():
         pass
     except BaseException:
         import datetime, traceback
+
         date = datetime.datetime.now().isoformat().replace(":", ";")
         with open(f"traceback-{date}.dump", "w", encoding="utf8") as file:
             traceback.print_exc(file=file)
