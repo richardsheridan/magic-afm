@@ -36,9 +36,10 @@ except ImportError:
     STARTUPINFO = lambda *a, **kw: None
     STARTF_USESHOWWINDOW = None
 
-import attrs
 import numpy as np
 import trio
+
+from attrs import mutable, frozen, field
 
 from . import calculation
 
@@ -107,7 +108,7 @@ class FVFile(Protocol):
         ...
 
 
-@attrs.frozen
+@frozen
 class ForceVolumeParams:
     k: float
     defl_sens: float
@@ -289,7 +290,7 @@ async def convert_ardf(
 ###############################################
 
 
-@attrs.define
+@mutable
 class AsyncFVFile:
     """Consistent interface across filetypes for Magic AFM GUI
 
@@ -322,7 +323,7 @@ class AsyncFVFile:
     defl_sens: float
     sync_dist: int = 0
     trace: bool = True
-    _image_cache: dict[str, np.ndarray] = attrs.field(
+    _image_cache: dict[str, np.ndarray] = field(
         factory=dict, init=False, repr=False
     )
 
@@ -380,22 +381,22 @@ class AsyncFVFile:
         return self.fvfile.volumes[0].iter_curves()
 
 
-@attrs.frozen
+@frozen
 class DemoFVFile:
     scansize: object = 100, 100
     t_step: object = 5e-6
 
 
-@attrs.define(slots=False)
+@mutable(slots=False)
 class DemoForceVolumeFile(AsyncFVFile):
-    k: float = attrs.field(default=10.0)
-    defl_sens: float = attrs.field(default=5.0)
-    sync_dist: int = attrs.field(default=0)
-    delta: np.ndarray = attrs.field(
+    k: float = field(default=10.0)
+    defl_sens: float = field(default=5.0)
+    sync_dist: int = field(default=0)
+    delta: np.ndarray = field(
         default=-15 * (np.cos(np.linspace(0, np.pi * 2, 1000, endpoint=False)) + 0.5)
     )
-    path: pathlib.Path = attrs.field(default=pathlib.Path("Demo"))
-    fvfile: DemoFVFile = attrs.field(default=DemoFVFile())
+    path: pathlib.Path = field(default=pathlib.Path("Demo"))
+    fvfile: DemoFVFile = field(default=DemoFVFile())
 
     @property
     def image_names(self):
@@ -523,7 +524,7 @@ class ARH5ForceMapVolume:
         return x.reshape(x.shape[:-1] + (2, -1))
 
 
-@attrs.frozen
+@frozen
 class ARH5Image:
     data: dict
     name: str
@@ -534,7 +535,7 @@ class ARH5Image:
         return self.data[:]
 
 
-@attrs.frozen
+@frozen
 class ARH5FFMVolume:
     name: str
     shape: Index
@@ -560,7 +561,7 @@ class ARH5FFMVolume:
         return z, d
 
 
-@attrs.frozen
+@frozen
 class ARH5File:
     headers: dict[str, Any]
     images: dict[str, Image]
@@ -626,14 +627,14 @@ class ARH5File:
         return cls(notes, images, volumes, k, defl_sens, t_step, scansize)
 
 
-@attrs.frozen
+@frozen
 class ARDFHeader:
     data: mmap
     offset: int
-    crc: int = attrs.field(repr=hex)
+    crc: int = field(repr=hex)
     size: int
     name: bytes
-    flags: int = attrs.field(repr=hex)
+    flags: int = field(repr=hex)
     _struct = struct.Struct("<LL4sL")
 
     @classmethod
@@ -654,7 +655,7 @@ class ARDFHeader:
         return True
 
 
-@attrs.frozen
+@frozen
 class ARDFTableOfContents:
     data: mmap
     offset: int
@@ -685,7 +686,7 @@ class ARDFTableOfContents:
         return cls(data, offset, size, entries)
 
 
-@attrs.frozen
+@frozen
 class ARDFTextTableOfContents:
     data: mmap
     offset: int
@@ -732,7 +733,7 @@ class ARDFTextTableOfContents:
         return text.replace(b"\r", b"\n").decode("windows-1252")
 
 
-@attrs.frozen
+@frozen
 class ARDFVolumeTableOfContents:
     offset: int
     size: int
@@ -777,7 +778,7 @@ class ARDFVolumeTableOfContents:
         )
 
 
-@attrs.frozen
+@frozen
 class ARDFVchan:
     name: str
     unit: str
@@ -792,7 +793,7 @@ class ARDFVchan:
         return cls(decode_cstring(name), decode_cstring(unit))
 
 
-@attrs.frozen
+@frozen
 class ARDFXdef:
     offset: int
     size: int
@@ -815,7 +816,7 @@ class ARDFXdef:
         return cls(header.offset, header.size, xdef)
 
 
-@attrs.frozen
+@frozen
 class ARDFVset:
     data: mmap
     offset: int
@@ -828,7 +829,7 @@ class ARDFVset:
     # FFM with just trace or just retrace shows 0b101 = 5 everywhere.
     # FFM storing both shows 0b1010 = 10 for trace
     # and 0b1011 = 11 for retrace.
-    vtype: int = attrs.field(repr=bin)
+    vtype: int = field(repr=bin)
     prev_vset_offset: int
     next_vset_offset: int
     _struct = struct.Struct("<LLLLQQ")
@@ -844,7 +845,7 @@ class ARDFVset:
         return cls(data, offset, size, *cls._struct.unpack_from(data, offset + 16))
 
 
-@attrs.frozen
+@frozen
 class ARDFVdata:
     data: mmap
     offset: int
@@ -893,7 +894,7 @@ class ARDFVdata:
             )
 
 
-@attrs.frozen
+@frozen
 class ARDFImage:
     data: mmap
     ibox_offset: int
@@ -963,10 +964,10 @@ class ARDFImage:
         return arr
 
 
-@attrs.frozen
+@frozen
 class ARDFFFMReader:
     data: mmap  # keep checking our mmap is open so array_view cannot segfault
-    array_view: np.ndarray = attrs.field(repr=False)
+    array_view: np.ndarray = field(repr=False)
     array_offset: int  # hard to recover from views
     channels: list[int]  # [z, d]
     # seg_offsets is weird. you'd think it would contain the starting index
@@ -1063,7 +1064,7 @@ class ARDFFFMReader:
         return loaded_data.reshape(self.array_view.shape[:-1] + (2, -1))
 
 
-@attrs.frozen
+@frozen
 class ARDFForceMapReader:
     data: mmap
     vtoc: ARDFVolumeTableOfContents
@@ -1071,7 +1072,7 @@ class ARDFForceMapReader:
     points: int
     vtype: int
     channels: ChanMap
-    _seen_vsets: dict[Index, ARDFVset] = attrs.field(init=False, factory=dict)
+    _seen_vsets: dict[Index, ARDFVset] = field(init=False, factory=dict)
 
     @property
     def zname(self):
@@ -1190,7 +1191,7 @@ class ARDFForceMapReader:
         return x.reshape(x.shape[:-1] + (2, -1))
 
 
-@attrs.frozen
+@frozen
 class ARDFVolume:
     volm_offset: int
     name: str
@@ -1300,9 +1301,9 @@ class ARDFVolume:
         return self._reader.get_all_curves()
 
 
-@attrs.define
+@mutable
 class ARDFFile:
-    headers: dict[str, str] = attrs.field(
+    headers: dict[str, str] = field(
         repr=lambda x: f"<dict with {len(x)} entries>"
     )
     images: dict[str, Image]
@@ -1362,7 +1363,7 @@ class ARDFFile:
 ###############################################
 
 
-@attrs.define
+@mutable
 class BrukerImage:
     data: mmap
     name: str
@@ -1422,11 +1423,11 @@ class BrukerImage:
         return z_floats
 
 
-@attrs.frozen
+@frozen
 class FFVReader:
     data: mmap
     name: str
-    ints: np.ndarray = attrs.field(repr=False)
+    ints: np.ndarray = field(repr=False)
     scale: np.float32
     split: int
     _soft_scale_map = {
@@ -1466,11 +1467,11 @@ class FFVReader:
         return f[s - 1 :: -1], f[s:]
 
 
-@attrs.frozen
+@frozen
 class QNMDReader:
     data: mmap
     name: str
-    ints: np.ndarray = attrs.field(repr=False)
+    ints: np.ndarray = field(repr=False)
     scale: np.float32
     sync_dist: int
 
@@ -1521,11 +1522,11 @@ class QNMDReader:
         return d.reshape((2, -1))
 
 
-@attrs.frozen
+@frozen
 class QNMZReader:
     name: str
-    z_basis: np.ndarray = attrs.field(repr=False)
-    height_for_z: np.ndarray = attrs.field(repr=False)
+    z_basis: np.ndarray = field(repr=False)
+    height_for_z: np.ndarray = field(repr=False)
 
     @classmethod
     def parse(cls, header, d_reader: QNMDReader, height_for_z):
@@ -1550,7 +1551,7 @@ class QNMZReader:
         return z.reshape((2, -1))
 
 
-@attrs.frozen
+@frozen
 class BrukerVolume:
     name: str
     shape: Index
@@ -1621,9 +1622,9 @@ class BrukerVolume:
         return x
 
 
-@attrs.define
+@mutable
 class NanoscopeFile:
-    headers: dict[str, Any] = attrs.field(
+    headers: dict[str, Any] = field(
         repr=lambda x: f"<dict with {len(x)} entries>"
     )
     images: dict[str, Image]
