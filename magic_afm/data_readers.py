@@ -387,7 +387,7 @@ class DemoFVFile:
     t_step: object = 5e-6
 
 
-@mutable(slots=False)
+@mutable
 class DemoForceVolumeFile(AsyncFVFile):
     k: float = field(default=10.0)
     defl_sens: float = field(default=5.0)
@@ -405,14 +405,6 @@ class DemoForceVolumeFile(AsyncFVFile):
     @property
     def initial_image_name(self):
         return "Demo"
-
-    async def ainitialize(self):
-        await trio.sleep(0)
-        t = np.linspace(0, np.pi * 2, 1000, endpoint=False)
-        self.delta = -15 * (np.cos(t) + 0.5)
-
-    async def aclose(self):
-        pass
 
     async def get_force_curve(self, r, c):
         return self.get_curve(r, c)
