@@ -1401,7 +1401,9 @@ async def force_volume_task(
 
                 # Calculation phase
                 # Do a few long-running jobs, likely to be canceled
-                force_curve = await opened_fvol.get_force_curve(point.r, point.c)
+                force_curve = await trio.to_thread.run_sync(
+                    opened_fvol.get_curve, point.r, point.c
+                )
                 force_curve_data = await trio.to_thread.run_sync(
                     calculate_force_data,
                     *force_curve,

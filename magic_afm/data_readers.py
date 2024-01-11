@@ -360,9 +360,6 @@ class AsyncFVFile:
         image_name = strip_trace(image_name)
         self._units_map[image_name] = units
 
-    async def get_force_curve(self, r, c):
-        return await trio.to_thread.run_sync(self.get_curve, r, c)
-
     def get_curve(self, r, c):
         return self.fvfile.volumes[0].get_curve(r, c)
 
