@@ -173,18 +173,6 @@ def parse_nanoscope_header(header_lines: Iterable[str]):
     if (not header) or ("" in header):
         raise ValueError("File is empty or not a Bruker data file")
 
-    # link headers from [section][index][key] to [Image/FV][Image Data name][key]
-    header["Image"] = {}
-    for entry in header["Ciao image list"]:
-        name = entry["@2:Image Data"].split('"')[1]
-        # assert name not in header["Image"]  # assume data is redundant for now
-        header["Image"][name] = entry
-    header["FV"] = {}
-    for entry in header["Ciao force image list"]:
-        name = entry["@4:Image Data"].split('"')[1]
-        # assert name not in header["FV"]  # assume data is redundant for now
-        header["FV"][name] = entry
-
     return header
 
 
@@ -1365,9 +1353,7 @@ class BrukerImage:
     shape: Index
 
     @classmethod
-    def parse_image(cls, data, header, name):
-        h = header["Image"][name]
-
+    def parse_image(cls, data, header, h, name):
         value = h["@2:Z scale"]
         bpp = bruker_bpp_fix(
             h["Bytes/pixel"], header["Force file list"][0]["Version"].strip()
@@ -1656,8 +1642,9 @@ class NanoscopeFile:
         shape = slowpx, fastpx
 
         images = {}
-        for name in header["Image"]:
-            images[name] = BrukerImage.parse_image(data, header, name)
+        for entry in header["Ciao image list"]:
+            name = entry["@2:Image Data"].split('"')[1]
+            images[name] = BrukerImage.parse_image(data, header, entry, name)
         # deflection and height data are separate "force images"
         # we've got to pair them up
         heights = []
