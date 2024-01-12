@@ -1338,8 +1338,7 @@ class ARDFFile:
 ###############################################
 
 
-@mutable
-class BrukerImage:
+@frozen
 class NanoscopeImage:
     data: mmap
     name: str
@@ -1596,7 +1595,7 @@ class NanoscopeVolume:
         return x
 
 
-@mutable
+@frozen
 class NanoscopeFile:
     headers: dict[str, Any] = field(
         repr=lambda x: f"<dict with {len(x)} entries>"
