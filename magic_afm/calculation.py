@@ -913,6 +913,8 @@ def calc_properties_imap(delta_f_rc, **kwargs):
     k = kwargs.pop("k")
     eps = 1e-3
     beta_perturb, *_ = fitfun(*perturb_k(delta, force, eps, k), p0=beta, **kwargs)
+    if np.any(np.isnan(beta_perturb)):
+        return rc, None
     ind_mod_perturb = beta_perturb[0]
     ind_mod_sens_k = (ind_mod_perturb - ind_mod) / ind_mod / eps
 
