@@ -389,7 +389,7 @@ class ARH5FFMVolume:
 
 @frozen
 class ARH5File:
-    headers: dict[str, Any]
+    headers: dict[str, Any] = field(repr=lambda x: f"<dict with {len(x)} entries>")
     images: dict[str, Image]
     volumes: list[Volume]
     k: float
