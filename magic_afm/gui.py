@@ -59,7 +59,6 @@ from math import inf
 from tkinter import ttk
 from typing import Callable, ClassVar, Optional, Literal
 
-import attrs
 import imageio
 import matplotlib
 import numpy as np
@@ -67,6 +66,7 @@ import outcome
 import trio
 import trio_parallel
 
+from attrs import field, mutable, frozen, asdict
 from matplotlib.axes import Axes
 from matplotlib.backend_bases import MouseButton
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -136,7 +136,7 @@ class DispKind(enum.IntEnum):
     δf = enum.auto()
 
 
-@attrs.frozen
+@frozen
 class ForceCurveOptions:
     fit_mode: calculation.FitMode
     disp_kind: DispKind
@@ -147,7 +147,7 @@ class ForceCurveOptions:
     tau: float
 
 
-@attrs.frozen
+@frozen
 class ForceCurveData:
     zxr: tuple[np.ndarray, np.ndarray]
     dxr: tuple[np.ndarray, np.ndarray]
@@ -169,7 +169,7 @@ class ForceCurveData:
     sse: Optional[np.ndarray] = None
 
 
-@attrs.frozen
+@frozen
 class ImagePoint:
     r: int
     c: int
@@ -223,7 +223,7 @@ class ImagePoint:
         return cls(r, c, x, y)
 
 
-@attrs.frozen
+@frozen
 class ImageStats:
     min: float
     q01: float
@@ -235,6 +235,153 @@ class ImageStats:
     def from_array(cls, array):
         # noinspection PyArgumentList
         return cls(*np.nanquantile(array, [0, 0.01, 0.5, 0.99, 1]).tolist())
+
+
+@frozen
+class ForceVolumeParams:
+    k: float
+    defl_sens: float
+    sync_dist: int
+
+
+@mutable
+class AsyncFVFile:
+    """Consistent interface across filetypes for Magic AFM GUI"""
+
+    _units_map = {
+        "Adhesion": "N",
+        "Height": "m",
+        "Height Sensor": "m",
+        "IndentationHertz": "m",
+        "YoungsHertz": "Pa",
+        "YoungsJKR": "Pa",
+        "YoungsDMT": "Pa",
+        "ZSensor": "m",
+        "MapAdhesion": "N",
+        "MapHeight": "m",
+        "Force": "N",
+    }
+    _default_heightmap_names = {
+        "MapHeight",
+        "ZSensorTrace",
+        "ZSensorRetrace",
+        "Height Sensor",
+        "Height",
+    }
+
+    path: pathlib.Path  # this is just for pickling now... maybe don't pickle?
+    fvfile: data_readers.FVFile
+    k: float
+    defl_sens: float
+    sync_dist: int = 0
+    trace: bool = True
+    _image_cache: dict[str, np.ndarray] = field(factory=dict, init=False, repr=False)
+
+    @classmethod
+    def from_fvfile(cls, path, fvfile: data_readers.FVFile):
+        return cls(path, fvfile, fvfile.k, fvfile.defl_sens)
+
+    @property
+    def image_names(self):
+        return self._image_cache.keys() | self.fvfile.images.keys()
+
+    @property
+    def initial_image_name(self):
+        for name in self.fvfile.images.keys() & self._default_heightmap_names:
+            return name
+        else:
+            return None
+
+    @property
+    def parameters(self):
+        return ForceVolumeParams(
+            k=self.k,
+            defl_sens=self.defl_sens,
+            sync_dist=self.sync_dist,
+        )
+
+    @staticmethod
+    def strip_trace(image_name):
+        for suffix in ("retrace", "Retrace", "trace", "Trace"):
+            image_name = image_name.removesuffix(suffix)
+        return image_name
+
+    def get_image_units(self, image_name):
+        # TODO: check FVFile for units
+        image_name = self.strip_trace(image_name)
+        return self._units_map.get(image_name, "V")
+
+    def add_image(self, image_name, units, image):
+        self._image_cache[image_name] = image
+        image_name = self.strip_trace(image_name)
+        self._units_map[image_name] = units
+
+    def get_curve(self, r, c):
+        return self.fvfile.volumes[not self.trace].get_curve(r, c)
+
+    async def get_image(self, image_name):
+        if image_name in self._image_cache:
+            await trio.sleep(0)
+            image = self._image_cache[image_name]
+        else:
+            image = await trio.to_thread.run_sync(
+                self.fvfile.images[image_name].get_image
+            )
+            self._image_cache[image_name] = image
+        return image
+
+    def __iter__(self):
+        return self.fvfile.volumes[not self.trace].iter_curves()
+
+
+@frozen
+class DemoFVFile:
+    scansize: object = 100, 100
+    t_step: object = 5e-6
+    volumes: tuple = (None, None)
+
+
+@mutable
+class DemoForceVolumeFile(AsyncFVFile):
+    k: float = field(default=10.0)
+    defl_sens: float = field(default=5.0)
+    sync_dist: int = field(default=0)
+    delta: np.ndarray = field(
+        default=-15 * (np.cos(np.linspace(0, np.pi * 2, 1000, endpoint=False)) + 0.5)
+    )
+    path: pathlib.Path = field(default=pathlib.Path("Demo"))
+    fvfile: DemoFVFile = field(default=DemoFVFile())
+
+    @property
+    def image_names(self):
+        return ("Demo",)
+
+    @property
+    def initial_image_name(self):
+        return "Demo"
+
+    async def get_force_curve(self, r, c):
+        return self.get_curve(r, c)
+
+    def get_curve(self, r, c):
+        gen = np.random.default_rng(seed=(int(r), int(c)))
+        parms = (1, 10, 0.1, -2, 1, 0, 0, 1)
+        deltaext = self.delta[: self.delta.size // 2]
+        deltaret = self.delta[self.delta.size // 2 :]
+        fext = calculation.force_curve(calculation.red_extend, deltaext, *parms)
+        fret = calculation.force_curve(calculation.red_retract, deltaret, *parms)
+        dext = fext / self.k + gen.normal(scale=0.1, size=fext.size)
+        dret = fret / self.k + gen.normal(scale=0.1, size=fret.size)
+        zext = deltaext + dext + gen.normal(scale=0.01, size=fext.size)
+        zret = deltaret + dret + gen.normal(scale=0.01, size=fret.size)
+        return (zext, zret), (dext, dret)
+
+    async def get_image(self, image_name):
+        return np.zeros((64, 64), dtype=np.float32)
+
+    def __iter__(self):
+        for r, c in np.ndindex((64, 64)):
+            yield (r, c), self.get_curve(r, c)
 
 
 class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
@@ -668,7 +815,7 @@ def unbind_mousewheel(widget_with_bind):
 
 
 class ForceVolumeTkDisplay:
-    def __init__(self, root, name, opened_fvfile: data_readers.AsyncFVFile, **kwargs):
+    def __init__(self, root, name, opened_fvfile: AsyncFVFile, **kwargs):
         initial_values = opened_fvfile.parameters
         self._traces: list[tuple[tk.Variable, str]] = []
         self._nursery = None
@@ -1149,9 +1296,7 @@ class ForceVolumeTkDisplay:
         self.replot()
 
 
-async def force_volume_task(
-    display: ForceVolumeTkDisplay, opened_fvol: data_readers.AsyncFVFile
-):
+async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVFile):
     # plot_curve_event_response
     plot_curve_cancels_pending = set()
     img_artists = []
@@ -1233,7 +1378,7 @@ async def force_volume_task(
                         opened_fvol,
                         chunksize * 8,
                     )
-                    d = attrs.asdict(options)
+                    d = asdict(options)
                     del d["disp_kind"]
                     property_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
@@ -1781,7 +1926,7 @@ def calculate_force_data(zxr, dxr, t_step, options, cancel_poller=bool):
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
     cancel_poller()
-    optionsdict = attrs.asdict(options)
+    optionsdict = asdict(options)
     beta, beta_err, sse, calc_fun = calculation.fitfun(
         delta, f, **optionsdict, cancel_poller=cancel_poller, split=split
     )
@@ -1807,7 +1952,7 @@ def calculate_force_data(zxr, dxr, t_step, options, cancel_poller=bool):
             indentation,
             z_true_surface,
             mindelta,
-        ) = calculation.calc_def_ind_ztru(f, beta, **attrs.asdict(options), split=split)
+        ) = calculation.calc_def_ind_ztru(f, beta, **asdict(options), split=split)
     else:
         deflection, indentation, z_true_surface, mindelta = (
             np.nan,
@@ -1893,7 +2038,7 @@ async def open_one(root, path):
     open_thing = await trio.to_thread.run_sync(opener, path)
     try:
         fvfile = await trio.to_thread.run_sync(fvfile_cls.parse, open_thing)
-        opened_fv = data_readers.AsyncFVFile.from_fvfile(path, fvfile)
+        opened_fv = AsyncFVFile.from_fvfile(path, fvfile)
         display = ForceVolumeTkDisplay(root, path.name, opened_fv)
         await force_volume_task(display, opened_fv)
         display.destroy()
@@ -1903,7 +2048,7 @@ async def open_one(root, path):
 
 
 async def demo_task(root):
-    opened_fv = data_readers.DemoForceVolumeFile()
+    opened_fv = DemoForceVolumeFile()
     display = ForceVolumeTkDisplay(root, "Demo", opened_fv)
     await force_volume_task(display, opened_fv)
     display.destroy()

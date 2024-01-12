@@ -1,11 +1,14 @@
 """Magic AFM Data Readers
 
-This module abstracts the different file types that this package supports.
+This module has readers for file types that this package supports.
 Generally, they have the structure of a FVFile that has a dict of Images
 and a list of Volumes. Only minimal metadata is read from the storage until
 one of the get_* methods is called. FVFiles are constructed via a `parse`
 classmethod that takes an opened mmap or h5py.File. It's your responsibility
 to ensure that it stays open as long as you intend to use the FVFile.
+
+This module should not depend on other parts of the package and weird dependencies
+should be loaded lazily. (I'm looking at you h5py..)
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -22,7 +25,6 @@ to ensure that it stays open as long as you intend to use the FVFile.
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import pathlib
 import struct
 from collections.abc import Collection, Iterable
 from functools import partial
@@ -37,11 +39,8 @@ except ImportError:
     STARTF_USESHOWWINDOW = None
 
 import numpy as np
-import trio
 
-from attrs import mutable, frozen, field
-
-from . import calculation
+from attrs import frozen, field
 
 
 NANOMETER_UNIT_CONVERSION = (
@@ -106,13 +105,6 @@ class FVFile(Protocol):
     def parse(cls, data) -> "FVFile":
         # TODO: data should be data: Buffer after 3.12
         ...
-
-
-@frozen
-class ForceVolumeParams:
-    k: float
-    defl_sens: float
-    sync_dist: int
 
 
 ###############################################
@@ -193,18 +185,14 @@ def parse_ar_note(note: Iterable[str]):
     )
 
 
-def strip_trace(image_name):
-    for suffix in ("retrace", "Retrace", "trace", "Trace"):
-        image_name = image_name.removesuffix(suffix)
-    return image_name
-
-
 async def convert_ardf(
     ardf_path, *, h5file_path=None, conv_path="ARDFtoHDF5.exe", pbar=None
 ):
     """Turn an ARDF into a corresponding ARH5, returning the path.
 
     Requires converter executable available from Asylum Research"""
+    import trio
+
     ardf_path = trio.Path(ardf_path)
     if h5file_path is None:
         h5file_path = ardf_path.with_suffix(".h5")
@@ -245,6 +233,7 @@ async def convert_ardf(
                     pass
                 else:
                     pbar.update(n - pbar.n)
+
     if not await conv_path.is_file():
         raise FileNotFoundError(f"Could not locate converter at conv_path={conv_path}")
     try:
@@ -273,144 +262,6 @@ async def convert_ardf(
 ###############################################
 ################## FVFiles ####################
 ###############################################
-
-
-@mutable
-class AsyncFVFile:
-    """Consistent interface across filetypes for Magic AFM GUI
-
-    I would not recommend re-using this for an external application."""
-
-    _units_map = {
-        "Adhesion": "N",
-        "Height": "m",
-        "Height Sensor": "m",
-        "IndentationHertz": "m",
-        "YoungsHertz": "Pa",
-        "YoungsJKR": "Pa",
-        "YoungsDMT": "Pa",
-        "ZSensor": "m",
-        "MapAdhesion": "N",
-        "MapHeight": "m",
-        "Force": "N",
-    }
-    _default_heightmap_names = {
-        "MapHeight",
-        "ZSensorTrace",
-        "ZSensorRetrace",
-        "Height Sensor",
-        "Height",
-    }
-
-    path: pathlib.Path  # this is just for pickling now... maybe don't pickle?
-    fvfile: FVFile
-    k: float
-    defl_sens: float
-    sync_dist: int = 0
-    trace: bool = True
-    _image_cache: dict[str, np.ndarray] = field(
-        factory=dict, init=False, repr=False
-    )
-
-    @classmethod
-    def from_fvfile(cls, path, fvfile: FVFile):
-        return cls(path, fvfile, fvfile.k, fvfile.defl_sens)
-
-    @property
-    def image_names(self):
-        return self._image_cache.keys() | self.fvfile.images.keys()
-
-    @property
-    def initial_image_name(self):
-        for name in self.fvfile.images.keys() & self._default_heightmap_names:
-            return name
-        else:
-            return None
-
-    @property
-    def parameters(self):
-        return ForceVolumeParams(
-            k=self.k,
-            defl_sens=self.defl_sens,
-            sync_dist=self.sync_dist,
-        )
-
-    def get_image_units(self, image_name):
-        # TODO: check FVFile for units
-        image_name = strip_trace(image_name)
-        return self._units_map.get(image_name, "V")
-
-    def add_image(self, image_name, units, image):
-        self._image_cache[image_name] = image
-        image_name = strip_trace(image_name)
-        self._units_map[image_name] = units
-
-    def get_curve(self, r, c):
-        return self.fvfile.volumes[not self.trace].get_curve(r, c)
-
-    async def get_image(self, image_name):
-        if image_name in self._image_cache:
-            await trio.sleep(0)
-            image = self._image_cache[image_name]
-        else:
-            image = await trio.to_thread.run_sync(
-                self.fvfile.images[image_name].get_image
-            )
-            self._image_cache[image_name] = image
-        return image
-
-    def __iter__(self):
-        return self.fvfile.volumes[not self.trace].iter_curves()
-
-
-@frozen
-class DemoFVFile:
-    scansize: object = 100, 100
-    t_step: object = 5e-6
-    volumes: tuple = (None, None)
-
-
-@mutable
-class DemoForceVolumeFile(AsyncFVFile):
-    k: float = field(default=10.0)
-    defl_sens: float = field(default=5.0)
-    sync_dist: int = field(default=0)
-    delta: np.ndarray = field(
-        default=-15 * (np.cos(np.linspace(0, np.pi * 2, 1000, endpoint=False)) + 0.5)
-    )
-    path: pathlib.Path = field(default=pathlib.Path("Demo"))
-    fvfile: DemoFVFile = field(default=DemoFVFile())
-
-    @property
-    def image_names(self):
-        return ("Demo",)
-
-    @property
-    def initial_image_name(self):
-        return "Demo"
-
-    async def get_force_curve(self, r, c):
-        return self.get_curve(r, c)
-
-    def get_curve(self, r, c):
-        gen = np.random.default_rng(seed=(int(r), int(c)))
-        parms = (1, 10, 0.1, -2, 1, 0, 0, 1)
-        deltaext = self.delta[: self.delta.size // 2]
-        deltaret = self.delta[self.delta.size // 2 :]
-        fext = calculation.force_curve(calculation.red_extend, deltaext, *parms)
-        fret = calculation.force_curve(calculation.red_retract, deltaret, *parms)
-        dext = fext / self.k + gen.normal(scale=0.1, size=fext.size)
-        dret = fret / self.k + gen.normal(scale=0.1, size=fret.size)
-        zext = deltaext + dext + gen.normal(scale=0.01, size=fext.size)
-        zret = deltaret + dret + gen.normal(scale=0.01, size=fret.size)
-        return (zext, zret), (dext, dret)
-
-    async def get_image(self, image_name):
-        return np.zeros((64, 64), dtype=np.float32)
-
-    def __iter__(self):
-        for r, c in np.ndindex((64, 64)):
-            yield (r, c), self.get_curve(r, c)
 
 
 ###############################################
@@ -1278,9 +1129,7 @@ class ARDFVolume:
 
 @frozen
 class ARDFFile:
-    headers: dict[str, str] = field(
-        repr=lambda x: f"<dict with {len(x)} entries>"
-    )
+    headers: dict[str, str] = field(repr=lambda x: f"<dict with {len(x)} entries>")
     images: dict[str, Image]
     volumes: list[Volume]
     k: float
@@ -1597,9 +1446,7 @@ class NanoscopeVolume:
 
 @frozen
 class NanoscopeFile:
-    headers: dict[str, Any] = field(
-        repr=lambda x: f"<dict with {len(x)} entries>"
-    )
+    headers: dict[str, Any] = field(repr=lambda x: f"<dict with {len(x)} entries>")
     images: dict[str, Image]
     volumes: list[Volume]
     k: float
