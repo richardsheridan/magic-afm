@@ -1276,7 +1276,7 @@ class ARDFVolume:
         return self._reader.get_all_curves()
 
 
-@mutable
+@frozen
 class ARDFFile:
     headers: dict[str, str] = field(
         repr=lambda x: f"<dict with {len(x)} entries>"
@@ -1340,6 +1340,7 @@ class ARDFFile:
 
 @mutable
 class BrukerImage:
+class NanoscopeImage:
     data: mmap
     name: str
     offset: int
@@ -1525,7 +1526,7 @@ class QNMZReader:
 
 
 @frozen
-class BrukerVolume:
+class NanoscopeVolume:
     name: str
     shape: Index
     step_info: StepInfo
@@ -1641,7 +1642,7 @@ class NanoscopeFile:
         images = {}
         for entry in header["Ciao image list"]:
             name = entry["@2:Image Data"].split('"')[1]
-            images[name] = BrukerImage.parse_image(data, header, entry, name)
+            images[name] = NanoscopeImage.parse_image(data, header, entry, name)
         # deflection and height data are separate "force images"
         # we've got to pair them up
         heights = []
@@ -1659,7 +1660,7 @@ class NanoscopeFile:
             except KeyError:
                 height_for_z = images["Height"].get_image()
             volumes = [
-                BrukerVolume.parse(
+                NanoscopeVolume.parse(
                     header, QNMZReader.parse(header, d_reader, height_for_z), d_reader
                 )
                 for d_reader in (
@@ -1669,7 +1670,7 @@ class NanoscopeFile:
             ]
         else:
             volumes = [
-                BrukerVolume.parse(
+                NanoscopeVolume.parse(
                     header,
                     FFVReader.parse(header, data, z_subh),
                     FFVReader.parse(header, data, d_subh),
