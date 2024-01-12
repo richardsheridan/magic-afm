@@ -756,7 +756,9 @@ class ForceVolumeTkDisplay:
         data_select_frame = ttk.Labelframe(
             self.options_frame, text="Select data source"
         )
-        self.data_select_intvar = tk.IntVar(data_select_frame, value=-1 if len(opened_fvfile.fvfile.volumes) < 2 else 1)
+        trace = -1 if len(opened_fvfile.fvfile.volumes) < 2 else 1
+        opened_fvfile.trace = trace
+        self.data_select_intvar = tk.IntVar(data_select_frame, value=trace)
         # XXX this stateful connection seems real bad
         self.opened_fvfile = opened_fvfile
         self._add_trace(self.data_select_intvar, self.change_data_select_callback)
@@ -1263,9 +1265,9 @@ async def force_volume_task(
 
         # Actually write out results to external world
         if trace == 0:
-            trace = "Trace"
-        elif trace == 1:
             trace = "Retrace"
+        elif trace == 1:
+            trace = "Trace"
         else:
             trace = ""
         if options.fit_mode == calculation.FitMode.EXTEND:
