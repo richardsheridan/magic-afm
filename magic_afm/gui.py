@@ -756,7 +756,7 @@ class ForceVolumeTkDisplay:
         data_select_frame = ttk.Labelframe(
             self.options_frame, text="Select data source"
         )
-        self.data_select_intvar = tk.IntVar(data_select_frame, value=True)
+        self.data_select_intvar = tk.IntVar(data_select_frame, value=-1 if len(opened_fvfile.fvfile.volumes) < 2 else 1)
         # XXX this stateful connection seems real bad
         self.opened_fvfile = opened_fvfile
         self._add_trace(self.data_select_intvar, self.change_data_select_callback)
@@ -766,6 +766,7 @@ class ForceVolumeTkDisplay:
             value=True,
             variable=self.data_select_intvar,
             padding=4,
+            state="disabled" if len(opened_fvfile.fvfile.volumes) < 2 else "enabled",
         )
         data_trace_button.pack(side="left")
         disp_retrace_button = ttk.Radiobutton(
@@ -774,7 +775,7 @@ class ForceVolumeTkDisplay:
             value=False,
             variable=self.data_select_intvar,
             padding=4,
-            state="disabled" if len(opened_fvfile.fvfile.volumes) <2 else "enabled",
+            state="disabled" if len(opened_fvfile.fvfile.volumes) < 2 else "enabled",
         )
         disp_retrace_button.pack(side="left")
         data_select_frame.grid(row=1, column=0)
@@ -1142,7 +1143,7 @@ class ForceVolumeTkDisplay:
 
     def change_data_select_callback(self, *args):
         # XXX this stateful connection seems real bad
-        self.opened_fvfile.trace = bool(self.data_select_intvar.get())
+        self.opened_fvfile.trace = self.data_select_intvar.get()
         self.replot()
 
 
@@ -1263,7 +1264,12 @@ async def force_volume_task(
         combobox_values = list(display.image_name_menu.cget("values"))
 
         # Actually write out results to external world
-        trace = "Trace" if trace else "Retrace"
+        if trace == 0:
+            trace = "Trace"
+        elif trace == 1:
+            trace = "Retrace"
+        else:
+            trace = ""
         if options.fit_mode == calculation.FitMode.EXTEND:
             extret = "Ext"
         elif options.fit_mode == calculation.FitMode.RETRACT:
