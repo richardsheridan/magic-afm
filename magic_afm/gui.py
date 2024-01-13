@@ -2207,8 +2207,9 @@ async def main_task(root):
         root.bind_all("<KeyRelease-F1>", func=impartial(help_action))
         # noinspection PyTypeChecker
         help_menu.add_command(
-            label="About...", accelerator=None, underline=0, command=about_callback
+            label="About...", accelerator="Ctrl+A", underline=0, command=about_callback
         )
+        root.bind_all("<Control-KeyPress-a>", func=impartial(about_callback))
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
         trio_parallel.configure_default_context(
