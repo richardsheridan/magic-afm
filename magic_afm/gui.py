@@ -335,7 +335,7 @@ class AsyncFVFile:
 
 
 @frozen
-class DemoFVFile:
+class DemoStub:
     scansize: object = 100, 100
     t_step: object = 5e-6
     volumes: tuple = (None, None)
@@ -350,18 +350,15 @@ class DemoForceVolumeFile(AsyncFVFile):
         default=-15 * (np.cos(np.linspace(0, np.pi * 2, 1000, endpoint=False)) + 0.5)
     )
     path: pathlib.Path = field(default=pathlib.Path("Demo"))
-    fvfile: DemoFVFile = field(default=DemoFVFile())
+    fvfile: DemoStub = field(default=DemoStub())
 
     @property
     def image_names(self):
-        return ("Demo",)
+        return self._image_cache.keys() | ("Demo",)
 
     @property
     def initial_image_name(self):
         return "Demo"
-
-    async def get_force_curve(self, r, c):
-        return self.get_curve(r, c)
 
     def get_curve(self, r, c):
         gen = np.random.default_rng(seed=(int(r), int(c)))
@@ -377,7 +374,12 @@ class DemoForceVolumeFile(AsyncFVFile):
         return (zext, zret), (dext, dret)
 
     async def get_image(self, image_name):
-        return np.zeros((64, 64), dtype=np.float32)
+        if image_name in self._image_cache:
+            await trio.sleep(0)
+            image = self._image_cache[image_name]
+        else:
+            image = np.zeros((64, 64), dtype=np.float32)
+        return image
 
     def __iter__(self):
         for r, c in np.ndindex((64, 64)):
