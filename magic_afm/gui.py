@@ -2192,13 +2192,11 @@ async def main_task(root):
         file_menu.add_command(
             label="Open...", accelerator="Ctrl+O", underline=0, command=open_callback
         )
-        file_menu.bind("<KeyRelease-o>", func=open_callback)
         root.bind_all("<Control-KeyPress-o>", func=impartial(open_callback))
         file_menu.add_command(label="Demo", underline=0, command=demo_callback)
         file_menu.add_command(
             label="Quit", accelerator="Ctrl+Q", underline=0, command=quit_callback
         )
-        file_menu.bind("<KeyRelease-q>", func=quit_callback)
         root.bind_all("<Control-KeyPress-q>", func=impartial(quit_callback))
         menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
 
@@ -2206,13 +2204,11 @@ async def main_task(root):
         help_menu.add_command(
             label="Open help", accelerator="F1", underline=5, command=help_action
         )
-        help_menu.bind("<KeyRelease-h>", func=help_action)
         root.bind_all("<KeyRelease-F1>", func=impartial(help_action))
         # noinspection PyTypeChecker
         help_menu.add_command(
             label="About...", accelerator=None, underline=0, command=about_callback
         )
-        help_menu.bind("<KeyRelease-a>", func=about_callback)
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
         trio_parallel.configure_default_context(
