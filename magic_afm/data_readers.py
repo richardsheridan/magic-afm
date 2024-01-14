@@ -771,7 +771,7 @@ class ARDFImage:
             ibox_header.data, ibox_header.offset + 16
         )
         points = (stride - 16) // 4  # less IDAT header
-        assert (lines, points) == self.shape
+        assert (points, lines) == self.shape
         # elide image data validation and map into an array directly
         with memoryview(self.data):  # assert data is open, and hold it open
             arr = np.ndarray(
