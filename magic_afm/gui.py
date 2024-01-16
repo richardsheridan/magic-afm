@@ -269,7 +269,6 @@ class AsyncFVFile:
         "Height",
     }
 
-    path: pathlib.Path  # this is just for pickling now... maybe don't pickle?
     fvfile: data_readers.FVFile
     k: float
     defl_sens: float
@@ -278,8 +277,8 @@ class AsyncFVFile:
     _image_cache: dict[str, np.ndarray] = field(factory=dict, init=False, repr=False)
 
     @classmethod
-    def from_fvfile(cls, path, fvfile: data_readers.FVFile):
-        return cls(path, fvfile, fvfile.k, fvfile.defl_sens)
+    def from_fvfile(cls, fvfile: data_readers.FVFile):
+        return cls(fvfile, fvfile.k, fvfile.defl_sens)
 
     @property
     def image_names(self):
@@ -349,7 +348,6 @@ class DemoForceVolumeFile(AsyncFVFile):
     delta: np.ndarray = field(
         default=-15 * (np.cos(np.linspace(0, np.pi * 2, 1000, endpoint=False)) + 0.5)
     )
-    path: pathlib.Path = field(default=pathlib.Path("Demo"))
     fvfile: DemoStub = field(default=DemoStub())
 
     @property
@@ -827,6 +825,7 @@ class ForceVolumeTkDisplay:
         self._prev_radius = 20.0
         self._prev_tau = 0.0
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
+        self.name = name
         window.wm_title(name)
 
         # Build figure
@@ -1323,7 +1322,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
             # assign pbar and progress_image ASAP in case of cancel
             with trio.CancelScope() as cancel_scope, tqdm_tk(
                 total=ncurves,
-                desc=f"Fitting {opened_fvol.path.name} force curves",
+                desc=f"Fitting {display.name} force curves",
                 smoothing=0.01,
                 # smoothing_time=1,
                 mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 2,
@@ -2040,7 +2039,7 @@ async def open_one(root, path):
     open_thing = await trio.to_thread.run_sync(opener, path)
     try:
         fvfile = await trio.to_thread.run_sync(fvfile_cls.parse, open_thing)
-        opened_fv = AsyncFVFile.from_fvfile(path, fvfile)
+        opened_fv = AsyncFVFile.from_fvfile(fvfile)
         display = ForceVolumeTkDisplay(root, path.name, opened_fv)
         await force_volume_task(display, opened_fv)
         display.destroy()
