@@ -53,6 +53,8 @@ import tkinter.filedialog
 import tkinter.messagebox
 import warnings
 import webbrowser
+
+from bisect import bisect_right
 from contextlib import nullcontext
 from functools import partial, wraps
 from math import inf
@@ -2055,11 +2057,144 @@ async def demo_task(root):
     display.destroy()
 
 
+# Copyright (c) 2019 John Belmonte, from perf-timer 0.2.2 under MIT license
+class ApproximateHistogram:
+    """
+    Streaming, approximate histogram, only stdlib dependencies
+
+    Based on http://jmlr.org/papers/volume11/ben-haim10a/ben-haim10a.pdf
+
+    Performance of adding a point is about 5x faster than
+    https://github.com/carsonfarmer/streamhist (unmaintained).
+    """
+
+    def __init__(self, max_bins):
+        self._max_bins = max_bins
+        self._bins = []  # (point, count)
+        self._costs = []  # item i is _bins[i+1].point - _bins[i].point
+        self._count = 0
+        # TODO: maintain min/max as bin entries with infinite merge cost
+        self._min = inf
+        self._max = -inf
+
+    @staticmethod
+    def _update_costs(costs, l, i, val):
+        """update costs array to reflect l.insert(i, val)"""
+        if i > 0:
+            new_cost = val[0] - l[i - 1][0]
+            costs.insert(i - 1, new_cost)
+            if i < len(costs):
+                costs[i] = l[i + 1][0] - val[0]
+        elif len(l) > 1:
+            costs.insert(0, l[1][0] - val[0])
+        # assert costs == approx([b - a for (a, _), (b, _) in zip(l, l[1:])], rel=1e-4)
+
+    @staticmethod
+    def _update_costs_for_merge(costs, l, i, val):
+        """update costs array to reflect l[i:i+2] = (val, )"""
+        # TODO: combine with update_costs()
+        if 0 < i < len(costs) - 1:
+            costs[i - 1 : i + 2] = val[0] - l[i - 1][0], l[i + 1][0] - val[0]
+        elif i > 0:
+            costs[i - 1 : i + 1] = (val[0] - l[i - 1][0],)
+        else:
+            costs[i : i + 2] = (l[i + 1][0] - val[0],)
+        # assert costs == approx([b - a for (a, _), (b, _) in zip(l, l[1:])], rel=1e-4)
+
+    @classmethod
+    def _insert_with_cost(cls, costs, l, val):
+        i = bisect_right(l, val)
+        l.insert(i, val)
+        cls._update_costs(costs, l, i, val)
+
+    def add(self, point):
+        """Add point to histogram"""
+        # optimization:  maintain cost array
+        self._count += 1
+        self._min = min(self._min, point)
+        self._max = max(self._max, point)
+        bins = self._bins
+        costs = self._costs
+        self._insert_with_cost(costs, bins, (point, 1))
+        if len(bins) > self._max_bins:
+            i = costs.index(min(costs))
+            (q0, k0), (q1, k1) = bins[i : i + 2]
+            _count = k0 + k1
+            median = (q0 * k0 + q1 * k1) / _count
+            bins[i : i + 2] = ((median, _count),)
+            self._update_costs_for_merge(costs, bins, i, (median, _count))
+
+    @property
+    def count(self):
+        """Return number of points represented by this histogram."""
+        return self._count
+
+    @property
+    def min(self):
+        """Return minimum point represented by this histogram"""
+        return self._min
+
+    @property
+    def max(self):
+        """Return maximum point represented by this histogram"""
+        return self._max
+
+    def mean(self):
+        """Return mean;  O(max_bins) complexity."""
+        return sum(p * count for p, count in self._bins) / self._count
+
+    def std(self):
+        """Return standard deviation;  O(max_bins) complexity."""
+        mean = self.mean()
+        sum_squares = sum((p - mean) ** 2 * count for p, count in self._bins)
+        return math.sqrt(sum_squares / self._count)
+
+    def _quantile(self, sums, q):
+        if q <= 0:
+            return self._min
+        if q >= 1:
+            return self._max
+        bins = self._bins
+        target_sum = q * (self._count - 1) + 1
+        i = bisect_right(sums, target_sum) - 1
+        left = bins[i] if i >= 0 else (self._min, 0)
+        right = bins[i + 1] if i + 1 < len(bins) else (self._max, 0)
+        l0, r0 = left[0], right[0]
+        l1, r1 = left[1], right[1]
+        s = target_sum - (sums[i] if i >= 0 else 1)
+        if l1 == r1:
+            bp_ratio = s / l1
+        else:
+            bp_ratio = (l1 - (l1**2 - 2 * s * (l1 - r1)) ** 0.5) / (l1 - r1)
+            assert bp_ratio.imag == 0
+        b = bp_ratio * (r0 - l0) + l0
+        return b
+
+    def sum(self):
+        """Return sum of points;  O(max_bins) complexity."""
+        return sum(x * count for x, count in self._bins)
+
+    def quantile(self, q):
+        """Return list of values at given quantile fraction(s).
+
+        O(max_bins) complexity."""
+        bins = self._bins
+        sums = [
+            x - y / 2
+            for x, (_, y) in zip(itertools.accumulate(bin[1] for bin in bins), bins)
+        ]
+        return list(self._quantile(sums, q_item) for q_item in q)
+
+
+@mutable(eq=False)
 class MyInstrument(trio.abc.Instrument):
-    t = 0
-    tau = 1.0
-    sleep_time = tau / 2
-    wake_time = tau / 2
+    t: float = field(factory=trio.current_time)
+    tau: float = 1.0
+    sleep_time: float = tau / 2
+    wake_time: float = tau / 2
+    last_sleep: float = t
+    last_wake: float = t
+    hist: ApproximateHistogram = field(factory=lambda: ApproximateHistogram(128))
 
     @property
     def cycle_time(self):
@@ -2067,14 +2202,17 @@ class MyInstrument(trio.abc.Instrument):
 
     def before_io_wait(self, timeout):
         t = trio.current_time()
+        self.last_wake = t - self.t
+        self.hist.add(self.last_wake)
         b = math.exp(-self.cycle_time / self.tau)  # b = 1 - alpha
-        self.wake_time = (t - self.t) * (1 - b) + b * self.wake_time
+        self.wake_time = self.last_wake * (1 - b) + b * self.wake_time
         self.t = t
 
     def after_io_wait(self, timeout):
         t = trio.current_time()
+        self.last_sleep = t - self.t
         b = math.exp(-self.cycle_time / self.tau)  # b = 1 - alpha
-        self.sleep_time = (t - self.t) * (1 - b) + b * self.sleep_time
+        self.sleep_time = self.last_sleep * (1 - b) + b * self.sleep_time
         self.t = t
 
 
@@ -2090,18 +2228,9 @@ async def about_task(root):
     top.wm_title(f"About {__app_name__}")
     message = tk.Message(top, text=__short_license__)
     message.pack()
-    task = tk.StringVar(top)
-    task_label = ttk.Label(top, textvariable=task)
+    task_strvar = tk.StringVar(top)
+    task_label = ttk.Label(top, textvariable=task_strvar)
     task_label.pack()
-    thread_cpu = tk.StringVar(top)
-    thread_cpu_label = ttk.Label(top, textvariable=thread_cpu)
-    thread_cpu_label.pack()
-    thread_default = tk.StringVar(top)
-    thread_default_label = ttk.Label(top, textvariable=thread_default)
-    thread_default_label.pack()
-    process = tk.StringVar(top)
-    process_label = ttk.Label(top, textvariable=process)
-    process_label.pack()
     opts = dict(mode="indeterminate", maximum=80, length=300)
     tk_pbar = ttk.Progressbar(top, **opts)
     tk_pbar.pack()
@@ -2110,7 +2239,7 @@ async def about_task(root):
     timely_trio_pbar = ttk.Progressbar(top, **opts)
     timely_trio_pbar.pack()
 
-    interval = 32
+    interval = 333
 
     async def pbar_runner():
         while True:
@@ -2130,23 +2259,21 @@ async def about_task(root):
         while True:
             task_stats = trio.lowlevel.current_statistics()
             worker_stats = trio_parallel.default_context_statistics()
-            task.set(
+            q50, q95, q99 = inst.hist.quantile((0.5, 0.95, 0.99))
+            task_strvar.set(
                 f"Tasks living: {task_stats.tasks_living}\n"
                 f"Tasks runnable: {task_stats.tasks_runnable}\n"
                 f"Unprocessed callbacks: {task_stats.run_sync_soon_queue_size}\n"
-                f"Sleep %: {100 * inst.sleep_time / inst.cycle_time :.1f}"
-            )
-            thread_cpu.set(
-                "CPU-bound tasks:"
-                + repr(async_tools.cpu_bound_limiter).split(",")[1][:-1]
-            )
-            thread_default.set(
-                "Default threads:"
-                + repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][
-                    :-1
-                ]
-            )
-            process.set(
+                f"Ticks: {inst.hist.count}\n"
+                f"Sleep: {100 * inst.sleep_time / inst.cycle_time :.1f} %\n"
+                f"Tick percentiles (seconds):\n"
+                f"50 %: {q50:.1e} | 95 %: {q95:.1e} | 99 %: {q99:.1e}\n"
+                f"""CPU-bound tasks:{repr(
+                    async_tools.cpu_bound_limiter
+                ).split(',')[1][:-1]}\n"""
+                f"""Default threads:{repr(
+                    trio.to_thread.current_default_thread_limiter()
+                ).split(',')[1][:-1]}\n"""
                 f"Worker processes: {worker_stats.running_workers}/"
                 f"{worker_stats.idle_workers+worker_stats.running_workers}"
             )
