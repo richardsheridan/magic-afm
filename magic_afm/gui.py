@@ -2058,6 +2058,7 @@ async def demo_task(root):
 
 
 # Copyright (c) 2019 John Belmonte, from perf-timer 0.2.2 under MIT license
+# Modifications Copyright (C) Richard Sheridan, AGPLv3
 class ApproximateHistogram:
     """
     Streaming, approximate histogram, only stdlib dependencies
@@ -2087,7 +2088,6 @@ class ApproximateHistogram:
                 costs[i] = l[i + 1][0] - val[0]
         elif len(l) > 1:
             costs.insert(0, l[1][0] - val[0])
-        # assert costs == approx([b - a for (a, _), (b, _) in zip(l, l[1:])], rel=1e-4)
 
     @staticmethod
     def _update_costs_for_merge(costs, l, i, val):
@@ -2099,7 +2099,6 @@ class ApproximateHistogram:
             costs[i - 1 : i + 1] = (val[0] - l[i - 1][0],)
         else:
             costs[i : i + 2] = (l[i + 1][0] - val[0],)
-        # assert costs == approx([b - a for (a, _), (b, _) in zip(l, l[1:])], rel=1e-4)
 
     @classmethod
     def _insert_with_cost(cls, costs, l, val):
@@ -2157,17 +2156,16 @@ class ApproximateHistogram:
         bins = self._bins
         target_sum = q * (self._count - 1) + 1
         i = bisect_right(sums, target_sum) - 1
-        left = bins[i] if i >= 0 else (self._min, 0)
-        right = bins[i + 1] if i + 1 < len(bins) else (self._max, 0)
-        l0, r0 = left[0], right[0]
-        l1, r1 = left[1], right[1]
+        lpt, lct = bins[i] if i >= 0 else (self._min, 0)
+        rpt, rct = bins[i + 1] if i + 1 < len(bins) else (self._max, 0)
         s = target_sum - (sums[i] if i >= 0 else 1)
-        if l1 == r1:
-            bp_ratio = s / l1
+        # interpolate between points through counts
+        # according to triangular/trapezoidal approximation
+        if lct == rct:
+            bp_ratio = s / lct
         else:
-            bp_ratio = (l1 - (l1**2 - 2 * s * (l1 - r1)) ** 0.5) / (l1 - r1)
-            assert bp_ratio.imag == 0
-        b = bp_ratio * (r0 - l0) + l0
+            bp_ratio = (lct - math.sqrt(lct**2 - 2 * s * (lct - rct))) / (lct - rct)
+        b = bp_ratio * (rpt - lpt) + lpt
         return b
 
     def sum(self):
@@ -2178,12 +2176,12 @@ class ApproximateHistogram:
         """Return list of values at given quantile fraction(s).
 
         O(max_bins) complexity."""
-        bins = self._bins
-        sums = [
-            x - y / 2
-            for x, (_, y) in zip(itertools.accumulate(bin[1] for bin in bins), bins)
-        ]
-        return list(self._quantile(sums, q_item) for q_item in q)
+        counts = [count for point, count in self._bins]
+        # In this histogram's triangular approximation,
+        # the PDF of a bin is half between i-1 and i, half between i and i+1
+        # so the CDF needs to be less half the counts at each final bin
+        sums = [x - y / 2 for x, y in zip(itertools.accumulate(counts), counts)]
+        return [self._quantile(sums, q_item) for q_item in q]
 
 
 @mutable(eq=False)
