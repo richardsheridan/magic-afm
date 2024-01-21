@@ -858,11 +858,6 @@ class ForceVolumeTkDisplay:
         initial_values = opened_fvfile.parameters
         self._traces: list[tuple[tk.Variable, str]] = []
         self._nursery = None
-        self._prev_defl_sens = 1.0
-        self._prev_k = 1.0
-        self._prev_sync_dist = 0
-        self._prev_radius = 20.0
-        self._prev_tau = 0.0
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
         self.name = name
         window.wm_title(name)
@@ -1284,7 +1279,7 @@ class ForceVolumeTkDisplay:
 
     def defl_sens_callback(self, *args):
         try:
-            self._prev_defl_sens = float(self.defl_sens_strvar.get())
+            float(self.defl_sens_strvar.get())
         except ValueError:
             self.defl_sens_sbox.configure(foreground="red2")
         else:
@@ -1293,7 +1288,7 @@ class ForceVolumeTkDisplay:
 
     def spring_const_callback(self, *args):
         try:
-            self._prev_k = float(self.spring_const_strvar.get())
+            float(self.spring_const_strvar.get())
         except ValueError:
             self.spring_const_sbox.configure(foreground="red2")
         else:
@@ -1302,7 +1297,7 @@ class ForceVolumeTkDisplay:
 
     def sync_dist_callback(self, *args):
         try:
-            self._prev_sync_dist = int(self.sync_dist_strvar.get())
+            int(self.sync_dist_strvar.get())
         except ValueError:
             self.sync_dist_sbox.configure(foreground="red2")
         else:
@@ -1311,7 +1306,7 @@ class ForceVolumeTkDisplay:
 
     def radius_callback(self, *args):
         try:
-            self._prev_radius = float(self.radius_strvar.get())
+            float(self.radius_strvar.get())
         except ValueError:
             self.fit_radius_sbox.configure(foreground="red2")
         else:
@@ -1320,7 +1315,7 @@ class ForceVolumeTkDisplay:
 
     def tau_callback(self, *args):
         try:
-            self._prev_tau = float(self.tau_strvar.get())
+            float(self.tau_strvar.get())
         except ValueError:
             self.fit_tau_sbox.configure(foreground="red2")
         else:
