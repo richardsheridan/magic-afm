@@ -281,7 +281,9 @@ def leastsq(
                 filter_xdata = True
         if filter_xdata:
             if xdata.size != ydata.size:
-                raise ValueError("xdata contains non-finite data that cannot be filtered")
+                raise ValueError(
+                    "xdata contains non-finite data that cannot be filtered"
+                )
             else:
                 # we leave the xdata as they where
                 old_shape = xdata.shape
@@ -339,7 +341,9 @@ def leastsq(
                 constrained_fit = True
     if constrained_fit:
         if full_output is None:
-            _logger.info("Recommended to set full_output to True when using constraints")
+            _logger.info(
+                "Recommended to set full_output to True when using constraints"
+            )
 
     # Levenberg-Marquardt algorithm
     fittedpar = parameters.__copy__()
@@ -402,8 +406,12 @@ def leastsq(
                         # abs method
                         pwork[0][i] = fitparam[i] + deltapar[0][i]
                     elif constraints[free_index[i]][0] == CQUOTED:
-                        pmax = max(constraints[free_index[i]][1], constraints[free_index[i]][2])
-                        pmin = min(constraints[free_index[i]][1], constraints[free_index[i]][2])
+                        pmax = max(
+                            constraints[free_index[i]][1], constraints[free_index[i]][2]
+                        )
+                        pmin = min(
+                            constraints[free_index[i]][1], constraints[free_index[i]][2]
+                        )
                         A = 0.5 * (pmax + pmin)
                         B = 0.5 * (pmax - pmin)
                         if B != 0:
@@ -446,7 +454,9 @@ def leastsq(
                     iiter = 0
                 elif absdeltachi < numpy.sqrt(epsfcn):
                     iiter = 0
-                    _logger.info("Iteration finished due to too small absolute chi decrement")
+                    _logger.info(
+                        "Iteration finished due to too small absolute chi decrement"
+                    )
                 chisq0 = chisq
                 flambda = flambda / 10.0
                 last_evaluation = yfit
@@ -515,7 +525,6 @@ def chisq_alpha_beta(
     last_evaluation=None,
     full_output=False,
 ):
-
     """
     Get chi square, the curvature matrix alpha and the matrix beta according to the input parameters.
     If all the parameters are unconstrained, the covariance matrix is the inverse of the alpha matrix.
@@ -642,11 +651,17 @@ def chisq_alpha_beta(
             elif constraints[i][0] == CQUOTED:
                 pmax = max(constraints[i][1], constraints[i][2])
                 pmin = min(constraints[i][1], constraints[i][2])
-                if ((pmax - pmin) > 0) & (parameters[i] <= pmax) & (parameters[i] >= pmin):
+                if (
+                    ((pmax - pmin) > 0)
+                    & (parameters[i] <= pmax)
+                    & (parameters[i] >= pmin)
+                ):
                     A = 0.5 * (pmax + pmin)
                     B = 0.5 * (pmax - pmin)
                     fitparam.append(parameters[i])
-                    derivfactor.append(B * numpy.cos(numpy.arcsin((parameters[i] - A) / B)))
+                    derivfactor.append(
+                        B * numpy.cos(numpy.arcsin((parameters[i] - A) / B))
+                    )
                     free_index.append(i)
                     n_free += 1
                 elif (pmax - pmin) > 0:
@@ -717,7 +732,7 @@ def chisq_alpha_beta(
         yfit = last_evaluation
     deltay = y - yfit
     help0 = weight * deltay
-    alpha = deriv @ (weight*deriv).T
+    alpha = deriv @ (weight * deriv).T
     beta = help0[numpy.newaxis, :] @ deriv.T
     chisq = (help0 * deltay).sum()
     if full_output:

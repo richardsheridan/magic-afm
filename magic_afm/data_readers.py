@@ -42,7 +42,6 @@ import numpy as np
 
 from attrs import frozen, field
 
-
 NANOMETER_UNIT_CONVERSION = (
     1e9  # maybe we can intelligently read this from the file someday
 )
@@ -73,7 +72,6 @@ class Image(Protocol):
 class Volume(Protocol):
     name: str
     shape: Index
-    # step_info: StepInfo
 
     def get_curve(self, r: int, c: int) -> ZDArrays:
         """Efficiently get a specific curve from disk."""

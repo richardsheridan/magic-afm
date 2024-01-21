@@ -6,7 +6,9 @@ filename = pathlib.Path(__file__).parent / "_version.py"
 
 def get():
     return subprocess.run(
-        ["git", "describe", "--dirty", "--long", "--tags"], capture_output=True, check=True
+        ["git", "describe", "--dirty", "--long", "--tags"],
+        capture_output=True,
+        check=True,
     ).stdout.decode()[:-1]
 
 

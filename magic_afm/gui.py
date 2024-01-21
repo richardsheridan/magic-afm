@@ -521,6 +521,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
 class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
     canvas: AsyncFigureCanvasTkAgg
+
     def __init__(self, canvas, window):
         self.toolitems = tuple(
             x for x in self.toolitems if x[-1] != "configure_subplots"
@@ -1626,7 +1627,11 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                 # Calculation phase
                 # Do a few long-running jobs, likely to be canceled
                 force_curve = await trio.to_thread.run_sync(
-                    opened_fvol.get_curve, point.r, point.c, options.trace,options.sync_dist
+                    opened_fvol.get_curve,
+                    point.r,
+                    point.c,
+                    options.trace,
+                    options.sync_dist,
                 )
                 force_curve_data = await trio.to_thread.run_sync(
                     calculate_force_data,
@@ -1953,9 +1958,11 @@ def calculate_force_data(zxr, dxr, t_step, options, cancel_poller=bool):
     txr = t[: len(dxr[0])], t[len(dxr[0]) :]
     assert npts == sum(map(len, txr))
     # noinspection PyTypeChecker
-    fxr: tuple[np.ndarray,np.ndarray] = tuple(map(np.multiply, dxr, (options.k,) * len(dxr)))
+    fxr: tuple[np.ndarray, np.ndarray] = tuple(
+        map(np.multiply, dxr, (options.k,) * len(dxr))
+    )
     # noinspection PyTypeChecker
-    deltaxr: tuple[np.ndarray,np.ndarray] = tuple(map(np.subtract, zxr, dxr))
+    deltaxr: tuple[np.ndarray, np.ndarray] = tuple(map(np.subtract, zxr, dxr))
 
     if not options.fit_mode:
         return ForceCurveData(zxr=zxr, dxr=dxr, txr=txr, fxr=fxr, deltaxr=deltaxr)
