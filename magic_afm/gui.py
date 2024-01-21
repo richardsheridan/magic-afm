@@ -59,7 +59,7 @@ from contextlib import nullcontext
 from functools import partial, wraps
 from math import inf
 from tkinter import ttk
-from typing import Callable, ClassVar, Optional, Literal
+from typing import Callable, ClassVar, Optional, Literal, Protocol, TypeAlias
 
 import imageio
 import matplotlib
@@ -246,6 +246,17 @@ class ForceVolumeParams:
     sync_dist: int
 
 
+class SyncDistFVFile(data_readers.FVFile, Protocol):
+    sync_dist: int | None
+
+
+class TraceRetraceFVFile(data_readers.FVFile, Protocol):
+    trace: int | None
+
+
+ExpandedFVFile: TypeAlias = data_readers.FVFile | SyncDistFVFile | TraceRetraceFVFile
+
+
 @mutable
 class AsyncFVFile:
     """Consistent interface across filetypes for Magic AFM GUI"""
@@ -271,7 +282,7 @@ class AsyncFVFile:
         "Height",
     }
 
-    fvfile: data_readers.FVFile
+    fvfile: ExpandedFVFile
     k: float
     defl_sens: float
     sync_dist: int = 0
@@ -485,6 +496,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 
 
 class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
+    canvas: AsyncFigureCanvasTkAgg
     def __init__(self, canvas, window):
         self.toolitems = tuple(
             x for x in self.toolitems if x[-1] != "configure_subplots"
@@ -505,6 +517,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         """Callback for dragging in pan/zoom mode."""
         self._drag_pan_event = event
 
+        # noinspection PyUnresolvedReferences
         def drag_pan_draw_fn():
             if self._pan_info is None:
                 return
@@ -1381,6 +1394,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                         opened_fvol,
                         chunksize * 8,
                     )
+                    # noinspection PyTypeChecker
                     d = asdict(options)
                     del d["disp_kind"]
                     property_aiter = await pipeline_nursery.start(
@@ -1749,6 +1763,7 @@ def draw_data_table(point_data, ax: Axes):
             colLoc="right",
         )
     else:
+        # noinspection PyTypeChecker
         m, sens, fadh, defl, ind, rat = np.transpose(
             [
                 (
@@ -1913,8 +1928,10 @@ def calculate_force_data(zxr, dxr, t_step, options, cancel_poller=bool):
     t = np.linspace(0, npts * t_step, num=npts, endpoint=False, dtype=dxr[0].dtype)
     txr = t[: len(dxr[0])], t[len(dxr[0]) :]
     assert npts == sum(map(len, txr))
-    fxr = tuple(map(np.multiply, dxr, (options.k,) * len(dxr)))
-    deltaxr = tuple(map(np.subtract, zxr, dxr))
+    # noinspection PyTypeChecker
+    fxr: tuple[np.ndarray,np.ndarray] = tuple(map(np.multiply, dxr, (options.k,) * len(dxr)))
+    # noinspection PyTypeChecker
+    deltaxr: tuple[np.ndarray,np.ndarray] = tuple(map(np.subtract, zxr, dxr))
 
     if not options.fit_mode:
         return ForceCurveData(zxr=zxr, dxr=dxr, txr=txr, fxr=fxr, deltaxr=deltaxr)
