@@ -144,9 +144,10 @@ class ForceCurveOptions:
     disp_kind: DispKind
     k: float
     defl_sens: float
-    sync_dist: int
+    sync_dist: int | None
     radius: float
     tau: float
+    trace: int | None
 
 
 @frozen
@@ -243,7 +244,8 @@ class ImageStats:
 class ForceVolumeParams:
     k: float
     defl_sens: float
-    sync_dist: int
+    sync_dist: int | None
+    trace: int | None
 
 
 class SyncDistFVFile(data_readers.FVFile, Protocol):
@@ -285,8 +287,6 @@ class AsyncFVFile:
     fvfile: ExpandedFVFile
     k: float
     defl_sens: float
-    sync_dist: int = 0
-    trace: bool = True
     _image_cache: dict[str, np.ndarray] = field(factory=dict, init=False, repr=False)
 
     @classmethod
@@ -309,7 +309,8 @@ class AsyncFVFile:
         return ForceVolumeParams(
             k=self.k,
             defl_sens=self.defl_sens,
-            sync_dist=self.sync_dist,
+            sync_dist=getattr(self.fvfile, "sync_dist", None),
+            trace=getattr(self.fvfile, "trace", None),
         )
 
     @staticmethod
@@ -328,8 +329,24 @@ class AsyncFVFile:
         image_name = self.strip_trace(image_name)
         self._units_map[image_name] = units
 
-    def get_curve(self, r, c):
-        return self.fvfile.volumes[not self.trace].get_curve(r, c)
+    def _apply_sync_dist(self, d, sync_dist):
+        assert hasattr(self.fvfile, "sync_dist")
+        # sync dist is a roll to the left -> negative
+        sync_dist = self.fvfile.sync_dist - sync_dist
+        if sync_dist:
+            d = d.reshape((-1,))
+            d = np.roll(d, sync_dist)
+            d = d.reshape((2, -1))
+        return d
+
+    def get_curve(self, r, c, trace=None, sync_dist=None):
+        if trace is None:
+            trace = True
+        if sync_dist is None:
+            return self.fvfile.volumes[not trace].get_curve(r, c)
+        z, d = self.fvfile.volumes[not trace].get_curve(r, c)
+        d = self._apply_sync_dist(d, sync_dist)
+        return z, d
 
     async def get_image(self, image_name):
         if image_name in self._image_cache:
@@ -342,8 +359,15 @@ class AsyncFVFile:
             self._image_cache[image_name] = image
         return image
 
-    def __iter__(self):
-        return self.fvfile.volumes[not self.trace].iter_curves()
+    def iter_curves(self, trace, sync_dist):
+        if trace is None:
+            trace = True
+        if sync_dist is None:
+            yield from self.fvfile.volumes[not trace].iter_curves()
+        else:
+            for point, (z, d) in self.fvfile.volumes[not trace].iter_curves():
+                d = self._apply_sync_dist(d, sync_dist)
+                yield point, (z, d)
 
 
 @frozen
@@ -371,7 +395,7 @@ class DemoForceVolumeFile(AsyncFVFile):
     def initial_image_name(self):
         return "Demo"
 
-    def get_curve(self, r, c):
+    def get_curve(self, r, c, trace=None, sync_dist=None):
         gen = np.random.default_rng(seed=(int(r), int(c)))
         parms = (1, 10, 0.1, -2, 1, 0, 0, 1)
         deltaext = self.delta[: self.delta.size // 2]
@@ -392,7 +416,7 @@ class DemoForceVolumeFile(AsyncFVFile):
             image = np.zeros((64, 64), dtype=np.float32)
         return image
 
-    def __iter__(self):
+    def iter_curves(self, trace, sync_dist):
         for r, c in np.ndindex((64, 64)):
             yield (r, c), self.get_curve(r, c)
 
@@ -916,34 +940,32 @@ class ForceVolumeTkDisplay:
         manipulate_labelframe.pack(fill="x")
 
         image_opts_frame.grid(row=2, column=0, rowspan=2)
-        data_select_frame = ttk.Labelframe(
-            self.options_frame, text="Select data source"
-        )
-        trace = -1 if len(opened_fvfile.fvfile.volumes) < 2 else 1
-        opened_fvfile.trace = trace
-        self.data_select_intvar = tk.IntVar(data_select_frame, value=trace)
-        # XXX this stateful connection seems real bad
-        self.opened_fvfile = opened_fvfile
-        self._add_trace(self.data_select_intvar, self.change_data_select_callback)
-        data_trace_button = ttk.Radiobutton(
-            data_select_frame,
-            text="Trace",
-            value=True,
-            variable=self.data_select_intvar,
-            padding=4,
-            state="disabled" if len(opened_fvfile.fvfile.volumes) < 2 else "enabled",
-        )
-        data_trace_button.pack(side="left")
-        disp_retrace_button = ttk.Radiobutton(
-            data_select_frame,
-            text="Retrace",
-            value=False,
-            variable=self.data_select_intvar,
-            padding=4,
-            state="disabled" if len(opened_fvfile.fvfile.volumes) < 2 else "enabled",
-        )
-        disp_retrace_button.pack(side="left")
-        data_select_frame.grid(row=1, column=0)
+
+        if initial_values.trace is not None:
+            data_select_frame = ttk.Labelframe(
+                self.options_frame, text="Select data source"
+            )
+            self.data_select_intvar = tk.IntVar(
+                data_select_frame, value=initial_values.trace
+            )
+            self._add_trace(self.data_select_intvar, self.change_data_select_callback)
+            data_trace_button = ttk.Radiobutton(
+                data_select_frame,
+                text="Trace",
+                value=True,
+                variable=self.data_select_intvar,
+                padding=4,
+            )
+            data_trace_button.pack(side="left")
+            disp_retrace_button = ttk.Radiobutton(
+                data_select_frame,
+                text="Retrace",
+                value=False,
+                variable=self.data_select_intvar,
+                padding=4,
+            )
+            disp_retrace_button.pack(side="left")
+            data_select_frame.grid(row=1, column=0)
 
         disp_labelframe = ttk.Labelframe(self.options_frame, text="Force curve display")
         self.disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
@@ -1009,23 +1031,24 @@ class ForceVolumeTkDisplay:
             preproc_labelframe, text="Spring Constant", justify="left"
         )
         spring_const_label.grid(row=1, column=0, columnspan=2, sticky="W")
-        self.sync_dist_strvar = tk.StringVar(preproc_labelframe)
-        self._add_trace(self.sync_dist_strvar, self.sync_dist_callback)
-        self.sync_dist_sbox = ttk.Spinbox(
-            preproc_labelframe,
-            from_=-initial_values.sync_dist * 2,
-            to=initial_values.sync_dist * 2,
-            increment=1,
-            format="%0.0f",
-            width=6,
-            textvariable=self.sync_dist_strvar,
-        )
-        self.sync_dist_sbox.set(initial_values.sync_dist)
-        self.sync_dist_sbox.grid(row=2, column=2, sticky="E")
-        sync_dist_label = ttk.Label(
-            preproc_labelframe, text="Sync Distance", justify="left"
-        )
-        sync_dist_label.grid(row=2, column=0, columnspan=2, sticky="W")
+        if initial_values.sync_dist is not None:
+            self.sync_dist_strvar = tk.StringVar(preproc_labelframe)
+            self._add_trace(self.sync_dist_strvar, self.sync_dist_callback)
+            self.sync_dist_sbox = ttk.Spinbox(
+                preproc_labelframe,
+                from_=-initial_values.sync_dist * 2,
+                to=initial_values.sync_dist * 2,
+                increment=1,
+                format="%0.0f",
+                width=6,
+                textvariable=self.sync_dist_strvar,
+            )
+            self.sync_dist_sbox.set(initial_values.sync_dist)
+            self.sync_dist_sbox.grid(row=2, column=2, sticky="E")
+            sync_dist_label = ttk.Label(
+                preproc_labelframe, text="Sync Distance", justify="left"
+            )
+            sync_dist_label.grid(row=2, column=0, columnspan=2, sticky="W")
         preproc_labelframe.grid(row=0, column=1, sticky="EW")
         preproc_labelframe.grid_columnconfigure(1, weight=1)
 
@@ -1179,11 +1202,20 @@ class ForceVolumeTkDisplay:
                 defl_sens=float(self.defl_sens_strvar.get()),
                 radius=float(self.fit_radius_sbox.get()),
                 tau=float(self.fit_tau_sbox.get()),
-                sync_dist=int(self.sync_dist_strvar.get()),
+                sync_dist=self.get_sync_dist_or_none(),
+                trace=self.get_trace_or_none(),
             )
         except Exception as e:
             warnings.warn(str(e))
         return self._opts
+
+    def get_sync_dist_or_none(self):
+        if hasattr(self, "sync_dist_strvar"):
+            return int(self.sync_dist_strvar.get())
+
+    def get_trace_or_none(self):
+        if hasattr(self, "data_select_intvar"):
+            return int(self.data_select_intvar.get())
 
     def spinner_start(self):
         self.tkwindow.configure(cursor="watch")
@@ -1307,8 +1339,6 @@ class ForceVolumeTkDisplay:
         self.replot_tight()
 
     def change_data_select_callback(self, *args):
-        # XXX this stateful connection seems real bad
-        self.opened_fvfile.trace = self.data_select_intvar.get()
         self.replot()
 
 
@@ -1381,7 +1411,6 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                     display.canvas.restore_region(bg)
                     return True
 
-                trace = opened_fvol.trace  # capture trace just before opening iterator
                 async with trio.open_nursery() as pipeline_nursery:
                     force_curve_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
@@ -1391,7 +1420,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                             k=options.k,
                             fit_mode=options.fit_mode,
                         ),
-                        opened_fvol,
+                        opened_fvol.iter_curves(options.trace, options.sync_dist),
                         chunksize * 8,
                     )
                     # noinspection PyTypeChecker
@@ -1426,9 +1455,9 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
         combobox_values = list(display.image_name_menu.cget("values"))
 
         # Actually write out results to external world
-        if trace == 0:
+        if options.trace == 0:
             trace = "Retrace"
-        elif trace == 1:
+        elif options.trace == 1:
             trace = "Trace"
         else:
             trace = ""
@@ -1602,7 +1631,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                 # Calculation phase
                 # Do a few long-running jobs, likely to be canceled
                 force_curve = await trio.to_thread.run_sync(
-                    opened_fvol.get_curve, point.r, point.c
+                    opened_fvol.get_curve, point.r, point.c, options.trace,options.sync_dist
                 )
                 force_curve_data = await trio.to_thread.run_sync(
                     calculate_force_data,

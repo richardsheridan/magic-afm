@@ -1136,6 +1136,7 @@ class ARDFFile:
     defl_sens: float
     t_step: float
     scansize: tuple[float, float]
+    trace: int | None
 
     @classmethod
     def parse(cls, data: mmap):
@@ -1179,7 +1180,8 @@ class ARDFFile:
         # self.aspect = float(self.notes["SlowRatio"]) / float(self.notes["FastRatio"])
         defl_sens = float(notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
         t_step = volumes[0].step_info[-1][0]
-        return cls(notes, images, volumes, k, defl_sens, t_step, scansize)
+        trace = 1 if len(volumes) > 1 else None
+        return cls(notes, images, volumes, k, defl_sens, t_step, scansize, trace)
 
 
 ###############################################
