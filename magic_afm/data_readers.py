@@ -1298,7 +1298,7 @@ class QNMDReader:
     sync_dist: int
 
     @classmethod
-    def parse(cls, header, data, subheader, shape):
+    def parse(cls, header, data, subheader, shape, sync_dist):
         # QNM doesn't have its own height data, so it must be synthesized
         # I've chosen to do this by combining a height image with a sine wave
 
@@ -1309,18 +1309,6 @@ class QNMDReader:
         length = int(subheader["Data length"])
         offset = int(subheader["Data offset"])
         npts = length // (r * c * bpp)
-        csl = header["Ciao scan list"][0]
-        sync_dist = int(
-            round(
-                float(
-                    csl["Sync Distance QNM"]
-                    if "Sync Distance QNM" in csl
-                    else csl["Sync Distance"]
-                )
-                * float(csl["PFT Freq"].split()[0])
-                / 2
-            )
-        )
         d_ints = np.ndarray(
             shape=(r, c, npts), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
@@ -1453,6 +1441,7 @@ class NanoscopeFile:
     defl_sens: float
     t_step: float
     scansize: tuple[float, float]
+    sync_dist: int | None = None
 
     @classmethod
     def parse(cls, data: mmap):
@@ -1481,8 +1470,9 @@ class NanoscopeFile:
         # and in the image lists
         # \Aspect Ratio: 1:1
         # \Scan Size: 800 800 nm
-        fastpx = int(header["Ciao scan list"][0]["Samps/line"])
-        slowpx = int(header["Ciao scan list"][0]["Lines"])
+        csl = header["Ciao scan list"][0]
+        fastpx = int(csl["Samps/line"])
+        slowpx = int(csl["Lines"])
         shape = slowpx, fastpx
 
         images = {}
@@ -1505,16 +1495,29 @@ class NanoscopeFile:
                 height_for_z = images["Height Sensor"].get_image()
             except KeyError:
                 height_for_z = images["Height"].get_image()
+
+            sync_dist = int(
+                round(
+                    float(
+                        csl["Sync Distance QNM"]
+                        if "Sync Distance QNM" in csl
+                        else csl["Sync Distance"]
+                    )
+                    * float(csl["PFT Freq"].split()[0])
+                    / 2
+                )
+            )
             volumes = [
                 NanoscopeVolume.parse(
                     header, QNMZReader.parse(header, d_reader, height_for_z), d_reader
                 )
                 for d_reader in (
-                    QNMDReader.parse(header, data, d_subh, shape)
+                    QNMDReader.parse(header, data, d_subh, shape, sync_dist)
                     for d_subh in deflections
                 )
             ]
         else:
+            sync_dist = None
             volumes = [
                 NanoscopeVolume.parse(
                     header,
@@ -1525,14 +1528,14 @@ class NanoscopeFile:
             ]
         # volumes = {v.name:v for v in volumes}
         k = float(header["Ciao force image list"][0]["Spring Constant"])
-        defl_sens = float(header["Ciao scan list"][0]["@Sens. DeflSens"].split()[1])
+        defl_sens = float(csl["@Sens. DeflSens"].split()[1])
         npts = int(header["Ciao force list"][0]["force/line"].split()[0])
-        rate, unit = header["Ciao scan list"][0]["PFT Freq"].split()
+        rate, unit = csl["PFT Freq"].split()
         assert unit.lower() == "khz"
         rate = float(rate) * 1000
         t_step = 1 / rate / npts
 
-        scansize, units = header["Ciao scan list"][0]["Scan Size"].split()
+        scansize, units = csl["Scan Size"].split()
         if units == "nm":
             factor = 1.0
         elif units == "pm":
@@ -1545,7 +1548,7 @@ class NanoscopeFile:
         # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
         ratio = float(scansize) * factor / max(fastpx, slowpx)
         scansize = (fastpx * ratio, slowpx * ratio)
-        return cls(header, images, volumes, k, defl_sens, t_step, scansize)
+        return cls(header, images, volumes, k, defl_sens, t_step, scansize, sync_dist)
 
 
 SUFFIX_FVFILE_MAP = {
