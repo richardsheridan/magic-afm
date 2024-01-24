@@ -525,6 +525,63 @@ def interp_with_offset(x, xp, fp, offset):
     return np.interp(x, xp, fp) - offset
 
 
+@jit(nopython=True, nogil=True, cache=True)
+def mygradient(f, d):
+    """np.gradient is also surprisingly intensive, trim to 1d case
+
+    Copyright (c) 2005-2020, NumPy Developers.
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are
+    met:
+
+        * Redistributions of source code must retain the above copyright
+           notice, this list of conditions and the following disclaimer.
+
+        * Redistributions in binary form must reproduce the above
+           copyright notice, this list of conditions and the following
+           disclaimer in the documentation and/or other materials provided
+           with the distribution.
+
+        * Neither the name of the NumPy Developers nor the names of any
+           contributors may be used to endorse or promote products derived
+           from this software without specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+    OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+    LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+    DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+    THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+    """
+    dx = np.diff(d)
+    uniform_spacing = (dx == dx[0]).all()
+    out = np.empty_like(f)
+
+    # Numerical differentiation: 2nd order interior
+    if uniform_spacing:
+        out[1:-1] = (f[2:] - f[:-2]) / (2.0 * dx[0])
+    else:
+        dx1 = dx[0:-1]
+        dx2 = dx[1:]
+        a = -dx2 / (dx1 * (dx1 + dx2))
+        b = (dx2 - dx1) / (dx1 * dx2)
+        c = dx1 / (dx2 * (dx1 + dx2))
+        out[1:-1] = a * f[:-2] + b * f[1:-1] + c * f[2:]
+
+    # Numerical differentiation: 1st order edges
+    out[0] = (f[1] - f[0]) / dx[0]
+    out[-1] = (f[-1] - f[-2]) / dx[-1]
+
+    return out
+
+
 def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
     """Calculate, in reduced units, an extent Schwarz curve with long range LJ potential and snap-off physics.
 
@@ -642,8 +699,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
         # Find slope == red_k between vertical and horizontal parts of unstable branch
         f0 = mylinspace((7 * red_fc + 8) / 3, red_fc, 100, endpoint=False)
         d0 = schwarz_red(f0, red_fc, -1.0, 0.0)
-        # TODO: analytical gradient of schwarz unstable branch
-        df0dd0 = np.gradient(f0, d0)
+        df0dd0 = mygradient(f0, d0)
 
         s_end_pos = brentq(interp_with_offset, (d0, df0dd0, red_k), d0[0], d0[-1])
         if s_end_pos is not None:
