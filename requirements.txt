@@ -6,14 +6,13 @@
 #
 altgraph==0.17.4
     # via pyinstaller
-attrs==23.1.0
+attrs==23.2.0
     # via
     #   outcome
     #   trio
     #   trio-parallel
 cffi==1.16.0
     # via
-    #   samplerate
     #   trio
     #   trio-parallel
 colorama==0.4.6
@@ -22,13 +21,13 @@ contourpy==1.2.0
     # via matplotlib
 cycler==0.12.1
     # via matplotlib
-fonttools==4.46.0
+fonttools==4.47.2
     # via matplotlib
 h5py==3.10.0
     # via -r requirements.in
 idna==3.6
     # via trio
-imageio==2.33.0
+imageio==2.33.1
     # via -r requirements.in
 kiwisolver==1.4.5
     # via matplotlib
@@ -38,7 +37,7 @@ matplotlib==3.8.2
     # via -r requirements.in
 numba==0.58.1
     # via -r requirements.in
-numpy==1.26.2
+numpy==1.26.3
     # via
     #   -r requirements.in
     #   contourpy
@@ -55,20 +54,21 @@ packaging==23.2
     # via
     #   matplotlib
     #   pyinstaller
+    #   pyinstaller-hooks-contrib
 pefile==2023.2.7
     # via pyinstaller
-pillow==10.1.0
+pillow==10.2.0
     # via
     #   -r requirements.in
     #   imageio
     #   matplotlib
-psutil==5.9.6
+psutil==5.9.8
     # via -r requirements.in
 pycparser==2.21
     # via cffi
-pyinstaller==6.2.0
+pyinstaller==6.3.0
     # via -r requirements.in
-pyinstaller-hooks-contrib==2023.10
+pyinstaller-hooks-contrib==2024.0
     # via pyinstaller
 pyparsing==3.1.1
     # via matplotlib
@@ -76,7 +76,7 @@ python-dateutil==2.8.2
     # via matplotlib
 pywin32-ctypes==0.2.2
     # via pyinstaller
-samplerate==0.1.0
+samplerate==0.2.1
     # via -r requirements.in
 six==1.16.0
     # via python-dateutil
@@ -88,7 +88,7 @@ tblib==3.0.0
     # via trio-parallel
 tqdm==4.66.1
     # via -r requirements.in
-trio==0.23.1
+trio==0.24.0
     # via
     #   -r requirements.in
     #   trio-parallel
@@ -96,5 +96,7 @@ trio-parallel==1.2.1
     # via -r requirements.in
 
 # The following packages are considered to be unsafe in a requirements file:
-setuptools==69.0.2
-    # via pyinstaller
+setuptools==69.0.3
+    # via
+    #   pyinstaller
+    #   pyinstaller-hooks-contrib
