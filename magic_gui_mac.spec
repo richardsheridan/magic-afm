@@ -6,7 +6,7 @@ block_cipher = None
 
 
 a = Analysis(['magic_gui.py'],
-             binaries=[('./_samplerate_data/libsamplerate.dylib', './samplerate/_samplerate_data')],
+             binaries=[],
              datas=[('./README.rst', '.')],
              hiddenimports=[],
              hookspath=[],
