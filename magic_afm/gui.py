@@ -144,7 +144,7 @@ class ForceCurveOptions:
     disp_kind: DispKind
     k: float
     defl_sens: float
-    sync_dist: int | None
+    sync_dist: float | None
     radius: float
     tau: float
     trace: int | None
@@ -244,12 +244,12 @@ class ImageStats:
 class ForceVolumeParams:
     k: float
     defl_sens: float
-    sync_dist: int | None
+    sync_dist: float | None
     trace: int | None
 
 
 class SyncDistFVFile(data_readers.FVFile, Protocol):
-    sync_dist: int | None
+    sync_dist: float | None
 
 
 class TraceRetraceFVFile(data_readers.FVFile, Protocol):
@@ -329,13 +329,25 @@ class AsyncFVFile:
         image_name = self.strip_trace(image_name)
         self._units_map[image_name] = units
 
-    def _apply_sync_dist(self, d, sync_dist):
+    def _apply_sync_dist(self, d, sync_dist, _phasor_cache={}):
         assert hasattr(self.fvfile, "sync_dist")
         # sync dist is a roll to the left -> negative
         sync_dist = self.fvfile.sync_dist - sync_dist
         if sync_dist:
             d = d.reshape((-1,))
-            d = np.roll(d, sync_dist)
+            int_sync_dist = int(sync_dist)
+            d = np.roll(d, int_sync_dist)
+            sync_frac = sync_dist - int_sync_dist
+            if sync_frac:
+                try:
+                    phasors = _phasor_cache[len(d)]
+                except KeyError:
+                    phasors = _phasor_cache[len(d)] = np.exp(
+                        -2j * np.pi * np.fft.rfftfreq(len(d))
+                    )
+                d_fft = np.fft.rfft(d)
+                d_fft *= phasors**sync_frac
+                d = np.fft.irfft(d_fft)
             d = d.reshape((2, -1))
         return d
 
@@ -1034,8 +1046,8 @@ class ForceVolumeTkDisplay:
                 preproc_labelframe,
                 from_=-initial_values.sync_dist * 2,
                 to=initial_values.sync_dist * 2,
-                increment=1,
-                format="%0.0f",
+                increment=0.1,
+                format="%0.2f",
                 width=6,
                 textvariable=self.sync_dist_strvar,
             )
@@ -1207,7 +1219,7 @@ class ForceVolumeTkDisplay:
 
     def get_sync_dist_or_none(self):
         if hasattr(self, "sync_dist_strvar"):
-            return int(self.sync_dist_strvar.get())
+            return float(self.sync_dist_strvar.get())
 
     def get_trace_or_none(self):
         if hasattr(self, "data_select_intvar"):
@@ -1298,7 +1310,7 @@ class ForceVolumeTkDisplay:
 
     def sync_dist_callback(self, *args):
         try:
-            int(self.sync_dist_strvar.get())
+            float(self.sync_dist_strvar.get())
         except ValueError:
             self.sync_dist_sbox.configure(foreground="red2")
         else:

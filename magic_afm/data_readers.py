@@ -1280,7 +1280,9 @@ class QNMDReader:
     ints: np.ndarray = field(repr=False)
     shape: Index
     scale: np.float32
-    sync_dist: int
+    sync_dist_slice: slice
+    phasors: np.ndarray
+    sync_frac: float
 
     @classmethod
     def parse(cls, header, data, subheader, shape, sync_dist):
@@ -1303,8 +1305,16 @@ class QNMDReader:
         hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
         d_scale = np.float32(soft_scale * hard_scale)
         name = subheader["@4:Image Data"].split('"')[1]
-        sync_dist = (int(sync_dist) - n_ext) % npts  # according to Bruker via Bede
-        return cls(data, name, d_ints, shape, d_scale, sync_dist)
+        sync_int = int(sync_dist)
+        sync_frac = sync_dist - sync_int
+        sync_dist = (sync_int - n_ext) % npts  # according to Bruker via Bede
+        sync_dist_slice = np.s_[sync_dist : sync_dist + npts]
+        # e^(-i*2*pi*omega[n]*phase_shift_in_seconds),
+        # time cancels out if sync dist has units of sampling rate
+        phasors = np.exp(-2j * np.pi * np.fft.rfftfreq(npts) * sync_frac)
+        return cls(
+            data, name, d_ints, shape, d_scale, sync_dist_slice, phasors, sync_frac
+        )
 
     def get_curve(self, r, c):
         i = np.ravel_multi_index((r, c), self.shape)
@@ -1317,10 +1327,13 @@ class QNMDReader:
         # remove extend segment marker
         if d[0, 0, 0] == -32768 * self.scale:
             d[:, 0, 0] = d[:, 0, 1]
-        npts = d.size // 2
         d = d.reshape(-1)
         # "roll" across 2 indents (usually mostly consisting of the 2nd indent)
-        d = d[self.sync_dist : self.sync_dist + npts]
+        d = d[self.sync_dist_slice]
+        if self.sync_frac:
+            d_fft = np.fft.rfft(d)
+            d_fft *= self.phasors
+            d = np.fft.irfft(d_fft)
         return d.reshape((2, -1))
 
 
@@ -1433,7 +1446,7 @@ class NanoscopeFile:
     defl_sens: float
     t_step: float
     scansize: tuple[float, float]
-    sync_dist: int | None = None
+    sync_dist: float | None = None
 
     @classmethod
     def parse(cls, data: mmap):
@@ -1488,16 +1501,15 @@ class NanoscopeFile:
             except KeyError:
                 height_for_z = images["Height"].get_image()
 
-            sync_dist = int(
-                round(
-                    float(
-                        csl["Sync Distance QNM"]
-                        if "Sync Distance QNM" in csl
-                        else csl["Sync Distance"]
-                    )
-                    * float(csl["PFT Freq"].split()[0])
-                    / 2
+            sync_dist = round(
+                float(
+                    csl["Sync Distance QNM"]
+                    if "Sync Distance QNM" in csl
+                    else csl["Sync Distance"]
                 )
+                # actually sum(Samps/line) / Sample Points, but it works
+                * float(csl["PFT Freq"].split()[0]) / 2,
+                2,
             )
             volumes = [
                 NanoscopeVolume.parse(
