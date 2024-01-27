@@ -166,15 +166,6 @@ def parse_nanoscope_header(header_lines: Iterable[str]):
     return header
 
 
-def bruker_bpp_fix(bpp, version):
-    if (
-        version > "0x09200000"
-    ):  # Counting on lexical ordering here, hope zeros don't change...
-        return 4
-    else:
-        return int(bpp)
-
-
 def parse_ar_note(note: Iterable[str]):
     # The notes have a very regular key-value structure
     # convert to dict for later access
@@ -1200,10 +1191,12 @@ class NanoscopeImage:
 
     @classmethod
     def parse_image(cls, data, header, h, name):
+        length = int(h["Data length"])
+        offset = int(h["Data offset"])
+        r = int(h["Number of lines"])
+        c = int(h["Samps/line"])
+        bpp = length // (r * c)
         value = h["@2:Z scale"]
-        bpp = bruker_bpp_fix(
-            h["Bytes/pixel"], header["Force file list"][0]["Version"].strip()
-        )
         hard_scale = float(value.split()[-2]) / (2 ** (bpp * 8))
         hard_offset = float(h["@2:Z offset"].split()[-2]) / (2 ** (bpp * 8))
         soft_scale_name = "@" + value[1 + value.find("[") : value.find("]")]
@@ -1214,11 +1207,6 @@ class NanoscopeImage:
         soft_scale = float(soft_scale_string.split()[1]) / NANOMETER_UNIT_CONVERSION
         unit_scale = np.float32(hard_scale * soft_scale)
         unit_offset = np.float32(hard_offset * soft_scale)
-        length = int(h["Data length"])
-        offset = int(h["Data offset"])
-        r = int(h["Number of lines"])
-        c = int(h["Samps/line"])
-        assert length == r * c * bpp
         return cls(
             data=data,
             name=name,
@@ -1251,7 +1239,6 @@ class FFVReader:
     name: str
     ints: np.ndarray = field(repr=False)
     scale: np.float32
-    split: int
     _soft_scale_map = {
         "Height Sensor": "@Sens. ZsensSens",
         "Height": "@Sens. ZSens",
@@ -1263,16 +1250,14 @@ class FFVReader:
         c = int(header["Ciao scan list"][0]["Samps/line"])
         r = int(header["Ciao scan list"][0]["Lines"])
         name = subheader["@4:Image Data"].split('"')[1]
-        split, split2 = map(int, subheader["Samps/line"].split())
         offset = int(subheader["Data offset"])
-        bpp = bruker_bpp_fix(
-            subheader["Bytes/pixel"],
-            header["Force file list"][0]["Version"].strip(),
-        )
         length = int(subheader["Data length"])
-        npts = length // (r * c * bpp)
+        npts = int(subheader["Sample Points"])
+        n_ext, n_ret = tuple(map(int, subheader["Samps/line"].split()))
+        assert n_ext == n_ret
+        bpp = length // (r * c * npts)
         ints = np.ndarray(
-            shape=(r, c, npts), dtype=f"<i{bpp}", buffer=data, offset=offset
+            shape=(r, c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
         value = subheader["@4:Z scale"]
         soft_scale = float(
@@ -1280,13 +1265,12 @@ class FFVReader:
         )
         hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
         scale = np.float32(soft_scale * hard_scale)
-        return cls(data, name, ints, scale, split)
+        return cls(data, name, ints, scale)
 
     def get_curve(self, r, c):
         with memoryview(self.data):  # assert data is open, and hold it open
             f = self.ints[r, c] * self.scale
-        s = self.split
-        return f[s - 1 :: -1], f[s:]
+        return f[0, ::-1], f[1]
 
 
 @frozen
@@ -1294,6 +1278,7 @@ class QNMDReader:
     data: mmap
     name: str
     ints: np.ndarray = field(repr=False)
+    shape: Index
     scale: np.float32
     sync_dist: int
 
@@ -1303,14 +1288,14 @@ class QNMDReader:
         # I've chosen to do this by combining a height image with a sine wave
 
         r, c = shape
-        bpp = bruker_bpp_fix(
-            subheader["Bytes/pixel"], header["Force file list"][0]["Version"].strip()
-        )
         length = int(subheader["Data length"])
         offset = int(subheader["Data offset"])
-        npts = length // (r * c * bpp)
+        npts = int(header["Ciao scan list"][0]["Sample Points"])
+        n_ext, n_ret = tuple(map(int, subheader["Samps/line"].split()))
+        assert n_ext == n_ret
+        bpp = length // (r * c * npts)
         d_ints = np.ndarray(
-            shape=(r, c, npts), dtype=f"<i{bpp}", buffer=data, offset=offset
+            shape=(r * c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
 
         value = subheader["@4:Z scale"]
@@ -1318,17 +1303,24 @@ class QNMDReader:
         hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
         d_scale = np.float32(soft_scale * hard_scale)
         name = subheader["@4:Image Data"].split('"')[1]
-        return cls(data, name, d_ints, d_scale, sync_dist)
+        sync_dist = (int(sync_dist) - n_ext) % npts  # according to Bruker via Bede
+        return cls(data, name, d_ints, shape, d_scale, sync_dist)
 
     def get_curve(self, r, c):
+        i = np.ravel_multi_index((r, c), self.shape)
+        if i:
+            i -= 1  # due to applying sync_dist, the first pixel is OOB
         with memoryview(self.data):  # assert data is open, and hold it open
-            d = self.ints[r, c] * self.scale
-        s = len(d) // 2
-        d[:s] = d[s - 1 :: -1]
-        # remove blip
-        if d[0] == -32768 * self.scale:
-            d[0] = d[1]
-        d = np.roll(d, s - self.sync_dist)  # TODO roll across two adjacent indents
+            d = self.ints[i : i + 2] * self.scale
+        # flip extend segments
+        d[:, 0, :] = d[:, 0, ::-1]
+        # remove extend segment marker
+        if d[0, 0, 0] == -32768 * self.scale:
+            d[:, 0, 0] = d[:, 0, 1]
+        npts = d.size // 2
+        d = d.reshape(-1)
+        # "roll" across 2 indents (usually mostly consisting of the 2nd indent)
+        d = d[self.sync_dist : self.sync_dist + npts]
         return d.reshape((2, -1))
 
 
@@ -1344,7 +1336,7 @@ class QNMZReader:
         # I've chosen to do this by combining a height image with a sine wave
 
         amp = np.float32(header["Ciao scan list"][0]["Peak Force Amplitude"])
-        npts = d_reader.ints.shape[-1]
+        npts = d_reader.ints[0].size
         # phase = d_reader.sync_dist / npts * 2 * np.pi
         phase = np.pi
         # TODO: apply sync dist here rather than d?
