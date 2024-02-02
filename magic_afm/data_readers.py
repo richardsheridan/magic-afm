@@ -1252,10 +1252,9 @@ class FFVReader:
         name = subheader["@4:Image Data"].split('"')[1]
         offset = int(subheader["Data offset"])
         length = int(subheader["Data length"])
-        npts = int(subheader["Sample Points"])
+        # npts = int(subheader["Sample Points"])  # only QNM?
         n_ext, n_ret = tuple(map(int, subheader["Samps/line"].split()))
-        assert n_ext == n_ret
-        bpp = length // (r * c * npts)
+        bpp = length // (r * c * (n_ret + n_ext))
         ints = np.ndarray(
             shape=(r, c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
