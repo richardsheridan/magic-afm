@@ -76,7 +76,7 @@ python-dateutil==2.8.2
     # via matplotlib
 pywin32-ctypes==0.2.2
     # via pyinstaller
-samplerate==0.2.1
+samplerate==0.1.0
     # via -r requirements.in
 six==1.16.0
     # via python-dateutil
