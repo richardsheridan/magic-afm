@@ -6,6 +6,7 @@ data in an intuitive and responsive package. By facilitating these sorts of
 calculations, we hope to improve the overall systematic error of reported
 modulus maps in the greater AFM nanomechanics community.
 """
+
 __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
@@ -1679,9 +1680,8 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                     existing_points.add(point)
                     display.plot_ax.relim()
                     display.plot_ax.set_prop_cycle(None)
-                point_data[
-                    point
-                ] = force_curve_data  # unconditional so draw_force_curve gets the latest data
+                # unconditional so draw_force_curve gets the latest data
+                point_data[point] = force_curve_data
 
                 # Drawing Phase
                 # Based options choose plots and collect artists for deletion
