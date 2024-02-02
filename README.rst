@@ -20,8 +20,6 @@ Supported file formats:
 
 - Asylum research ARDF/HDF5
 
-  - ARDF usage requires ARDFtoHDF5.exe, see Installation_.
-
 - Additional format contributions welcome!
 
 Motivation
@@ -73,10 +71,8 @@ dependencies settle.
 A PyInstaller release for Windows is available on Github. Simply download the
 ZIP archive, extract it to your hard drive, and run :code:`magic_gui.exe`.
 
-If dealing with ARDF files, you must acquire :code:`ARDFtoHDF5.exe` from Oxford
-Instruments/Asylum Research and put it in the root of the source or Pyinstaller
-folder. We then are able to automatically convert the ARDF files to HDF5
-on demand. (NOTE: This will duplicate all each file's data on your hard drive!)
+As of v0.9.0, we can read ARDF files natively, so :code:`ARDFtoHDF5.exe` is
+no longer required. We can still read the converted HDF5 files, if necessary.
 
 Usage
 -----
@@ -152,13 +148,16 @@ respectively. The data are in absolute units, as recorded in the raw data,
 without any offsets/shifts. This view provides a quick qualitative check on a
 force curve.
 
-The "Force curve display" can be toggled between spatial (d vs z) temporal (d vs t) and
-natural (f vs δ) units. The "Preprocessing" parameters are read from the data file
-metadata but can be adjusted on the fly, updating the display immediately.
-"Deflection Sens." refers to the calibration factor that multiplies the static vertical
-photodetector signal to obtain the cantilever deflection in nm (sometimes called
-InvOLS.) "Spring Constant" refers to the static cantilever spring constant
-measured at the position of the probe tip.
+The "Force curve display" can be toggled between spatial (d vs z) temporal (d vs t)
+and natural (f vs δ) units. "Select data source" appears if we detect that the file
+contains Trace and or Retrace data, so you can select which curves to display and fit
+. The "Preprocessing" parameters are read from the data file metadata but can be
+adjusted on the fly, updating the display immediately. "Deflection Sens." refers to
+the calibration factor that multiplies the static vertical photodetector signal to
+obtain the cantilever deflection in nm (sometimes called InvOLS.) "Spring Constant"
+refers to the static cantilever spring constant measured at the position of the probe
+tip. "Sync Distance" is only available when dealing with QNM data, and corrects the
+position of the peak force with respect to time and z postion.
 
 Fitting Data
 ^^^^^^^^^^^^
@@ -222,6 +221,8 @@ be exported like any other image by clicking "Export calculated maps".
 .. TODO: establish if you are in the magic ratio regime
 
 Future Plans:
+
+- Test suite and CI
 
 - Viscoelastic model
 
