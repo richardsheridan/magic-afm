@@ -1036,7 +1036,7 @@ def load_force_curve(opened_fvol, fit_mode, k, rc):
     return process_force_curve((rc, x), fit_mode, k)
 
 
-def process_force_curve(x, fit_mode, k):
+def process_force_curve(x, fit_mode, k, s_ratio):
     rc, (zxr, dxr) = x
     npts = sum(map(len, zxr))
     if npts > RESAMPLE_NPTS:
@@ -1054,6 +1054,7 @@ def process_force_curve(x, fit_mode, k):
         z, d, split = np.concatenate(zxr), np.concatenate(dxr), len(zxr[0])
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
+    d *= s_ratio
     delta = z - d
     f = d * k
     return delta, f, split, rc

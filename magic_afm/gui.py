@@ -286,13 +286,7 @@ class AsyncFVFile:
     }
 
     fvfile: ExpandedFVFile
-    k: float
-    defl_sens: float
     _image_cache: dict[str, np.ndarray] = field(factory=dict, init=False, repr=False)
-
-    @classmethod
-    def from_fvfile(cls, fvfile: data_readers.FVFile):
-        return cls(fvfile, fvfile.k, fvfile.defl_sens)
 
     @property
     def image_names(self):
@@ -306,10 +300,10 @@ class AsyncFVFile:
             return None
 
     @property
-    def parameters(self):
+    def initial_parameters(self):
         return ForceVolumeParams(
-            k=self.k,
-            defl_sens=self.defl_sens,
+            k=self.fvfile.k,
+            defl_sens=self.fvfile.defl_sens,
             sync_dist=getattr(self.fvfile, "sync_dist", None),
             trace=getattr(self.fvfile, "trace", None),
         )
@@ -388,13 +382,13 @@ class DemoStub:
     scansize: object = 100, 100
     t_step: object = 5e-6
     volumes: tuple = (None, None)
+    k: float = field(default=10.0)
+    defl_sens: float = field(default=5.0)
+    sync_dist: int = field(default=0)
 
 
 @mutable
 class DemoForceVolumeFile(AsyncFVFile):
-    k: float = field(default=10.0)
-    defl_sens: float = field(default=5.0)
-    sync_dist: int = field(default=0)
     delta: np.ndarray = field(
         default=-15 * (np.cos(np.linspace(0, np.pi * 2, 1000, endpoint=False)) + 0.5)
     )
@@ -415,8 +409,8 @@ class DemoForceVolumeFile(AsyncFVFile):
         deltaret = self.delta[self.delta.size // 2 :]
         fext = calculation.force_curve(calculation.red_extend, deltaext, *parms)
         fret = calculation.force_curve(calculation.red_retract, deltaret, *parms)
-        dext = fext / self.k + gen.normal(scale=0.1, size=fext.size)
-        dret = fret / self.k + gen.normal(scale=0.1, size=fret.size)
+        dext = fext / self.fvfile.k + gen.normal(scale=0.1, size=fext.size)
+        dret = fret / self.fvfile.k + gen.normal(scale=0.1, size=fret.size)
         zext = deltaext + dext + gen.normal(scale=0.01, size=fext.size)
         zret = deltaret + dret + gen.normal(scale=0.01, size=fret.size)
         return (zext, zret), (dext, dret)
@@ -869,7 +863,7 @@ def unbind_mousewheel(widget_with_bind):
 
 class ForceVolumeTkDisplay:
     def __init__(self, root, name, opened_fvfile: AsyncFVFile, **kwargs):
-        initial_values = opened_fvfile.parameters
+        initial_values = opened_fvfile.initial_parameters
         self._traces: list[tuple[tk.Variable, str]] = []
         self._nursery = None
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
@@ -1427,6 +1421,8 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                         partial(
                             calculation.process_force_curve,
                             k=options.k,
+                            s_ratio=options.defl_sens
+                            / opened_fvol.initial_parameters.defl_sens,
                             fit_mode=options.fit_mode,
                         ),
                         opened_fvol.iter_curves(options.trace, options.sync_dist),
@@ -1651,6 +1647,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                     *force_curve,
                     opened_fvol.fvfile.t_step,
                     options,
+                    opened_fvol.initial_parameters,
                     trio.from_thread.check_cancelled,
                 )
                 del force_curve  # contained in data
@@ -1950,7 +1947,14 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
     return artists, artists[0].get_color()
 
 
-def calculate_force_data(zxr, dxr, t_step, options, cancel_poller=bool):
+def calculate_force_data(
+    zxr,
+    dxr,
+    t_step,
+    options: ForceCurveOptions,
+    fvparams: ForceVolumeParams,
+    cancel_poller=bool,
+):
     cancel_poller()
     npts = sum(map(len, zxr))
     t_step *= 1000
@@ -1969,6 +1973,10 @@ def calculate_force_data(zxr, dxr, t_step, options, cancel_poller=bool):
     t = np.linspace(0, npts * t_step, num=npts, endpoint=False, dtype=dxr[0].dtype)
     txr = t[: len(dxr[0])], t[len(dxr[0]) :]
     assert npts == sum(map(len, txr))
+    # noinspection PyTypeChecker
+    dxr: tuple[np.ndarray, np.ndarray] = tuple(
+        map(np.multiply, dxr, (options.defl_sens / fvparams.defl_sens,) * len(dxr))
+    )
     # noinspection PyTypeChecker
     fxr: tuple[np.ndarray, np.ndarray] = tuple(
         map(np.multiply, dxr, (options.k,) * len(dxr))
@@ -2074,7 +2082,7 @@ async def open_one(root, path):
     open_thing = await trio.to_thread.run_sync(opener, path)
     try:
         fvfile = await trio.to_thread.run_sync(fvfile_cls.parse, open_thing)
-        opened_fv = AsyncFVFile.from_fvfile(fvfile)
+        opened_fv = AsyncFVFile(fvfile)
         display = ForceVolumeTkDisplay(root, path.name, opened_fv)
         await force_volume_task(display, opened_fv)
         display.destroy()
