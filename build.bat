@@ -7,7 +7,7 @@ python magic_afm\make_version.py
 pyinstaller -y magic_gui_win.spec
 call conda deactivate
 call conda remove -n mafm-build-tmp -y --all
-call copy ARDFtoHDF5.exe dist\magic_gui
+REM call copy ARDFtoHDF5.exe dist\magic_gui
 goto :EOF
 
 :error
