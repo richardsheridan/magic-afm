@@ -162,7 +162,7 @@ class ForceCurveData:
     beta: Optional[np.ndarray] = None
     beta_err: Optional[np.ndarray] = None
     calc_fun: Optional[Callable] = None
-    sl: Optional[slice] = None
+    fit_mode: Optional[calculation.FitMode] = None
     f_fit: Optional[np.ndarray] = None
     d_fit: Optional[np.ndarray] = None
     defl: Optional[np.ndarray] = None
@@ -577,7 +577,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         self._parent_nursery = nursery
         self._get_image_names = get_image_names
         self._get_image_by_name = get_image_by_name
-        self._point_data = point_data
+        self._point_data: dict[ImagePoint, ForceCurveData] = point_data
         self._wait_cursor_for_draw_cm = nullcontext
 
     def export_force_curves(self):
@@ -588,8 +588,17 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
     async def _aexport_force_curves(self):
         if not self._point_data:
             return
-        is_fit = next(iter(self._point_data.values())).beta is not None
-        if is_fit:
+        fit_mode = next(iter(self._point_data.values())).fit_mode
+
+        if fit_mode == calculation.FitMode.EXTEND:
+            sl = np.s_[0]
+        elif fit_mode == calculation.FitMode.RETRACT:
+            sl = np.s_[1]
+        elif fit_mode == calculation.FitMode.BOTH:
+            sl = np.s_[:]
+        else:
+            assert fit_mode is None
+        if fit_mode:
             h = "t (ms); z (nm); d (nm); d_fit (nm)"
         else:
             h = "t (ms); z (nm); d (nm)"
@@ -644,21 +653,21 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             return
         arrays = {}
         for point, data in self._point_data.items():
-            if is_fit:
+            if fit_mode:
                 arrays[f"r{point.r:04d}c{point.c:04d}"] = np.column_stack(
                     [
-                        data.t[data.sl],
-                        data.z[data.sl],
-                        data.d[data.sl],
+                        np.ravel(data.txr[sl]),
+                        np.ravel(data.zxr[sl]),
+                        np.ravel(data.dxr[sl]),
                         data.d_fit,
                     ]
                 )
             else:
                 arrays[f"r{point.r:04d}c{point.c:04d}"] = np.column_stack(
                     [
-                        data.t,
-                        data.z,
-                        data.d,
+                        np.ravel(data.txr),
+                        np.ravel(data.zxr),
+                        np.ravel(data.dxr),
                     ]
                 )
 
@@ -1352,7 +1361,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
     plot_artists = []
     table: Optional[Table] = None
     existing_points = set()
-    point_data = {}
+    point_data: dict[ImagePoint, ForceCurveData] = {}
 
     # set in change_image_callback
     colorbar: Optional[Colorbar] = None
@@ -2040,6 +2049,7 @@ def calculate_force_data(
         beta=beta,
         beta_err=beta_err,
         calc_fun=calc_fun,
+        fit_mode=options.fit_mode,
         f_fit=f_fit,
         d_fit=d_fit,
         defl=deflection,
