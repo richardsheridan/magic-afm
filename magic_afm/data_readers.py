@@ -1291,9 +1291,10 @@ class QNMDReader:
         r, c = shape
         length = int(subheader["Data length"])
         offset = int(subheader["Data offset"])
-        npts = int(header["Ciao scan list"][0]["Sample Points"])
+        # npts = int(header["Ciao scan list"][0]["Sample Points"]) only at 2kHz?
         n_ext, n_ret = tuple(map(int, subheader["Samps/line"].split()))
         assert n_ext == n_ret
+        npts = n_ext + n_ret
         bpp = length // (r * c * npts)
         d_ints = np.ndarray(
             shape=(r * c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
