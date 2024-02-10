@@ -11,10 +11,10 @@ __author__ = "Richard J. Sheridan"
 __app_name__ = __doc__.split("\n", 1)[0]
 
 # noinspection PyUnreachableCode
-if __debug__:
-    from multiprocessing import parent_process
-
-    assert parent_process() is None, "importing gui code in a worker"
+# if __debug__:
+#     from multiprocessing import parent_process
+#
+#     assert parent_process() is None, "importing gui code in a worker"
 
 import sys
 
@@ -66,8 +66,10 @@ import imageio
 import matplotlib
 import numpy as np
 import outcome
-import trio
-import trio_parallel
+import anyio
+import anyio.to_thread
+import anyio.to_process
+import anyio.from_thread
 
 from attrs import field, mutable, frozen, asdict
 from matplotlib.axes import Axes
@@ -357,10 +359,10 @@ class AsyncFVFile:
 
     async def get_image(self, image_name):
         if image_name in self._image_cache:
-            await trio.sleep(0)
+            await anyio.sleep(0)
             image = self._image_cache[image_name]
         else:
-            image = await trio.to_thread.run_sync(
+            image = await anyio.to_thread.run_sync(
                 self.fvfile.images[image_name].get_image
             )
             self._image_cache[image_name] = image
@@ -417,7 +419,7 @@ class DemoForceVolumeFile(AsyncFVFile):
 
     async def get_image(self, image_name):
         if image_name in self._image_cache:
-            await trio.sleep(0)
+            await anyio.sleep(0)
             image = self._image_cache[image_name]
         else:
             image = np.zeros((64, 64), dtype=np.float32)
@@ -431,7 +433,7 @@ class DemoForceVolumeFile(AsyncFVFile):
 class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
     def __init__(self, figure, master=None):
         self._resize_pending = None
-        self.draw_send, self.draw_recv = trio.open_memory_channel(inf)
+        self.draw_send, self.draw_recv = anyio.create_memory_object_stream(inf)
 
         super().__init__(figure, master)
 
@@ -447,34 +449,34 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
             try:
                 while True:
                     draw_fn = self.draw_recv.receive_nowait()
-                    await trio.to_thread.run_sync(draw_fn)
-            except trio.WouldBlock:
+                    await anyio.to_thread.run_sync(draw_fn)
+            except anyio.WouldBlock:
                 self._maybe_resize()
                 # don't set delay based on this, it is exceptionally lengthy
-                await trio.to_thread.run_sync(self.draw)
+                await anyio.to_thread.run_sync(self.draw)
         while True:
             # Sleep until someone sends artist calls
             draw_fn = await self.draw_recv.receive()
             # Set deadline ASAP so delay scope is accurate
-            deadline = trio.current_time() + delay
+            deadline = anyio.current_time() + delay
             async with self.spinner_scope():
                 # if draw_fn returns a truthy value, no draw needed
-                if await trio.to_thread.run_sync(draw_fn):
+                if await anyio.to_thread.run_sync(draw_fn):
                     continue
                 # Batch rapid artist call requests if a draw is incoming
                 # spend roughly equal time building artists and drawing
                 while True:
-                    with trio.move_on_at(deadline) as delay_scope:
+                    with anyio.CancelScope(deadline=deadline) as delay_scope:
                         draw_fn = await self.draw_recv.receive()
                     if delay_scope.cancelled_caught:
                         break
-                    await trio.to_thread.run_sync(draw_fn)
+                    await anyio.to_thread.run_sync(draw_fn)
                 self._maybe_resize()
-                t = trio.current_time()
-                await trio.to_thread.run_sync(self.draw)
+                t = anyio.current_time()
+                await anyio.to_thread.run_sync(self.draw)
                 # previous delay is not great predictor of next delay
                 # for now try exponential moving average
-                delay = ((trio.current_time() - t) + delay) / 2.0
+                delay = ((anyio.current_time() - t) + delay) / 2.0
                 delay = min(delay, 1.0)
                 # Funny story, we only want tight layout behavior on resize and
                 # a few other special cases, but also we want super().draw()
@@ -619,7 +621,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         defaultextension = ""
         initialdir = os.path.expanduser(matplotlib.rcParams["savefig.directory"])
         initialfile = os.path.basename(self._prev_filename)
-        fname = await trio.to_thread.run_sync(
+        fname = await anyio.to_thread.run_sync(
             partial(
                 tk.filedialog.asksaveasfilename,
                 master=self,
@@ -642,7 +644,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         try:
             exporter = exporter_map[ext]
         except KeyError:
-            await trio.to_thread.run_sync(
+            await anyio.to_thread.run_sync(
                 partial(
                     tkinter.messagebox.showerror,
                     master=self,
@@ -673,9 +675,9 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
 
         if exporter is np.savez_compressed:
             try:
-                await trio.to_thread.run_sync(partial(exporter, fname, **arrays))
+                await anyio.to_thread.run_sync(partial(exporter, fname, **arrays))
             except Exception as e:
-                await trio.to_thread.run_sync(
+                await anyio.to_thread.run_sync(
                     partial(
                         tkinter.messagebox.showerror,
                         master=self,
@@ -686,11 +688,11 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         elif isinstance(exporter, partial) and exporter.func is np.savetxt:
             for name, array in arrays.items():
                 try:
-                    await trio.to_thread.run_sync(
+                    await anyio.to_thread.run_sync(
                         exporter, root + "_" + name + ext, array
                     )
                 except Exception as e:
-                    await trio.to_thread.run_sync(
+                    await anyio.to_thread.run_sync(
                         partial(
                             tkinter.messagebox.showerror,
                             master=self,
@@ -700,7 +702,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
                     )
                     break
         else:
-            await trio.to_thread.run_sync(
+            await anyio.to_thread.run_sync(
                 partial(
                     tkinter.messagebox.showerror,
                     master=self,
@@ -737,7 +739,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         defaultextension = ""
         initialdir = os.path.expanduser(matplotlib.rcParams["savefig.directory"])
         initialfile = os.path.basename(self._prev_filename)
-        fname = await trio.to_thread.run_sync(
+        fname = await anyio.to_thread.run_sync(
             partial(
                 tk.filedialog.asksaveasfilename,
                 master=self,
@@ -766,11 +768,11 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
                 # TODO: solve this at the data reader level?
                 image = (await self._get_image_by_name(image_name))[::-1]
                 try:
-                    await trio.to_thread.run_sync(
+                    await anyio.to_thread.run_sync(
                         exporter, root + "_" + image_name[4:] + ext, image
                     )
                 except Exception as e:
-                    await trio.to_thread.run_sync(
+                    await anyio.to_thread.run_sync(
                         partial(
                             tkinter.messagebox.showerror,
                             master=self,
@@ -831,13 +833,13 @@ class TkHost:
         self.root.destroy()
 
     def run(self, async_fn, *args):
-        trio.lowlevel.start_guest_run(
-            async_fn,
-            *args,
+        import aioguest
+
+        aioguest.start_guest_run(
+            async_fn(*args),
             run_sync_soon_threadsafe=self.run_sync_soon_threadsafe,
             run_sync_soon_not_threadsafe=self.run_sync_soon_not_threadsafe,
             done_callback=self.done_callback,
-            restrict_keyboard_interrupt_to_checkpoints=True,
         )
         try:
             self.root.mainloop()
@@ -1377,7 +1379,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
 
         async with spinner_scope():
             # assign pbar and progress_image ASAP in case of cancel
-            with trio.CancelScope() as cancel_scope, tqdm_tk(
+            with anyio.CancelScope() as cancel_scope, tqdm_tk(
                 total=ncurves,
                 desc=f"Fitting {display.name} force curves",
                 smoothing=0.01,
@@ -1423,10 +1425,10 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                     display.canvas.restore_region(bg)
                     return True
 
-                async with trio.open_nursery() as pipeline_nursery:
+                async with anyio.create_task_group() as pipeline_nursery:
                     force_curve_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
-                        trio.to_thread.run_sync,
+                        anyio.to_thread.run_sync,
                         partial(
                             calculation.process_force_curve,
                             k=options.k,
@@ -1442,7 +1444,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                     del d["disp_kind"]
                     property_aiter = await pipeline_nursery.start(
                         async_tools.to_sync_runner_map_unordered,
-                        trio_parallel.run_sync,
+                        anyio.to_process.run_sync,
                         partial(calculation.calc_properties_imap, **d),
                         force_curve_aiter,
                         chunksize,
@@ -1517,7 +1519,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
             if positive:
                 norm = LogNorm
             else:
-                await trio.to_thread.run_sync(
+                await anyio.to_thread.run_sync(
                     partial(
                         tkinter.messagebox.showwarning,
                         master=display.tkwindow,
@@ -1571,7 +1573,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
         await display.canvas.draw_send.send(change_image_draw_fn)
 
     async def redraw_existing_points_task(task_status):
-        redraw_send, redraw_recv = trio.open_memory_channel(inf)
+        redraw_send, redraw_recv = anyio.create_memory_object_stream(inf)
 
         def clear_points_draw_fn():
             for artist in img_artists:
@@ -1594,7 +1596,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
             while True:
                 try:
                     msg = redraw_recv.receive_nowait() or msg
-                except trio.WouldBlock:
+                except anyio.WouldBlock:
                     break
             await display.canvas.draw_send.send(clear_points_draw_fn)
             async with spinner_scope():
@@ -1612,7 +1614,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
         if name not in opened_fvol.image_names:
             manip_fn = calculation.MANIPULATIONS[manip_name]
             async with spinner_scope():
-                manip_img = await trio.to_thread.run_sync(
+                manip_img = await anyio.to_thread.run_sync(
                     manip_fn, axesimage.get_array().data
                 )
             opened_fvol.add_image(name, unit, manip_img)
@@ -1626,7 +1628,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
         options: ForceCurveOptions,
         clear_previous: bool,
         *,
-        task_status=trio.TASK_STATUS_IGNORED,
+        task_status=anyio.TASK_STATUS_IGNORED,
     ):
         existing_points.add(point)  # should be before 1st checkpoint
 
@@ -1639,25 +1641,25 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
             plot_curve_cancels_pending.clear()
         task_status.started()
         async with spinner_scope():
-            with trio.CancelScope() as cancel_scope:
+            with anyio.CancelScope() as cancel_scope:
                 plot_curve_cancels_pending.add(cancel_scope)
 
                 # Calculation phase
                 # Do a few long-running jobs, likely to be canceled
-                force_curve = await trio.to_thread.run_sync(
+                force_curve = await anyio.to_thread.run_sync(
                     opened_fvol.get_curve,
                     point.r,
                     point.c,
                     options.trace,
                     options.sync_dist,
                 )
-                force_curve_data = await trio.to_thread.run_sync(
+                force_curve_data = await anyio.to_thread.run_sync(
                     calculate_force_data,
                     *force_curve,
                     opened_fvol.fvfile.t_step,
                     options,
                     opened_fvol.initial_parameters,
-                    trio.from_thread.check_cancelled,
+                    anyio.from_thread.check_cancelled,
                 )
                 del force_curve  # contained in data
             plot_curve_cancels_pending.discard(cancel_scope)
@@ -1712,7 +1714,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
             await display.canvas.draw_send.send(plot_point_draw_fn)
 
     async def mpl_img_pick_event_task(task_status):
-        send_chan, recv_chan = trio.open_memory_channel(inf)
+        send_chan, recv_chan = anyio.create_memory_object_stream(inf)
         task_status.started(send_chan)
         async for mouseevent in recv_chan:
             if mouseevent.button != MouseButton.LEFT:
@@ -1726,7 +1728,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
             )
 
     async def mpl_motion_event_task(task_status):
-        send_chan, recv_chan = trio.open_memory_channel(inf)
+        send_chan, recv_chan = anyio.create_memory_object_stream(inf)
         task_status.started(send_chan)
         # Peel root_coords out of MouseEvent.guiEvent in MPL callback
         async for mouseevent, root_coords in recv_chan:
@@ -1742,8 +1744,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
             elif mouseevent.inaxes is display.plot_ax:
                 tooltip_send_chan.send_nowait((*root_coords, display.plot_ax_tip_text))
 
-    nursery: trio.Nursery
-    async with trio.open_nursery() as nursery:
+    async with anyio.create_task_group() as nursery:
         spinner_scope = await nursery.start(
             async_tools.spinner_task, display.spinner_start, display.spinner_stop
         )
@@ -2064,7 +2065,7 @@ def calculate_force_data(
 async def open_task(root, nursery):
     """Open files using a dialog box, then launch a task for each"""
     # Choose file
-    paths = await trio.to_thread.run_sync(
+    paths = await anyio.to_thread.run_sync(
         partial(
             tk.filedialog.askopenfilenames,
             master=root,
@@ -2089,16 +2090,16 @@ async def open_one(root, path):
     suffix = path.suffix.lower()
 
     fvfile_cls, opener = data_readers.SUFFIX_FVFILE_MAP[suffix]
-    open_thing = await trio.to_thread.run_sync(opener, path)
+    open_thing = await anyio.to_thread.run_sync(opener, path)
     try:
-        fvfile = await trio.to_thread.run_sync(fvfile_cls.parse, open_thing)
+        fvfile = await anyio.to_thread.run_sync(fvfile_cls.parse, open_thing)
         opened_fv = AsyncFVFile(fvfile)
         display = ForceVolumeTkDisplay(root, path.name, opened_fv)
         await force_volume_task(display, opened_fv)
         display.destroy()
     finally:
-        with trio.CancelScope(shield=True):
-            await trio.to_thread.run_sync(open_thing.close)
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(open_thing.close)
 
 
 async def demo_task(root):
@@ -2235,122 +2236,121 @@ class ApproximateHistogram:
         return [self._quantile(sums, q_item) for q_item in q]
 
 
-@mutable(eq=False)
-class MyInstrument(trio.abc.Instrument):
-    t: float = field(factory=trio.current_time)
-    tau: float = 1.0
-    sleep_time: float = tau / 2
-    wake_time: float = tau / 2
-    last_sleep: float = t
-    last_wake: float = t
-    hist: ApproximateHistogram = field(factory=lambda: ApproximateHistogram(128))
+# @mutable(eq=False)
+# class MyInstrument(anyio.abc.Instrument):
+#     t: float = field(factory=anyio.current_time)
+#     tau: float = 1.0
+#     sleep_time: float = tau / 2
+#     wake_time: float = tau / 2
+#     last_sleep: float = t
+#     last_wake: float = t
+#     hist: ApproximateHistogram = field(factory=lambda: ApproximateHistogram(128))
+#
+#     @property
+#     def cycle_time(self):
+#         return self.wake_time + self.sleep_time
+#
+#     def before_io_wait(self, timeout):
+#         t = anyio.current_time()
+#         self.last_wake = t - self.t
+#         self.hist.add(self.last_wake)
+#         b = math.exp(-self.cycle_time / self.tau)  # b = 1 - alpha
+#         self.wake_time = self.last_wake * (1 - b) + b * self.wake_time
+#         self.t = t
+#
+#     def after_io_wait(self, timeout):
+#         t = anyio.current_time()
+#         self.last_sleep = t - self.t
+#         b = math.exp(-self.cycle_time / self.tau)  # b = 1 - alpha
+#         self.sleep_time = self.last_sleep * (1 - b) + b * self.sleep_time
+#         self.t = t
 
-    @property
-    def cycle_time(self):
-        return self.wake_time + self.sleep_time
 
-    def before_io_wait(self, timeout):
-        t = trio.current_time()
-        self.last_wake = t - self.t
-        self.hist.add(self.last_wake)
-        b = math.exp(-self.cycle_time / self.tau)  # b = 1 - alpha
-        self.wake_time = self.last_wake * (1 - b) + b * self.wake_time
-        self.t = t
-
-    def after_io_wait(self, timeout):
-        t = trio.current_time()
-        self.last_sleep = t - self.t
-        b = math.exp(-self.cycle_time / self.tau)  # b = 1 - alpha
-        self.sleep_time = self.last_sleep * (1 - b) + b * self.sleep_time
-        self.t = t
-
-
-async def about_task(root):
-    """Display and control the About menu
-
-    ☒ Make new Toplevel window
-    ☒ Show copyright and version info and maybe something else
-    ☒ display cute progress bar spinners to diagnose event loops
-
-    """
-    top = tk.Toplevel(root)
-    top.wm_title(f"About {__app_name__}")
-    message = tk.Message(top, text=__short_license__)
-    message.pack()
-    task_strvar = tk.StringVar(top)
-    task_label = ttk.Label(top, textvariable=task_strvar)
-    task_label.pack()
-    opts = dict(mode="indeterminate", maximum=80, length=300)
-    tk_pbar = ttk.Progressbar(top, **opts)
-    tk_pbar.pack()
-    trio_pbar = ttk.Progressbar(top, **opts)
-    trio_pbar.pack()
-    timely_trio_pbar = ttk.Progressbar(top, **opts)
-    timely_trio_pbar.pack()
-
-    interval = 333
-
-    async def pbar_runner():
-        while True:
-            trio_pbar.step()
-            await trio.sleep(interval / 1000)
-
-    async def pbar_runner_timely():
-        t0 = t = trio.current_time()
-        while True:
-            v = (trio.current_time() - t0) * 1000 / interval
-            timely_trio_pbar["value"] = int(round(v))
-            t += interval / 1000
-            await trio.sleep_until(t)
-
-    async def state_poller_task():
-        t = trio.current_time()
-        while True:
-            task_stats = trio.lowlevel.current_statistics()
-            worker_stats = trio_parallel.default_context_statistics()
-            q50, q95, q99 = inst.hist.quantile((0.5, 0.95, 0.99))
-            task_strvar.set(
-                f"Tasks living: {task_stats.tasks_living}\n"
-                f"Tasks runnable: {task_stats.tasks_runnable}\n"
-                f"Unprocessed callbacks: {task_stats.run_sync_soon_queue_size}\n"
-                f"Ticks: {inst.hist.count}\n"
-                f"Sleep: {100 * inst.sleep_time / inst.cycle_time :.1f} %\n"
-                f"Tick percentiles (seconds):\n"
-                f"50 %: {q50:.1e} | 95 %: {q95:.1e} | 99 %: {q99:.1e}\n"
-                f"""CPU-bound tasks:{repr(
-                    async_tools.cpu_bound_limiter
-                ).split(',')[1][:-1]}\n"""
-                f"""Default threads:{repr(
-                    trio.to_thread.current_default_thread_limiter()
-                ).split(',')[1][:-1]}\n"""
-                f"Worker processes: {worker_stats.running_workers}/"
-                f"{worker_stats.idle_workers+worker_stats.running_workers}"
-            )
-            t += interval / 1000
-            await trio.sleep_until(t)
-
-    inst = MyInstrument()
-    trio.lowlevel.add_instrument(inst)
-    # run using tcl event loop
-    tk_pbar.start(interval)
-    # run using trio
-    async with trio.open_nursery() as nursery:
-        top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-        nursery.start_soon(state_poller_task)
-        nursery.start_soon(pbar_runner)
-        nursery.start_soon(pbar_runner_timely)
-    trio.lowlevel.remove_instrument(inst)
-    top.destroy()
+# async def about_task(root):
+#     """Display and control the About menu
+#
+#     ☒ Make new Toplevel window
+#     ☒ Show copyright and version info and maybe something else
+#     ☒ display cute progress bar spinners to diagnose event loops
+#
+#     """
+#     top = tk.Toplevel(root)
+#     top.wm_title(f"About {__app_name__}")
+#     message = tk.Message(top, text=__short_license__)
+#     message.pack()
+#     task_strvar = tk.StringVar(top)
+#     task_label = ttk.Label(top, textvariable=task_strvar)
+#     task_label.pack()
+#     opts = dict(mode="indeterminate", maximum=80, length=300)
+#     tk_pbar = ttk.Progressbar(top, **opts)
+#     tk_pbar.pack()
+#     trio_pbar = ttk.Progressbar(top, **opts)
+#     trio_pbar.pack()
+#     timely_trio_pbar = ttk.Progressbar(top, **opts)
+#     timely_trio_pbar.pack()
+#
+#     interval = 333
+#
+#     async def pbar_runner():
+#         while True:
+#             trio_pbar.step()
+#             await anyio.sleep(interval / 1000)
+#
+#     async def pbar_runner_timely():
+#         t0 = t = anyio.current_time()
+#         while True:
+#             v = (anyio.current_time() - t0) * 1000 / interval
+#             timely_trio_pbar["value"] = int(round(v))
+#             t += interval / 1000
+#             await anyio.sleep_until(t)
+#
+#     async def state_poller_task():
+#         t = anyio.current_time()
+#         while True:
+#             task_stats = trio.lowlevel.current_statistics()
+#             worker_stats = trio_parallel.default_context_statistics()
+#             q50, q95, q99 = inst.hist.quantile((0.5, 0.95, 0.99))
+#             task_strvar.set(
+#                 f"Tasks living: {task_stats.tasks_living}\n"
+#                 f"Tasks runnable: {task_stats.tasks_runnable}\n"
+#                 f"Unprocessed callbacks: {task_stats.run_sync_soon_queue_size}\n"
+#                 f"Ticks: {inst.hist.count}\n"
+#                 f"Sleep: {100 * inst.sleep_time / inst.cycle_time :.1f} %\n"
+#                 f"Tick percentiles (seconds):\n"
+#                 f"50 %: {q50:.1e} | 95 %: {q95:.1e} | 99 %: {q99:.1e}\n"
+#                 f"""CPU-bound tasks:{repr(
+#                     async_tools.cpu_bound_limiter
+#                 ).split(',')[1][:-1]}\n"""
+#                 f"""Default threads:{repr(
+#                     anyio.to_thread.current_default_thread_limiter()
+#                 ).split(',')[1][:-1]}\n"""
+#                 f"Worker processes: {worker_stats.running_workers}/"
+#                 f"{worker_stats.idle_workers+worker_stats.running_workers}"
+#             )
+#             t += interval / 1000
+#             await anyio.sleep_until(t)
+#
+#     inst = MyInstrument()
+#     anyio.lowlevel.add_instrument(inst)
+#     # run using tcl event loop
+#     tk_pbar.start(interval)
+#     # run using trio
+#     async with anyio.open_nursery() as nursery:
+#         top.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
+#         nursery.start_soon(state_poller_task)
+#         nursery.start_soon(pbar_runner)
+#         nursery.start_soon(pbar_runner_timely)
+#     anyio.lowlevel.remove_instrument(inst)
+#     top.destroy()
 
 
 async def main_task(root):
-    nursery: trio.Nursery
-    async with trio.open_nursery() as nursery:
+    async with anyio.create_task_group() as nursery:
         # local names of actions
         quit_callback = nursery.cancel_scope.cancel
         open_callback = partial(nursery.start_soon, open_task, root, nursery)
         demo_callback = partial(nursery.start_soon, demo_task, root)
-        about_callback = partial(nursery.start_soon, about_task, root)
+        # about_callback = partial(nursery.start_soon, about_task, root)
         help_action = partial(
             webbrowser.open_new,
             "https://github.com/richardsheridan/magic-afm",
@@ -2381,31 +2381,33 @@ async def main_task(root):
         )
         root.bind_all("<KeyRelease-F1>", func=impartial(help_action))
         # noinspection PyTypeChecker
-        help_menu.add_command(
-            label="About...", accelerator="Ctrl+A", underline=0, command=about_callback
-        )
-        root.bind_all("<Control-KeyPress-a>", func=impartial(about_callback))
+        # help_menu.add_command(
+        #     label="About...", accelerator="Ctrl+A", underline=0, command=about_callback
+        # )
+        # root.bind_all("<Control-KeyPress-a>", func=impartial(about_callback))
         menu_frame.add_cascade(label="Help", menu=help_menu, underline=0)
 
-        trio_parallel.configure_default_context(
-            idle_timeout=float("inf"),
-            init=calculation.nice_workers,
-        )
+        # trio_parallel.configure_default_context(
+        #     idle_timeout=float("inf"),
+        #     init=calculation.nice_workers,
+        # )
         # Depending on the system, workers can take up to 30 seconds to finish
         # loading and compiling numba jit stuff. I tried various permutations to
         # warm up the workers and this one seems best for both cached and fresh cases.
         tprs = partial(
-            trio_parallel.run_sync,
+            anyio.to_process.run_sync,
             limiter=async_tools.cpu_bound_limiter,
-            cancellable=True,
+            # cancellable=True,
         )
         for _ in range(async_tools.cpu_bound_limiter.total_tokens):
-            nursery.start_soon(tprs, bool)  # start workers while compiling
+            nursery.start_soon(
+                tprs, calculation.nice_workers
+            )  # start workers while compiling
         # don't race workers to compile first
-        await trio.to_thread.run_sync(calculation.warmup_jit)
+        await anyio.to_thread.run_sync(calculation.warmup_jit)
         for _ in range(async_tools.cpu_bound_limiter.total_tokens):
             nursery.start_soon(tprs, calculation.warmup_jit)  # only compile cache=false
-        await trio.sleep_forever()  # needed if nursery never starts a long running child
+        await anyio.sleep_forever()  # needed if nursery never starts a long running child
 
 
 def main():

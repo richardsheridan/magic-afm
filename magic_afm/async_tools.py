@@ -25,12 +25,12 @@ from contextlib import asynccontextmanager, nullcontext
 from itertools import islice
 from math import inf
 
-import trio
+import anyio, anyio.to_thread
 
 TOOLTIP_CANCEL = None, None, None
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 
-cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count() or 1)
+cpu_bound_limiter = anyio.CapacityLimiter(os.cpu_count() or 1)
 
 
 def _chunk_producer(fn, job_items, chunksize):
@@ -40,7 +40,7 @@ def _chunk_producer(fn, job_items, chunksize):
 
 async def _async_chunk_producer(fn, job_items, chunksize, *, task_status):
     x = []
-    send_chan, recv_chan = trio.open_memory_channel(0)
+    send_chan, recv_chan = anyio.create_memory_object_stream(0)
     task_status.started(recv_chan)
     async with send_chan:
         async for job_item in job_items:
@@ -58,11 +58,11 @@ def _chunk_consumer(chunk):
 
 async def _asyncify_iterator(iter_, limiter=None, *, task_status):
     sentinel = object()
-    send_chan, recv_chan = trio.open_memory_channel(0)
+    send_chan, recv_chan = anyio.create_memory_object_stream(0)
     task_status.started(recv_chan)
     with send_chan:
         while (
-            result := await trio.to_thread.run_sync(
+            result := await anyio.to_thread.run_sync(
                 next, iter_, sentinel, limiter=limiter
             )
         ) is not sentinel:
@@ -75,7 +75,7 @@ async def to_sync_runner_map_unordered(
     job_items,
     chunksize=1,
     limiter=cpu_bound_limiter,
-    task_status=trio.TASK_STATUS_IGNORED,
+    task_status=anyio.TASK_STATUS_IGNORED,
 ):
     """Run many job items in workers.
 
@@ -92,14 +92,14 @@ async def to_sync_runner_map_unordered(
     with no buffer to receive results as-completed."""
     chunky = chunksize > 1
     buffer = []
-    if task_status is trio.TASK_STATUS_IGNORED:
+    if task_status is anyio.TASK_STATUS_IGNORED:
 
         async def send(item):
             buffer.append(item)
 
         send_chan = nullcontext
     else:
-        send_chan, recv_chan = trio.open_memory_channel(0)
+        send_chan, recv_chan = anyio.create_memory_object_stream(0)
         task_status.started(recv_chan)
         send = send_chan.send
 
@@ -112,7 +112,7 @@ async def to_sync_runner_map_unordered(
             else:
                 await send(result)
 
-    async with send_chan, trio.open_nursery() as nursery:
+    async with send_chan, anyio.create_task_group() as nursery:
         try:
             # Duck type any iterable
             job_items = iter(job_items)
@@ -141,9 +141,9 @@ async def to_sync_runner_map_unordered(
 async def spinner_task(set_spinner, set_normal, task_status):
     # Invariant: number of open+opening spinner_scopes equals outstanding_scopes
     outstanding_scopes = 0
-    ending_or_inactive_cscope = trio.CancelScope()
-    pending_or_active_cscope = trio.CancelScope()
-    spinner_pending_or_active = trio.Event()
+    ending_or_inactive_cscope = anyio.CancelScope()
+    pending_or_active_cscope = anyio.CancelScope()
+    spinner_pending_or_active = anyio.Event()
 
     @asynccontextmanager
     async def spinner_scope():
@@ -166,37 +166,37 @@ async def spinner_task(set_spinner, set_normal, task_status):
                 # these actions must occur atomically to satisfy the invariant
                 # because the very next task scheduled may open a spinner_scope
                 pending_or_active_cscope.cancel()
-                spinner_pending_or_active = trio.Event()
-                ending_or_inactive_cscope = trio.CancelScope()
-                pending_or_active_cscope = trio.CancelScope()
+                ending_or_inactive_cscope = anyio.CancelScope()
+                pending_or_active_cscope = anyio.CancelScope()
+                spinner_pending_or_active = anyio.Event()
 
     task_status.started(spinner_scope)
     while True:
         # always fresh scope thanks to atomic state reset
         with ending_or_inactive_cscope:
             # Allow a short delay after a final scope exits before resetting
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
+            await anyio.sleep(LONGEST_IMPERCEPTIBLE_DELAY)
             # Another spinner_scope may have opened during this time.
             # If so, don't change the cursor to avoid blinking unnecessarily.
             set_normal()
-            await trio.sleep_forever()
+            await anyio.sleep_forever()
 
         spinner_pending_or_active.set()
 
         # always fresh scope thanks to atomic state reset.
         with pending_or_active_cscope:
             # Allow a short delay after a first scope enters before setting.
-            await trio.sleep(LONGEST_IMPERCEPTIBLE_DELAY * 5)
+            await anyio.sleep(LONGEST_IMPERCEPTIBLE_DELAY * 5)
             # spinner_scope may exit quickly during this time.
             # If so, don't change the cursor to avoid blinking unnecessarily.
             set_spinner()
-            await trio.sleep_forever()
+            await anyio.sleep_forever()
 
 
 async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_status):
     """Manage a tooltip window visibility, position, and text."""
 
-    send_chan, recv_chan = trio.open_memory_channel(inf)
+    send_chan, recv_chan = anyio.create_memory_object_stream(inf)
     task_status.started(send_chan)
     tooltip_command = TOOLTIP_CANCEL  # a tuple of x, y, text. start hidden
 
@@ -204,12 +204,12 @@ async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_
         if tooltip_command == TOOLTIP_CANCEL:
             tooltip_command = await recv_chan.receive()
         else:
-            with trio.move_on_after(show_delay) as cs:
+            with anyio.move_on_after(show_delay) as cs:
                 tooltip_command = await recv_chan.receive()
             if cs.cancelled_caught:
                 show_tooltip(*tooltip_command)
                 try:
-                    with trio.move_on_after(hide_delay) as cs:
+                    with anyio.move_on_after(hide_delay) as cs:
                         tooltip_command = await recv_chan.receive()
                     if cs.cancelled_caught:
                         tooltip_command = TOOLTIP_CANCEL

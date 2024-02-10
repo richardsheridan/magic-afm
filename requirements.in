@@ -11,3 +11,5 @@ tqdm>=4.56.0
 trio>=0.20.0
 trio-parallel>1.1.0
 samplerate==0.1.0
+anyio
+aioguest
