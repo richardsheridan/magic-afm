@@ -210,7 +210,7 @@ class ImagePoint:
             array_index_to_data_coords,
         )
         if len(cls._transforms) > 10:
-            cls._transforms = dict(itertools.islice(cls._transforms.items(), 5))
+            cls._transforms = dict(itertools.islice(cls._transforms.items(), 5, None))
         return transforms
 
     @classmethod
