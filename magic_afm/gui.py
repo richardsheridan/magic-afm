@@ -69,7 +69,7 @@ import outcome
 import trio
 import trio_parallel
 
-from attrs import field, mutable, frozen, asdict
+from attrs import field, mutable, frozen, asdict, evolve
 from matplotlib.axes import Axes
 from matplotlib.backend_bases import MouseButton
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -330,13 +330,8 @@ class AsyncFVFile:
         if sync_dist == self.fvfile.sync_dist:  # including None==None
             return self.fvfile.volumes[not trace].get_curve(r, c)
 
-        sync_dist_int = int(sync_dist)
-        sync_dist_frac = sync_dist - sync_dist_int
-        v = self.fvfile.volumes[not trace]
-        # reach in deeply to QNMXReader
-        z = v._zreader.get_curve(r, c, sync_dist_frac)
-        d = v._dreader.get_curve(r, c, sync_dist_int)
-        return z, d
+        v = evolve(self.fvfile.volumes[not trace], sync_dist=sync_dist)
+        return v.get_curve(r, c)
 
     async def get_image(self, image_name):
         if image_name in self._image_cache:
@@ -352,10 +347,11 @@ class AsyncFVFile:
     def iter_curves(self, trace, sync_dist):
         if trace is None:
             trace = True
-        if sync_dist is None:
+        if sync_dist == self.fvfile.sync_dist:  # including None==None
             yield from self.fvfile.volumes[not trace].iter_curves()
         else:
-            for point, (z, d) in self.fvfile.volumes[not trace].iter_curves():
+            v = evolve(self.fvfile.volumes[not trace], sync_dist=sync_dist)
+            for point, (z, d) in v.iter_curves():
                 yield point, (z, d)
 
 
