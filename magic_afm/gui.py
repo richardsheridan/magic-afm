@@ -1492,6 +1492,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                 combobox_values.append(newname)
 
         display.reset_image_name_menu(combobox_values)
+        display.image_name_menu.set(display.image_name_menu.get())
 
     async def change_cmap_callback():
         colormap_name = display.colormap_strvar.get()
