@@ -1279,12 +1279,9 @@ class QNMDReader:
     ints: np.ndarray = field(repr=False)
     shape: Index
     scale: np.float32
-    sync_dist_slice: slice
-    phasors: np.ndarray
-    sync_frac: float
 
     @classmethod
-    def parse(cls, header, data, subheader, shape, sync_dist):
+    def parse(cls, header, data, subheader, shape):
         # QNM doesn't have its own height data, so it must be synthesized
         # I've chosen to do this by combining a height image with a sine wave
 
@@ -1305,18 +1302,9 @@ class QNMDReader:
         hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
         d_scale = np.float32(soft_scale * hard_scale)
         name = subheader["@4:Image Data"].split('"')[1]
-        sync_int = int(sync_dist)
-        sync_frac = sync_dist - sync_int
-        sync_dist = (sync_int - n_ext) % npts  # according to Bruker via Bede
-        sync_dist_slice = np.s_[sync_dist : sync_dist + npts]
-        # e^(-i*2*pi*omega[n]*phase_shift_in_seconds),
-        # time cancels out if sync dist has units of sampling rate
-        phasors = np.exp(-2j * np.pi * np.fft.rfftfreq(npts) * sync_frac)
-        return cls(
-            data, name, d_ints, shape, d_scale, sync_dist_slice, phasors, sync_frac
-        )
+        return cls(data, name, d_ints, shape, d_scale)
 
-    def get_curve(self, r, c):
+    def get_curve(self, r, c, sync_dist_int):
         i = np.ravel_multi_index((r, c), self.shape)
         if i:
             i -= 1  # due to applying sync_dist, the first pixel is OOB
@@ -1329,18 +1317,18 @@ class QNMDReader:
             d[:, 0, 0] = d[:, 0, 1]
         d = d.reshape(-1)
         # "roll" across 2 indents (usually mostly consisting of the 2nd indent)
-        d = d[self.sync_dist_slice]
-        if self.sync_frac:
-            d_fft = np.fft.rfft(d)
-            d_fft *= self.phasors
-            d = np.fft.irfft(d_fft)
+        npts = len(d) // 2
+        n_ext = npts // 2  # see assertion in constructor
+        sync_dist = (sync_dist_int - n_ext) % npts  # according to Bruker via Bede
+        d = d[sync_dist : sync_dist + npts]
         return d.reshape((2, -1))
 
 
 @frozen
 class QNMZReader:
     name: str
-    z_basis: np.ndarray = field(repr=False)
+    amp: float
+    npts: int
     height_for_z: np.ndarray = field(repr=False)
 
     @classmethod
@@ -1350,19 +1338,23 @@ class QNMZReader:
 
         amp = np.float32(header["Ciao scan list"][0]["Peak Force Amplitude"])
         npts = d_reader.ints[0].size
-        # phase = d_reader.sync_dist / npts * 2 * np.pi
-        phase = np.pi
-        # TODO: apply sync dist here rather than d?
-        z_basis = amp * np.cos(
-            np.linspace(
-                phase, phase + 2 * np.pi, npts, endpoint=False, dtype=np.float32
+        return cls(d_reader.name + " z_basis", amp, npts, height_for_z)
+
+    def get_curve(self, r, c, sync_dist_frac):
+        phase = -2 * np.pi * sync_dist_frac / self.npts
+        # need to infer z from amp/height
+        z_basis = -self.amp * (
+            np.cos(
+                np.linspace(
+                    phase,
+                    phase + 2 * np.pi,
+                    self.npts,
+                    endpoint=False,
+                    dtype=np.float32,
+                )
             )
         )
-        return cls(d_reader.name + " z_basis", z_basis, height_for_z)
-
-    def get_curve(self, r, c):
-        # need to infer z from amp/height
-        z = self.z_basis + self.height_for_z[r, c]
+        z = z_basis + self.height_for_z[r, c]
         return z.reshape((2, -1))
 
 
@@ -1371,11 +1363,12 @@ class NanoscopeVolume:
     name: str
     shape: Index
     step_info: StepInfo
+    sync_dist: float | None
     _zreader: FFVReader | QNMZReader
     _dreader: FFVReader | QNMDReader
 
     @classmethod
-    def parse(cls, header, z_reader, d_reader):
+    def parse(cls, header, sync_dist, z_reader, d_reader):
         npts = int(header["Ciao force list"][0]["force/line"].split()[0])
         rate, unit = header["Ciao scan list"][0]["PFT Freq"].split()
         assert unit.lower() == "khz"
@@ -1408,13 +1401,22 @@ class NanoscopeVolume:
             d_reader.name,
             shape,
             ((x_step, "m"), (y_step, "m"), (t_step, "s")),
+            sync_dist,
             z_reader,
             d_reader,
         )
 
     def get_curve(self, r: int, c: int) -> ZDArrays:
         """Efficiently get a specific curve from disk."""
-        return self._zreader.get_curve(r, c), self._dreader.get_curve(r, c)
+        if self.sync_dist is None:
+            return self._zreader.get_curve(r, c), self._dreader.get_curve(r, c)
+        else:
+            sync_dist_int = int(self.sync_dist)
+            sync_dist_frac = self.sync_dist - sync_dist_int
+            return (
+                self._zreader.get_curve(r, c, sync_dist_frac),
+                self._dreader.get_curve(r, c, sync_dist_int),
+            )
 
     def iter_indices(self) -> Iterable[Index]:
         """Iterate over force curve indices in on-disk order"""
@@ -1479,6 +1481,9 @@ class NanoscopeFile:
         fastpx = int(csl["Samps/line"])
         slowpx = int(csl["Lines"])
         shape = slowpx, fastpx
+        ratestr, unit = csl["PFT Freq"].split()
+        assert unit.lower() == "khz"
+        rate = float(ratestr)
 
         images = {}
         for entry in header["Ciao image list"]:
@@ -1500,23 +1505,22 @@ class NanoscopeFile:
                 height_for_z = images["Height Sensor"].get_image()
             except KeyError:
                 height_for_z = images["Height"].get_image()
-
-            sync_dist = round(
-                float(
-                    csl["Sync Distance QNM"]
-                    if "Sync Distance QNM" in csl
-                    else csl["Sync Distance"]
-                )
-                # actually sum(Samps/line) / Sample Points, but it works
-                * float(csl["PFT Freq"].split()[0]) / 2,
-                2,
-            )
+            height_for_z *= NANOMETER_UNIT_CONVERSION
+            try:
+                sync_dist_str = csl["Sync Distance QNM"]
+            except KeyError:
+                sync_dist_str = csl["Sync Distance"]
+            # actually sync_dist * sum(Samps/line) / Sample Points, but it works
+            sync_dist = float(sync_dist_str) * rate / 2
             volumes = [
                 NanoscopeVolume.parse(
-                    header, QNMZReader.parse(header, d_reader, height_for_z), d_reader
+                    header,
+                    sync_dist,
+                    QNMZReader.parse(header, d_reader, height_for_z),
+                    d_reader,
                 )
                 for d_reader in (
-                    QNMDReader.parse(header, data, d_subh, shape, sync_dist)
+                    QNMDReader.parse(header, data, d_subh, shape)
                     for d_subh in deflections
                 )
             ]
@@ -1525,6 +1529,7 @@ class NanoscopeFile:
             volumes = [
                 NanoscopeVolume.parse(
                     header,
+                    sync_dist,
                     FFVReader.parse(header, data, z_subh),
                     FFVReader.parse(header, data, d_subh),
                 )
@@ -1534,10 +1539,7 @@ class NanoscopeFile:
         k = float(header["Ciao force image list"][0]["Spring Constant"])
         defl_sens = float(csl["@Sens. DeflSens"].split()[1])
         npts = int(header["Ciao force list"][0]["force/line"].split()[0])
-        rate, unit = csl["PFT Freq"].split()
-        assert unit.lower() == "khz"
-        rate = float(rate) * 1000
-        t_step = 1 / rate / npts
+        t_step = 1 / (rate * 1000) / npts
 
         scansize, units = csl["Scan Size"].split()
         if units == "nm":

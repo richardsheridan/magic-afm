@@ -324,35 +324,18 @@ class AsyncFVFile:
         image_name = self.strip_trace(image_name)
         self._units_map[image_name] = units
 
-    def _apply_sync_dist(self, d, sync_dist, _phasor_cache={}):
-        assert hasattr(self.fvfile, "sync_dist")
-        # sync dist is a roll to the left -> negative
-        sync_dist = self.fvfile.sync_dist - sync_dist
-        if sync_dist:
-            d = d.reshape((-1,))
-            int_sync_dist = int(sync_dist)
-            d = np.roll(d, int_sync_dist)
-            sync_frac = sync_dist - int_sync_dist
-            if sync_frac:
-                try:
-                    phasors = _phasor_cache[len(d)]
-                except KeyError:
-                    phasors = _phasor_cache[len(d)] = np.exp(
-                        -2j * np.pi * np.fft.rfftfreq(len(d))
-                    )
-                d_fft = np.fft.rfft(d)
-                d_fft *= phasors**sync_frac
-                d = np.fft.irfft(d_fft)
-            d = d.reshape((2, -1))
-        return d
-
     def get_curve(self, r, c, trace=None, sync_dist=None):
         if trace is None:
             trace = True
-        if sync_dist is None:
+        if sync_dist == self.fvfile.sync_dist:  # including None==None
             return self.fvfile.volumes[not trace].get_curve(r, c)
-        z, d = self.fvfile.volumes[not trace].get_curve(r, c)
-        d = self._apply_sync_dist(d, sync_dist)
+
+        sync_dist_int = int(sync_dist)
+        sync_dist_frac = sync_dist - sync_dist_int
+        v = self.fvfile.volumes[not trace]
+        # reach in deeply to QNMXReader
+        z = v._zreader.get_curve(r, c, sync_dist_frac)
+        d = v._dreader.get_curve(r, c, sync_dist_int)
         return z, d
 
     async def get_image(self, image_name):
@@ -373,7 +356,6 @@ class AsyncFVFile:
             yield from self.fvfile.volumes[not trace].iter_curves()
         else:
             for point, (z, d) in self.fvfile.volumes[not trace].iter_curves():
-                d = self._apply_sync_dist(d, sync_dist)
                 yield point, (z, d)
 
 
