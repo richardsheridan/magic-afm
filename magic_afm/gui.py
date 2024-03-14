@@ -324,15 +324,6 @@ class AsyncFVFile:
         image_name = self.strip_trace(image_name)
         self._units_map[image_name] = units
 
-    def get_curve(self, r, c, trace=None, sync_dist=None):
-        if trace is None:
-            trace = True
-        if sync_dist == self.fvfile.sync_dist:  # including None==None
-            return self.fvfile.volumes[not trace].get_curve(r, c)
-
-        v = evolve(self.fvfile.volumes[not trace], sync_dist=sync_dist)
-        return v.get_curve(r, c)
-
     async def get_image(self, image_name):
         if image_name in self._image_cache:
             await trio.sleep(0)
@@ -344,15 +335,19 @@ class AsyncFVFile:
             self._image_cache[image_name] = image
         return image
 
-    def iter_curves(self, trace, sync_dist):
+    def _get_volume(self, trace, sync_dist):
         if trace is None:
             trace = True
-        if sync_dist == self.fvfile.sync_dist:  # including None==None
-            yield from self.fvfile.volumes[not trace].iter_curves()
-        else:
-            v = evolve(self.fvfile.volumes[not trace], sync_dist=sync_dist)
-            for point, (z, d) in v.iter_curves():
-                yield point, (z, d)
+        v = self.fvfile.volumes[not trace]
+        if sync_dist != getattr(self.fvfile, "sync_dist", None):  # including None!=None
+            v = evolve(v, sync_dist=sync_dist)
+        return v
+
+    def get_curve(self, r, c, trace=None, sync_dist=None):
+        return self._get_volume(trace, sync_dist).get_curve(r, c)
+
+    def iter_curves(self, trace=None, sync_dist=None):
+        yield from self._get_volume(trace, sync_dist).iter_curves()
 
 
 @frozen
