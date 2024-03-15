@@ -871,8 +871,8 @@ def fitfun(
         )
         sse = infodict["chisq"]
         beta_err = infodict["uncertainties"]
-    except Exception as e:
-        traceback.print_exception(type(e), e, e.__traceback__)
+    except Exception:
+        traceback.print_exc()
         print(p0)
         beta = np.full_like(p0, np.nan)
         beta_err = beta
