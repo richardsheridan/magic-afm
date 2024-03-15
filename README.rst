@@ -188,10 +188,10 @@ F_adh
     force of adhesion
 
 d
-    cantilever deflection
+    cantilever deflection from the maximum to the snap-off minimum
 
 δ
-    probe indentation depth
+    probe indentation depth from the maximum to the snap-off minimum
 
 d/δ
     indentation ratio
