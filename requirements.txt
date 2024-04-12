@@ -12,11 +12,7 @@ attrs==23.2.0
     #   trio
     #   trio-parallel
 cffi==1.16.0
-    # via
-    #   trio
-    #   trio-parallel
-colorama==0.4.6
-    # via tqdm
+    # via samplerate
 contourpy==1.2.0
     # via matplotlib
 cycler==0.12.1
@@ -25,7 +21,7 @@ fonttools==4.47.2
     # via matplotlib
 h5py==3.10.0
     # via -r requirements.in
-idna==3.6
+idna==3.7
     # via trio
 imageio==2.33.1
     # via -r requirements.in
@@ -55,8 +51,6 @@ packaging==23.2
     #   matplotlib
     #   pyinstaller
     #   pyinstaller-hooks-contrib
-pefile==2023.2.7
-    # via pyinstaller
 pillow==10.2.0
     # via
     #   -r requirements.in
@@ -74,8 +68,6 @@ pyparsing==3.1.1
     # via matplotlib
 python-dateutil==2.8.2
     # via matplotlib
-pywin32-ctypes==0.2.2
-    # via pyinstaller
 samplerate==0.1.0
     # via -r requirements.in
 six==1.16.0
