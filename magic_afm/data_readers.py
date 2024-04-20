@@ -698,15 +698,14 @@ class ARDFVdata:
 
     def get_ndarray(self):
         with memoryview(self.data):  # assert data is open, and hold it open
-            return (
-                np.ndarray(
-                    shape=self.nfloats,
-                    dtype="<f4",
-                    buffer=self.data,
-                    offset=self.array_offset,
-                )
-                * NANOMETER_UNIT_CONVERSION
-            )
+            x = np.ndarray(
+                shape=self.nfloats,
+                dtype="<f4",
+                buffer=self.data,
+                offset=self.array_offset,
+            ).astype("f4", copy=True)
+        x *= NANOMETER_UNIT_CONVERSION
+        return x
 
 
 @frozen
@@ -769,7 +768,7 @@ class ARDFImage:
                 buffer=self.data,
                 offset=data_offset,
                 strides=(stride, 4),
-            ).astype("f4")
+            ).astype("f4", copy=True)
         gami_header = ARDFHeader.unpack(
             ibox_header.data, ibox_header.offset + ibox_size
         )
@@ -846,7 +845,9 @@ class ARDFFFMReader:
         """Efficiently get a specific curve from disk."""
         with memoryview(self.data):  # assert data is open, and hold it open
             x = self.array_view[r, c, self.channels]  # advanced indexing copies
-        return x.reshape((len(self.channels), 2, -1)) * NANOMETER_UNIT_CONVERSION
+        x = x.astype("f4", copy=False)
+        x *= NANOMETER_UNIT_CONVERSION
+        return x.reshape((len(self.channels), 2, -1))
 
     def iter_indices(self) -> Iterable[Index]:
         """Iterate over force curve indices in on-disk order"""
@@ -1205,8 +1206,8 @@ class NanoscopeImage:
         except KeyError:
             soft_scale_string = header["Scanner list"][0][soft_scale_name]
         soft_scale = float(soft_scale_string.split()[1]) / NANOMETER_UNIT_CONVERSION
-        unit_scale = np.float32(hard_scale * soft_scale)
-        unit_offset = np.float32(hard_offset * soft_scale)
+        unit_scale = hard_scale * soft_scale
+        unit_offset = hard_offset * soft_scale
         return cls(
             data=data,
             name=name,
@@ -1219,15 +1220,13 @@ class NanoscopeImage:
         )
 
     def get_image(self) -> np.ndarray:
-        z_floats = np.zeros(self.shape, dtype=np.float32)
         with memoryview(self.data):  # assert data is open, and hold it open
-            z_ints = np.ndarray(
+            z_floats = np.ndarray(
                 shape=self.shape,
                 dtype=f"<i{self.bpp}",
                 buffer=self.data,
                 offset=self.offset,
-            )
-            z_floats += z_ints
+            ).astype("f4", copy=True)
         z_floats *= self.unit_scale
         z_floats += self.unit_offset
         return z_floats
@@ -1238,7 +1237,7 @@ class FFVReader:
     data: mmap
     name: str
     ints: np.ndarray = field(repr=False)
-    scale: np.float32
+    scale: float
     _soft_scale_map = {
         "Height Sensor": "@Sens. ZsensSens",
         "Height": "@Sens. ZSens",
@@ -1263,12 +1262,13 @@ class FFVReader:
             header["Ciao scan list"][0][cls._soft_scale_map[name]].split()[1]
         )
         hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
-        scale = np.float32(soft_scale * hard_scale)
+        scale = soft_scale * hard_scale
         return cls(data, name, ints, scale)
 
     def get_curve(self, r, c):
         with memoryview(self.data):  # assert data is open, and hold it open
-            f = self.ints[r, c] * self.scale
+            f = self.ints[r, c].astype("f4")
+        f *= self.scale
         return f[0, ::-1], f[1]
 
 
@@ -1278,7 +1278,7 @@ class QNMDReader:
     name: str
     ints: np.ndarray = field(repr=False)
     shape: Index
-    scale: np.float32
+    scale: float
 
     @classmethod
     def parse(cls, header, data, subheader, shape):
@@ -1300,7 +1300,7 @@ class QNMDReader:
         value = subheader["@4:Z scale"]
         soft_scale = float(header["Ciao scan list"][0]["@Sens. DeflSens"].split()[1])
         hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
-        d_scale = np.float32(soft_scale * hard_scale)
+        d_scale = soft_scale * hard_scale
         name = subheader["@4:Image Data"].split('"')[1]
         return cls(data, name, d_ints, shape, d_scale)
 
@@ -1309,7 +1309,8 @@ class QNMDReader:
         if i:
             i -= 1  # due to applying sync_dist, the first pixel is OOB
         with memoryview(self.data):  # assert data is open, and hold it open
-            d = self.ints[i : i + 2] * self.scale
+            d = self.ints[i : i + 2].astype("f4")
+        d *= self.scale
         # flip extend segments
         d[:, 0, :] = d[:, 0, ::-1]
         # remove extend segment marker
@@ -1354,8 +1355,8 @@ class QNMZReader:
                 )
             )
         )
-        z = z_basis + self.height_for_z[r, c]
-        return z.reshape((2, -1))
+        z_basis += self.height_for_z[r, c]
+        return z_basis.reshape((2, -1))
 
 
 @frozen
