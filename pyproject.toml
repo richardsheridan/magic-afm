@@ -1,0 +1,63 @@
+[project]
+name = "magic-afm"
+dynamic = ["version"]
+#version = "0.9.0"
+description = "Code to analyze and understand Magic Ratio AFM"
+authors = [{ name = "richardsheridan", email = "richard.sheridan@gmail.com" }]
+requires-python = ">= 3.11"
+dependencies = [
+    "h5py>=3",
+    "numba>=0.54.0", # OPTIONAL, included for version pinning
+    # numba @ git+https://github.com/richardsheridan/numba@6284-cherry  # numba/numba#6284
+    "numpy>=1.21",
+    "samplerate==0.1.0",
+]
+
+[project.optional-dependencies]
+build = ["pyinstaller"]
+gui = [
+    "imageio",
+    "pillow>=9",
+    "psutil",
+    "matplotlib>=3.8.0",
+    "trio>=0.20.0",
+    "trio-parallel>1.1.0",
+    "tqdm>=4.56.0",
+]
+notebook = ["notebook>=7", "ipywidgets", "scipy", "tqdm>=4.56.0", "matplotlib>=3.8.0", ]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = { attr = "magic_gui._version.__version__" }
+
+[tool.pixi.project]
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tool.pixi.dependencies]
+python = ">=3.12.0, <3.13.0"
+pixi-pycharm = "*"
+
+#[tool.pixi.pypi-dependencies]
+#magic-afm = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+make-version = { cmd = ["python", "magic_afm/make_version.py"] }
+
+[tool.pixi.feature.gui.tasks]
+gui = { cmd = ["python", "magic_gui.py"], depends_on = ["make-version"] }
+
+[tool.pixi.feature.notebook.tasks]
+notebook = { cmd = ["python", "-m", "notebook", "magic fitting workflow.ipynb"] }
+
+[tool.pixi.feature.build.tasks]
+build = { cmd = ["pyinstaller", "-y", "magic_gui_win.spec"], depends_on = ["make-version"] }
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+gui = { features = ["gui"], solve-group = "default" }
+build = { features = ["build", "gui"], solve-group = "default" }
+notebook = { features = ["notebook"], solve-group = "default" }
