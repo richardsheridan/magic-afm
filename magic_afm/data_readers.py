@@ -877,7 +877,7 @@ class ARDFFFMReader:
         # avoid a second copy with inplace op
         loaded_data *= NANOMETER_UNIT_CONVERSION
         # reshape assuming equal points on extend and retract
-        return loaded_data.reshape(self.array_view.shape[:-1] + (2, -1))
+        return loaded_data.reshape(loaded_data.shape[:-1] + (2, -1))
 
 
 @frozen
