@@ -6,6 +6,7 @@ description = "Code to analyze and understand Magic Ratio AFM"
 authors = [{ name = "richardsheridan", email = "richard.sheridan@gmail.com" }]
 requires-python = ">= 3.11"
 dependencies = [
+    "attrs>=23.2.0",
     "h5py>=3",
     "numba>=0.54.0", # OPTIONAL, included for version pinning
     # numba @ git+https://github.com/richardsheridan/numba@6284-cherry  # numba/numba#6284
@@ -16,7 +17,6 @@ dependencies = [
 [project.optional-dependencies]
 build = ["pyinstaller"]
 gui = [
-    "attrs>=23.2.0",
     "imageio",
     "pillow>=9",
     "psutil",
