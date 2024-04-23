@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 build = ["pyinstaller"]
 gui = [
+    "attrs>=23.2.0",
     "imageio",
     "pillow>=9",
     "psutil",
@@ -58,6 +59,6 @@ build = { cmd = ["pyinstaller", "-y", "magic_gui_win.spec"], depends_on = ["make
 
 [tool.pixi.environments]
 default = { solve-group = "default" }
-gui = { features = ["gui"], solve-group = "default" }
+#gui = { features = ["gui"], solve-group = "default" }
 build = { features = ["build", "gui"], solve-group = "default" }
 notebook = { features = ["notebook"], solve-group = "default" }
