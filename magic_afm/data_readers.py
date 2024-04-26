@@ -1309,12 +1309,14 @@ class QNMDReader:
         if i:
             i -= 1  # due to applying sync_dist, the first pixel is OOB
         with memoryview(self.data):  # assert data is open, and hold it open
-            d = self.ints[i : i + 2].astype("f4")
+            d = self.ints[i : i + 2]
+            extend_marker = d[0, 0, -1] == -32768
+            d = d.astype("f4")
         d *= self.scale
         # flip extend segments
         d[:, 0, :] = d[:, 0, ::-1]
         # remove extend segment marker
-        if d[0, 0, 0] == -32768 * self.scale:
+        if extend_marker:
             d[:, 0, 0] = d[:, 0, 1]
         d = d.reshape(-1)
         # "roll" across 2 indents (usually mostly consisting of the 2nd indent)
