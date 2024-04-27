@@ -5,7 +5,7 @@ from PyInstaller.utils.hooks import collect_submodules
 block_cipher = None
 
 
-a = Analysis(['magic_gui.py'],
+a = Analysis(['magic_afm/gui/__main__.py'],
              binaries=[('./_samplerate_data/libsamplerate.dylib', './samplerate/_samplerate_data')],
              datas=[('./README.rst', '.')],
              hiddenimports=[],

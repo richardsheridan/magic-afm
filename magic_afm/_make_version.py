@@ -13,21 +13,22 @@ def get():
 
 
 def read():
-    try:
-        with filename.open("r", encoding="utf8") as f:
-            oldversion = f.read()
-    except FileNotFoundError:
-        return False
-    return oldversion.split("=")[-1].strip()[1:-1]
+    import runpy
+
+    return runpy.run_path(filename)["__version__"]
 
 
 def write(version):
-    version = "__version__ = '" + version + "'\n"
+    version_str = f"""\
+__version__ = '{version}'
+__pep440_version__ = '{version.split('-')[0][1:]}'
+"""
     with filename.open("w", encoding="utf8") as f:
-        f.write(version)
+        f.write(version_str)
 
 
 if __name__ == "__main__":
-    v = get()
-    if not read() == v:
-        write(v)
+    __version__ = get()
+
+    if not read() == __version__:
+        write(__version__)

@@ -5,7 +5,7 @@ from PyInstaller.utils.hooks import collect_submodules
 block_cipher = None
 
 
-a = Analysis(['magic_gui.py'],
+a = Analysis(['magic_afm\\gui\\__main__.py'],
              binaries=[
                  ('./_samplerate_data/libsamplerate-64bit.dll',r'./samplerate/_samplerate_data'),
                  ('./_samplerate_data/libsamplerate-32bit.dll',r'./samplerate/_samplerate_data'),

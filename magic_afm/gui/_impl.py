@@ -16,15 +16,15 @@ if __debug__:
 
     assert parent_process() is None, "importing gui code in a worker"
 
-import sys
+# FROZEN = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
+try:
+    from magic_afm._version import __version__
+except ImportError:
+    import runpy
 
-FROZEN = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
-if FROZEN:
-    from ._version import __version__
-else:
-    from . import make_version
-
-    __version__ = make_version.get()
+    __version__ = runpy.run_module("magic_afm._make_version", run_name="__main__")[
+        "__version__"
+    ]
 
 __short_license__ = f"""{__app_name__} {__version__}
 Copyright (C) {__author__}
@@ -83,8 +83,7 @@ from matplotlib.transforms import Bbox, BboxTransform
 from tqdm.std import TqdmExperimentalWarning
 from tqdm.tk import tqdm_tk
 
-from . import async_tools, calculation, data_readers
-from .async_tools import LONGEST_IMPERCEPTIBLE_DELAY, TOOLTIP_CANCEL, tooltip_task
+from magic_afm import async_tools, calculation, data_readers
 
 warnings.simplefilter("ignore", TqdmExperimentalWarning)
 tqdm_tk.monitor_interval = 0
@@ -495,7 +494,9 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         )
         self.mpl_connect(
             "figure_leave_event",
-            impartial(partial(tooltip_send_chan.send_nowait, TOOLTIP_CANCEL)),
+            impartial(
+                partial(tooltip_send_chan.send_nowait, async_tools.TOOLTIP_CANCEL)
+            ),
         )
 
 
@@ -1355,7 +1356,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                 desc=f"Fitting {display.name} force curves",
                 smoothing=0.01,
                 # smoothing_time=1,
-                mininterval=LONGEST_IMPERCEPTIBLE_DELAY * 2,
+                mininterval=async_tools.LONGEST_IMPERCEPTIBLE_DELAY * 2,
                 unit=" fits",
                 tk_parent=display.tkwindow,
                 grab=False,
@@ -1705,7 +1706,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
         # Peel root_coords out of MouseEvent.guiEvent in MPL callback
         async for mouseevent, root_coords in recv_chan:
             if mouseevent.inaxes is None:
-                tooltip_send_chan.send_nowait(TOOLTIP_CANCEL)
+                tooltip_send_chan.send_nowait(async_tools.TOOLTIP_CANCEL)
                 continue
             elif display is None or mouseevent.name != "motion_notify_event":
                 continue
@@ -1722,7 +1723,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
             async_tools.spinner_task, display.spinner_start, display.spinner_stop
         )
         tooltip_send_chan = await nursery.start(
-            tooltip_task, display.show_tooltip, display.hide_tooltip, 2, 3
+            async_tools.tooltip_task, display.show_tooltip, display.hide_tooltip, 2, 3
         )
         pick_send_chan = await nursery.start(mpl_img_pick_event_task)
         motion_send_chan = await nursery.start(mpl_motion_event_task)
