@@ -51,41 +51,59 @@ modulus maps in the greater AFM nanomechanics community.
 
 Installation
 ------------
-Requires CPython 3.10 or higher. The easiest installation method 
-is to clone the git repository to your local machine, and
-install from the requirements.txt into a fresh environment::
+Requires CPython 3.11 or higher. (As of v0.9.0, we can read ARDF files natively,
+so :code:`ARDFtoHDF5.exe` is no longer required. We can still read the converted
+HDF5 files, if necessary.)
+
+From source
+^^^^^^^^^^^
+Clone the git repository to your local machine, and
+install into a fresh environment::
 
     git clone https://github.com/richardsheridan/magic-afm.git
 
     python -m venv magic_afm
     magic_afm\Scripts\activate.bat (or) magic_afm\bin\activate
+    pip install -e .[gui, numba]
     (or)
     conda create -n magic_afm python=3.11
     conda activate magic_afm
+    pip install -e .[gui, numba]
 
-    pip install -r requirements.txt
+This is also a `Pixi <https://pixi.sh/>`_ project, so if you install Pixi, the
+Python install is automatic and fast.
 
-Eventually we should supply :code:`setup.py` and a pypi package, once the
-dependencies settle.
 
-A PyInstaller release for Windows is available on Github. Simply download the
-ZIP archive, extract it to your hard drive, and run :code:`magic_gui.exe`.
+From PyPI
+^^^^^^^^^
+Eventually we should supply a pypi distribution.
 
-As of v0.9.0, we can read ARDF files natively, so :code:`ARDFtoHDF5.exe` is
-no longer required. We can still read the converted HDF5 files, if necessary.
+From GitHub Releases
+^^^^^^^^^^^^^^^^^^^^
+We use PyInstaller to build executable releases for Windows on Github.
+Simply download the ZIP archive, extract it to your hard drive.
 
 Usage
 -----
-
-Running
-^^^^^^^
-
-All platforms, when running from source::
-
-     python magic_gui.py
-
 All functionality available when the source is imported from the :code:`magic_afm`,
-see API_.
+see API_. :code:`magic fitting workflow.ipynb` doubles as an explainer and alternative
+interface. It also functions as the test suite for the calculation code, such as it is.
+The notebook needs additional dependencies you can get with the :code:`notebook` extra.
+
+Running the GUI
+^^^^^^^^^^^^^^^
+
+All platforms, when running from source or PyPI::
+
+     python -m magic_afm.gui
+
+or if you are a Pixi user, you can use this while in the source tree::
+
+     pixi run gui
+
+When running the GitHub release executable for Windows::
+
+     magic_gui.exe
 
 To load data, select "Open..." from the File menu, or press Ctrl+O. A dialog
 will open that will allow you to navigate and select any supported filetype.
@@ -150,14 +168,14 @@ force curve.
 
 The "Force curve display" can be toggled between spatial (d vs z) temporal (d vs t)
 and natural (f vs δ) units. "Select data source" appears if we detect that the file
-contains Trace and or Retrace data, so you can select which curves to display and fit
-. The "Preprocessing" parameters are read from the data file metadata but can be
+contains Trace and or Retrace data, so you can select which curves to display and fit.
+The "Preprocessing" parameters are read from the data file metadata but can be
 adjusted on the fly, updating the display immediately. "Deflection Sens." refers to
 the calibration factor that multiplies the static vertical photodetector signal to
 obtain the cantilever deflection in nm (sometimes called InvOLS.) "Spring Constant"
 refers to the static cantilever spring constant measured at the position of the probe
-tip. "Sync Distance" is only available when dealing with QNM data, and corrects the
-position of the peak force with respect to time and z postion.
+tip. "Sync Distance" is only available when dealing with QNM data, and phase-corrects
+the position of the peak force with respect to time and z position.
 
 Fitting Data
 ^^^^^^^^^^^^
@@ -230,9 +248,8 @@ Future Plans:
 
 API
 ---
-:code:`magic_afm` can be imported and used, especially the submodules data_readers and
-calculation. "magic fitting workflow.ipynb" doubles as an explainer and alternative
-interface. It also functions as the test suite for the calculation code, such as it is.
+:code:`magic_afm` can be imported and used, especially the submodules :code:`data_readers` and
+:code:`calculation`.
 
 .. TODO: This section will list the function names, arguments, results, exceptions and
    side effects. Possibly generated from docstrings?
