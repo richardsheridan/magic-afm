@@ -7,9 +7,6 @@ authors = [{ name = "richardsheridan", email = "richard.sheridan@gmail.com" }]
 requires-python = ">= 3.11"
 dependencies = [
     "attrs>=23.2.0",
-    "h5py>=3",
-    "numba>=0.54.0", # OPTIONAL, included for version pinning
-    # numba @ git+https://github.com/richardsheridan/numba@6284-cherry  # numba/numba#6284
     "numpy>=1.21",
     "samplerate==0.1.0",
 ]
@@ -26,6 +23,8 @@ gui = [
     "tqdm>=4.56.0",
 ]
 notebook = ["notebook>=7", "ipywidgets", "scipy", "tqdm>=4.56.0", "matplotlib>=3.8.0", ]
+numba = ["numba>=0.54.0", ]
+h5py = ["h5py>=3", ]
 
 [build-system]
 requires = ["setuptools"]
@@ -39,7 +38,7 @@ channels = ["conda-forge"]
 platforms = ["win-64"]
 
 [tool.pixi.dependencies]
-python = ">=3.12.0, <3.13.0"
+python = ">=3.11.0, <3.13.0"
 pixi-pycharm = "*"
 
 [tool.pixi.tasks]
@@ -59,6 +58,6 @@ build = { cmd = ["pyinstaller", "-y", "magic_gui_win.spec"], depends_on = ["make
 
 [tool.pixi.environments]
 default = { solve-group = "default" }
-#gui = { features = ["gui"], solve-group = "default" }
-build = { features = ["build", "gui"], solve-group = "default" }
-notebook = { features = ["notebook"], solve-group = "default" }
+#gui = { features = ["gui", "numba"], solve-group = "default" }
+build = { features = ["build", "gui", "numba", "h5py"], solve-group = "default" }
+notebook = { features = ["notebook", "numba", "h5py"], solve-group = "default" }
