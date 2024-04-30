@@ -15,7 +15,10 @@ def get():
 def read():
     import runpy
 
-    return runpy.run_path(filename)["__version__"]
+    try:
+        return runpy.run_path(filename)["__version__"]
+    except FileNotFoundError:
+        return ""
 
 
 def write(version):
