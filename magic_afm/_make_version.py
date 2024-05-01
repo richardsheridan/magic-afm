@@ -24,7 +24,6 @@ def read():
 def write(version):
     version_str = f"""\
 __version__ = '{version}'
-__pep440_version__ = '{version.split('-')[0][1:]}'
 """
     with filename.open("w", encoding="utf8") as f:
         f.write(version_str)

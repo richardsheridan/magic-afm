@@ -17,14 +17,15 @@ if __debug__:
     assert parent_process() is None, "importing gui code in a worker"
 
 # FROZEN = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
-try:
-    from magic_afm._version import __version__
-except ImportError:
-    import runpy
+from importlib.metadata import version, PackageNotFoundError
 
-    __version__ = runpy.run_module("magic_afm._make_version", run_name="__main__")[
-        "__version__"
-    ]
+try:
+    __version__ = version("magic-afm")
+except PackageNotFoundError:
+    try:
+        from magic_afm._version import __version__
+    except ImportError:
+        __version__ = "(unknown version)"
 
 __short_license__ = f"""{__app_name__} {__version__}
 Copyright (C) {__author__}

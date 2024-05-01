@@ -64,11 +64,11 @@ install into a fresh environment::
 
     python -m venv magic_afm
     magic_afm\Scripts\activate.bat (or) magic_afm\bin\activate
-    pip install -e .[gui, numba]
+    pip install -e .[gui,numba]
     (or)
     conda create -n magic_afm python=3.11
     conda activate magic_afm
-    pip install -e .[gui, numba]
+    pip install -e .[gui,numba]
 
 This is also a `Pixi <https://pixi.sh/>`_ project, so if you install Pixi, the
 Python install is automatic and fast.

@@ -27,11 +27,10 @@ numba = ["numba>=0.54.0", ]
 h5py = ["h5py>=3", ]
 
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools", "setuptools_scm[toml]"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.dynamic]
-version = { attr = "magic_afm._version.__pep440_version__" }
+[tool.setuptools_scm]
 
 [tool.pixi.project]
 channels = ["conda-forge"]
@@ -41,11 +40,8 @@ platforms = ["win-64"]
 python = ">=3.11.0, <3.13.0"
 pixi-pycharm = "*"
 
-[tool.pixi.tasks]
-make-version = { cmd = ["python", "magic_afm/_make_version.py"] }
-
 [tool.pixi.feature.gui.tasks]
-gui = { cmd = ["python", "-m", "magic_afm.gui"], depends_on = ["make-version"] }
+gui = { cmd = ["python", "-m", "magic_afm.gui"] }
 
 #[tool.pixi.feature.gui.pypi-dependencies]
 #magic-afm = { path = ".", editable = true }
@@ -54,6 +50,7 @@ gui = { cmd = ["python", "-m", "magic_afm.gui"], depends_on = ["make-version"] }
 notebook = { cmd = ["python", "-m", "notebook", "magic fitting workflow.ipynb"] }
 
 [tool.pixi.feature.build.tasks]
+make-version = { cmd = ["python", "magic_afm/_make_version.py"] }
 build = { cmd = ["pyinstaller", "-y", "magic_gui_win.spec"], depends_on = ["make-version"] }
 
 [tool.pixi.environments]
