@@ -988,7 +988,7 @@ class ARDFForceMapReader:
                 continue
             x = vdats[vset.line, vset.point] = [None, None]
             for vdat in self.traverse_vdats(vset.offset + vset.size):
-                if vdat.channel == self.channels["ZSnsr"][0]:
+                if vdat.channel == self.channels[self.zname][0]:
                     x[0] = vdat  # zvdat
                 elif vdat.channel == self.channels["Defl"][0]:
                     x[1] = vdat  # dvdat
