@@ -1435,7 +1435,7 @@ class NanoscopeVolume:
     def get_all_curves(self) -> ZDArrays:
         """Eagerly load all curves into memory."""
         x = np.empty(
-            self.shape + (2, 2, self._dreader.ints.shape[-1] // 2), dtype=np.float32
+            self.shape + (2, 2, self._dreader.ints.shape[-1]), dtype=np.float32
         )
         for index, curve in self.iter_curves():
             x[*index, ...] = curve
