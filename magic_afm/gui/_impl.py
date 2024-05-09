@@ -2395,9 +2395,9 @@ def main():
     host = TkHost(root)
     try:
         host.run(main_task, root)
-    except KeyboardInterrupt:
+    except* KeyboardInterrupt:
         pass
-    except BaseException:
+    except* BaseException:
         import datetime, traceback
 
         date = datetime.datetime.now().isoformat().replace(":", ";")
