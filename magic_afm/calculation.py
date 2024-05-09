@@ -1021,16 +1021,6 @@ def check_jit():
             print(_.get_metadata().keys())
 
 
-def nice_workers():
-    import psutil
-
-    try:
-        NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
-    except AttributeError:
-        NICE = 3
-    psutil.Process().nice(NICE)
-
-
 def load_force_curve(opened_fvol, fit_mode, k, rc):
     x = opened_fvol.get_curve(*rc)
     return process_force_curve((rc, x), fit_mode, k)

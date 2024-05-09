@@ -85,6 +85,7 @@ from tqdm.std import TqdmExperimentalWarning
 from tqdm.tk import tqdm_tk
 
 from magic_afm import async_tools, calculation, data_readers
+from magic_afm.gui.__main__ import nice_workers
 
 warnings.simplefilter("ignore", TqdmExperimentalWarning)
 tqdm_tk.monitor_interval = 0
@@ -2365,7 +2366,7 @@ async def main_task(root):
 
         trio_parallel.configure_default_context(
             idle_timeout=float("inf"),
-            init=calculation.nice_workers,
+            init=nice_workers,
         )
         # Depending on the system, workers can take up to 30 seconds to finish
         # loading and compiling numba jit stuff. I tried various permutations to
