@@ -1353,26 +1353,26 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
 
         async with spinner_scope():
             # assign pbar and progress_image ASAP in case of cancel
-            with trio.CancelScope() as cancel_scope, tqdm_tk(
-                total=ncurves,
-                desc=f"Fitting {display.name} force curves",
-                smoothing=0.01,
-                # smoothing_time=1,
-                mininterval=async_tools.LONGEST_IMPERCEPTIBLE_DELAY * 2,
-                unit=" fits",
-                tk_parent=display.tkwindow,
-                grab=False,
-                leave=False,
-                cancel_callback=cancel_scope.cancel,
-            ) as pbar:
+            with (
+                trio.CancelScope() as cancel_scope,
+                tqdm_tk(
+                    total=ncurves,
+                    desc=f"Fitting {display.name} force curves",
+                    smoothing=0.01,
+                    # smoothing_time=1,
+                    mininterval=async_tools.LONGEST_IMPERCEPTIBLE_DELAY * 2,
+                    unit=" fits",
+                    tk_parent=display.tkwindow,
+                    grab=False,
+                    leave=False,
+                    cancel_callback=cancel_scope.cancel,
+                ) as pbar,
+            ):
                 progress_image: matplotlib.image.AxesImage
                 progress_array = np.zeros(img_shape + (4,), dtype="f4")
                 half_red = np.array((1, 0, 0, 0.5), dtype="f4")
                 half_green = np.array((0, 1, 0, 0.5), dtype="f4")
-                property_map = np.empty(
-                    img_shape,
-                    dtype=calculation.PROPERTY_DTYPE,
-                )
+                property_map = np.empty(img_shape, dtype=calculation.PROPERTY_DTYPE)
 
                 def make_progress_image_draw_fn():
                     nonlocal progress_image, progress_array
