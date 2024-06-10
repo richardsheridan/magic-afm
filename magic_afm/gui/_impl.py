@@ -734,27 +734,32 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         self._prev_filename = fname
         root, ext = os.path.splitext(fname)
         exporter = exporter_map.get(ext, imageio.imwrite)
-        for image_name in self._get_image_names():
-            if image_name.startswith("Calc"):
-                # to date, all afm images have been "flipped" on disk, which is why
-                # they are displayed with "lower" origin, but on export users
-                # have found this confusing, so we manually flip here
-                # TODO: solve this at the data reader level?
-                image = (await self._get_image_by_name(image_name))[::-1]
-                try:
-                    await trio.to_thread.run_sync(
-                        exporter, root + "_" + image_name[4:] + ext, image
-                    )
-                except Exception as e:
-                    await trio.to_thread.run_sync(
-                        partial(
-                            tkinter.messagebox.showerror,
-                            master=self,
-                            title="Export error",
-                            message=repr(e),
-                        )
-                    )
-                    break
+        image_names = [x for x in self._get_image_names() if x.startswith("Calc")]
+
+        async def export_one(image_name):
+            # to date, all afm images have been "flipped" on disk, which is
+            # why they are displayed with "lower" origin, but on export users
+            # have found this confusing, so we manually flip here
+            # TODO: solve this at the data reader level?
+            image = (await self._get_image_by_name(image_name))[::-1]
+            await trio.to_thread.run_sync(
+                exporter, root + "_" + image_name[4:] + ext, image
+            )
+
+        try:
+            async with trio.open_nursery() as n:
+                n.cancel_scope.shield = True
+                for image_name in image_names:
+                    n.start_soon(export_one, image_name)
+        except BaseException as e:
+            await trio.to_thread.run_sync(
+                partial(
+                    tkinter.messagebox.showerror,
+                    master=self,
+                    title="Export error",
+                    message=repr(e),
+                )
+            )
 
 
 class TkHost:
