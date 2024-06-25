@@ -61,7 +61,15 @@ from contextlib import nullcontext
 from functools import partial, wraps
 from math import inf
 from tkinter import ttk
-from typing import Callable, ClassVar, Optional, Literal, Protocol, TypeAlias
+from typing import (
+    Callable,
+    ClassVar,
+    Optional,
+    Literal,
+    Protocol,
+    TypeAlias,
+    AsyncContextManager,
+)
 
 import imageio
 import matplotlib
@@ -1342,13 +1350,17 @@ class ForceVolumeTkDisplay:
         self.replot()
 
 
-async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVFile):
+@mutable
+class ForceVolumeController:
+    display: ForceVolumeTkDisplay
+    opened_fvol: AsyncFVFile
+
     # plot_curve_event_response
-    plot_curve_cancels_pending = set()
-    img_artists = []
-    plot_artists = []
+    plot_curve_cancels_pending: set = field(init=False, factory=set)
+    img_artists: list = field(init=False, factory=list)
+    plot_artists: list = field(init=False, factory=list)
     table: Optional[Table] = None
-    existing_points = set()
+    existing_points: set = field(init=False, factory=set)
     point_data: dict[ImagePoint, ForceCurveData] = {}
 
     # set in change_image_callback
@@ -1356,25 +1368,26 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
     axesimage: Optional[AxesImage] = None
     image_stats: Optional[ImageStats] = None
     unit: Optional[str] = None
+    spinner_scope: Optional[AsyncContextManager] = None
 
-    async def calc_prop_map_callback(options: ForceCurveOptions):
+    async def calc_prop_map_callback(self, options: ForceCurveOptions):
         assert options.fit_mode
-        img_shape = axesimage.get_size()
+        img_shape = self.axesimage.get_size()
         ncurves = img_shape[0] * img_shape[1]
         chunksize = 4
 
-        async with spinner_scope():
+        async with self.spinner_scope():
             # assign pbar and progress_image ASAP in case of cancel
             with (
                 trio.CancelScope() as cancel_scope,
                 tqdm_tk(
                     total=ncurves,
-                    desc=f"Fitting {display.name} force curves",
+                    desc=f"Fitting {self.display.name} force curves",
                     smoothing=0.01,
                     # smoothing_time=1,
                     mininterval=async_tools.LONGEST_IMPERCEPTIBLE_DELAY * 2,
                     unit=" fits",
-                    tk_parent=display.tkwindow,
+                    tk_parent=self.display.tkwindow,
                     grab=False,
                     leave=False,
                     cancel_callback=cancel_scope.cancel,
@@ -1388,9 +1401,9 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
 
                 def make_progress_image_draw_fn():
                     nonlocal progress_image, progress_array
-                    progress_image = display.img_ax.imshow(
+                    progress_image = self.display.img_ax.imshow(
                         progress_array,
-                        extent=axesimage.get_extent(),
+                        extent=self.axesimage.get_extent(),
                         origin="lower",
                         animated=True,
                         visible=False,
@@ -1400,15 +1413,15 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                     progress_array = progress_image.get_array()
                     return True
 
-                display.canvas.draw_send.send_nowait(make_progress_image_draw_fn)
+                self.display.canvas.draw_send.send_nowait(make_progress_image_draw_fn)
 
                 def blit_img_draw_fn():
-                    bg = display.canvas.copy_from_bbox(progress_image.clipbox)
+                    bg = self.display.canvas.copy_from_bbox(progress_image.clipbox)
                     progress_image.set_visible(True)
-                    display.img_ax.draw_artist(progress_image)
-                    display.canvas.blit(progress_image.clipbox)
+                    self.display.img_ax.draw_artist(progress_image)
+                    self.display.canvas.blit(progress_image.clipbox)
                     progress_image.set_visible(False)
-                    display.canvas.restore_region(bg)
+                    self.display.canvas.restore_region(bg)
                     return True
 
                 async with trio.open_nursery() as pipeline_nursery:
@@ -1419,10 +1432,10 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                             calculation.process_force_curve,
                             k=options.k,
                             s_ratio=options.defl_sens
-                            / opened_fvol.initial_parameters.defl_sens,
+                            / self.opened_fvol.initial_parameters.defl_sens,
                             fit_mode=options.fit_mode,
                         ),
-                        opened_fvol.iter_curves(options.trace, options.sync_dist),
+                        self.opened_fvol.iter_curves(options.trace, options.sync_dist),
                         chunksize * 8,
                     )
                     # noinspection PyTypeChecker
@@ -1443,18 +1456,18 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                             property_map[rc] = properties
                             progress_array[rc] = half_green
                         if pbar.update():
-                            display.canvas.draw_send.send_nowait(blit_img_draw_fn)
+                            self.display.canvas.draw_send.send_nowait(blit_img_draw_fn)
 
         def progress_image_cleanup_draw_fn():
             if progress_image is not None:
                 progress_image.remove()
 
-        display.canvas.draw_send.send_nowait(progress_image_cleanup_draw_fn)
+        self.display.canvas.draw_send.send_nowait(progress_image_cleanup_draw_fn)
 
         if cancel_scope.cancelled_caught:
             return
 
-        combobox_values = list(display.image_name_menu.cget("values"))
+        combobox_values = list(self.display.image_name_menu.cget("values"))
 
         # Actually write out results to external world
         if options.trace == 0:
@@ -1471,7 +1484,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
             extret = "Both"
         for name in calculation.PROPERTY_UNITS_DICT:
             newname = "Calc" + extret + name + trace
-            opened_fvol.add_image(
+            self.opened_fvol.add_image(
                 image_name=newname,
                 units=calculation.PROPERTY_UNITS_DICT[name],
                 image=property_map[name].squeeze(),
@@ -1479,27 +1492,26 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
             if newname not in combobox_values:
                 combobox_values.append(newname)
 
-        display.reset_image_name_menu(combobox_values)
-        display.image_name_menu.set(display.image_name_menu.get())
+        self.display.reset_image_name_menu(combobox_values)
+        self.display.image_name_menu.set(self.display.image_name_menu.get())
 
-    async def change_cmap_callback():
-        colormap_name = display.colormap_strvar.get()
+    async def change_cmap_callback(self):
+        colormap_name = self.display.colormap_strvar.get()
 
         def change_cmap_draw_fn():
-            axesimage.set_cmap(colormap_name)
+            self.axesimage.set_cmap(colormap_name)
 
-        await display.canvas.draw_send.send(change_cmap_draw_fn)
+        await self.display.canvas.draw_send.send(change_cmap_draw_fn)
 
-    async def change_image_callback():
-        nonlocal image_stats, unit
-        image_name = display.image_name_strvar.get()
-        cmap = display.colormap_strvar.get()
-        image_array = await opened_fvol.get_image(image_name)
-        image_stats = ImageStats.from_array(image_array)
-        unit = opened_fvol.get_image_units(image_name)
+    async def change_image_callback(self):
+        image_name = self.display.image_name_strvar.get()
+        cmap = self.display.colormap_strvar.get()
+        image_array = await self.opened_fvol.get_image(image_name)
+        self.image_stats = ImageStats.from_array(image_array)
+        self.unit = self.opened_fvol.get_image_units(image_name)
 
-        positive = image_stats.q01 > 0
-        log_scale = display.log_scale_intvar.get()
+        positive = self.image_stats.q01 > 0
+        log_scale = self.display.log_scale_intvar.get()
         norm = Normalize
 
         if log_scale:
@@ -1509,7 +1521,7 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                 await trio.to_thread.run_sync(
                     partial(
                         tkinter.messagebox.showwarning,
-                        master=display.tkwindow,
+                        master=self.display.tkwindow,
                         title="Logarithmic scale warning",
                         message=(
                             "Many negative values in image; "
@@ -1519,19 +1531,19 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                     )
                 )
 
-        fastscansize, slowscansize = opened_fvol.fvfile.scansize
+        fastscansize, slowscansize = self.opened_fvol.fvfile.scansize
 
         def change_image_draw_fn():
-            nonlocal axesimage, colorbar
-            if colorbar is not None:
-                colorbar.remove()
-            if axesimage is not None:
-                axesimage.remove()
-            display.img_ax.set_title(image_name.replace("_", "\n"))
-            display.img_ax.set_ylabel("Y piezo (nm)")
-            display.img_ax.set_xlabel("X piezo (nm)")
+            if self.colorbar is not None:
+                self.colorbar.remove()
+            if self.axesimage is not None:
+                self.axesimage.remove()
+            img_ax = self.display.img_ax
+            img_ax.set_title(image_name.replace("_", "\n"))
+            img_ax.set_ylabel("Y piezo (nm)")
+            img_ax.set_xlabel("X piezo (nm)")
 
-            axesimage = display.img_ax.imshow(
+            self.axesimage = img_ax.imshow(
                 image_array,
                 origin="lower",
                 extent=(
@@ -1541,40 +1553,40 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                     slowscansize + 0.5 * slowscansize / image_array.shape[0],
                 ),
                 picker=True,
-                norm=norm(vmin=image_stats.q01, vmax=image_stats.q99),
+                norm=norm(vmin=self.image_stats.q01, vmax=self.image_stats.q99),
                 cmap=cmap,
             )
-            display.img_ax.autoscale()
-            axesimage.get_array().fill_value = np.nan
+            img_ax.autoscale()
+            self.axesimage.get_array().fill_value = np.nan
 
-            colorbar = display.fig.colorbar(
-                axesimage, ax=display.img_ax, use_gridspec=True
+            self.colorbar = self.display.fig.colorbar(
+                self.axesimage, ax=img_ax, use_gridspec=True
             )
-            display.navbar.update()  # let navbar catch new cax in fig for tooltips
-            if unit is not None:
-                colorbar.formatter = EngFormatter(unit, places=1)
-                colorbar.update_ticks()
+            self.display.navbar.update()  # let navbar catch new cax in fig for tooltips
+            if self.unit is not None:
+                self.colorbar.formatter = EngFormatter(self.unit, places=1)
+                self.colorbar.update_ticks()
 
-            display.fig.set_layout_engine(LAYOUT_ENGINE)
+            self.display.fig.set_layout_engine(LAYOUT_ENGINE)
 
-        await display.canvas.draw_send.send(change_image_draw_fn)
+        await self.display.canvas.draw_send.send(change_image_draw_fn)
 
-    async def redraw_existing_points_task(task_status):
+    async def redraw_existing_points_task(self, task_status):
         redraw_send, redraw_recv = trio.open_memory_channel(inf)
 
         def clear_points_draw_fn():
-            for artist in img_artists:
+            for artist in self.img_artists:
                 artist.remove()
-            for artist in plot_artists:
+            for artist in self.plot_artists:
                 artist.remove()
-            display.plot_ax.relim()
-            display.plot_ax.set_prop_cycle(None)
-            img_artists.clear()
-            plot_artists.clear()
-            point_data.clear()
+            self.display.plot_ax.relim()
+            self.display.plot_ax.set_prop_cycle(None)
+            self.img_artists.clear()
+            self.plot_artists.clear()
+            self.point_data.clear()
 
         def tight_points_draw_fn():
-            display.fig.set_layout_engine(LAYOUT_ENGINE)
+            self.display.fig.set_layout_engine(LAYOUT_ENGINE)
 
         task_status.started(redraw_send)
         while True:
@@ -1585,56 +1597,59 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                     msg = redraw_recv.receive_nowait() or msg
                 except trio.WouldBlock:
                     break
-            await display.canvas.draw_send.send(clear_points_draw_fn)
-            async with spinner_scope():
-                options = display.options
-                for point in existing_points.copy():  # avoid crash on concurrent clear
-                    await plot_curve_response(point, options, False)
+            await self.display.canvas.draw_send.send(clear_points_draw_fn)
+            async with self.spinner_scope():
+                options = self.display.options
+                for (
+                    point
+                ) in self.existing_points.copy():  # avoid crash on concurrent clear
+                    await self.plot_curve_response(point, options, False)
                 if msg:
-                    await display.canvas.draw_send.send(tight_points_draw_fn)
+                    await self.display.canvas.draw_send.send(tight_points_draw_fn)
 
-    async def manipulate_callback():
-        manip_name = display.manipulate_strvar.get()
-        current_name = display.image_name_strvar.get()
-        current_names = list(display.image_name_menu.cget("values"))
+    async def manipulate_callback(self):
+        manip_name = self.display.manipulate_strvar.get()
+        current_name = self.display.image_name_strvar.get()
+        current_names = list(self.display.image_name_menu.cget("values"))
         name = "Calc" + manip_name + "_" + current_name
-        if name not in opened_fvol.image_names:
+        if name not in self.opened_fvol.image_names:
             manip_fn = calculation.MANIPULATIONS[manip_name]
-            async with spinner_scope():
+            async with self.spinner_scope():
                 manip_img = await trio.to_thread.run_sync(
-                    manip_fn, axesimage.get_array().data
+                    manip_fn, self.axesimage.get_array().data
                 )
-            opened_fvol.add_image(name, unit, manip_img)
+            self.opened_fvol.add_image(name, self.unit, manip_img)
             if name not in current_names:
                 current_names.append(name)
-            display.reset_image_name_menu(current_names)
-        display.image_name_menu.set(name)
+            self.display.reset_image_name_menu(current_names)
+        self.display.image_name_menu.set(name)
 
     async def plot_curve_response(
+        self,
         point: ImagePoint,
         options: ForceCurveOptions,
         clear_previous: bool,
         *,
         task_status=trio.TASK_STATUS_IGNORED,
     ):
-        existing_points.add(point)  # should be before 1st checkpoint
+        self.existing_points.add(point)  # should be before 1st checkpoint
 
         # XXX: only needed on first plot. Maybe later make optional?
-        display.plot_ax.set_autoscale_on(True)
+        self.display.plot_ax.set_autoscale_on(True)
 
         if clear_previous:
-            for cancel_scope in plot_curve_cancels_pending:
+            for cancel_scope in self.plot_curve_cancels_pending:
                 cancel_scope.cancel()
-            plot_curve_cancels_pending.clear()
+            self.plot_curve_cancels_pending.clear()
         task_status.started()
-        async with spinner_scope():
+        async with self.spinner_scope():
             with trio.CancelScope() as cancel_scope:
-                plot_curve_cancels_pending.add(cancel_scope)
+                self.plot_curve_cancels_pending.add(cancel_scope)
 
                 # Calculation phase
                 # Do a few long-running jobs, likely to be canceled
                 force_curve = await trio.to_thread.run_sync(
-                    opened_fvol.get_curve,
+                    self.opened_fvol.get_curve,
                     point.r,
                     point.c,
                     options.trace,
@@ -1643,49 +1658,48 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                 force_curve_data = await trio.to_thread.run_sync(
                     calculate_force_data,
                     *force_curve,
-                    opened_fvol.fvfile.t_step,
+                    self.opened_fvol.fvfile.t_step,
                     options,
-                    opened_fvol.initial_parameters,
+                    self.opened_fvol.initial_parameters,
                     trio.from_thread.check_cancelled,
                 )
                 del force_curve  # contained in data
-            plot_curve_cancels_pending.discard(cancel_scope)
+            self.plot_curve_cancels_pending.discard(cancel_scope)
 
             if cancel_scope.cancelled_caught:
-                existing_points.discard(point)
+                self.existing_points.discard(point)
                 return
 
             def plot_point_draw_fn():
-                nonlocal table
                 # Clearing Phase
                 # Clear previous artists and reset plots (faster than .clear()?)
-                if table is not None:
-                    table.remove()
-                    table = None
+                if self.table is not None:
+                    self.table.remove()
+                    self.table = None
                 if clear_previous:
-                    for artist in img_artists:
+                    for artist in self.img_artists:
                         artist.remove()
-                    for artist in plot_artists:
+                    for artist in self.plot_artists:
                         artist.remove()
-                    img_artists.clear()
-                    plot_artists.clear()
-                    existing_points.clear()
-                    point_data.clear()
+                    self.img_artists.clear()
+                    self.plot_artists.clear()
+                    self.existing_points.clear()
+                    self.point_data.clear()
 
-                    existing_points.add(point)
-                    display.plot_ax.relim()
-                    display.plot_ax.set_prop_cycle(None)
+                    self.existing_points.add(point)
+                    self.display.plot_ax.relim()
+                    self.display.plot_ax.set_prop_cycle(None)
                 # unconditional so draw_force_curve gets the latest data
-                point_data[point] = force_curve_data
+                self.point_data[point] = force_curve_data
 
                 # Drawing Phase
                 # Based options choose plots and collect artists for deletion
                 new_artists, color = draw_force_curve(
-                    force_curve_data, display.plot_ax, options
+                    force_curve_data, self.display.plot_ax, options
                 )
-                plot_artists.extend(new_artists)
-                img_artists.extend(
-                    display.img_ax.plot(
+                self.plot_artists.extend(new_artists)
+                self.img_artists.extend(
+                    self.display.img_ax.plot(
                         point.x,
                         point.y,
                         marker="X",
@@ -1696,25 +1710,29 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
                     )
                 )
                 if options.fit_mode:
-                    table = draw_data_table(point_data, display.plot_ax)
+                    table = draw_data_table(self.point_data, self.display.plot_ax)
 
-            await display.canvas.draw_send.send(plot_point_draw_fn)
+            await self.display.canvas.draw_send.send(plot_point_draw_fn)
 
-    async def mpl_img_pick_event_task(task_status):
+    async def mpl_img_pick_event_task(self, nursery, *, task_status):
         send_chan, recv_chan = trio.open_memory_channel(inf)
         task_status.started(send_chan)
         async for mouseevent in recv_chan:
             if mouseevent.button != MouseButton.LEFT:
                 continue
-            point = ImagePoint.from_data(mouseevent.xdata, mouseevent.ydata, axesimage)
+            point = ImagePoint.from_data(
+                mouseevent.xdata, mouseevent.ydata, self.axesimage
+            )
             shift_held = "shift" in mouseevent.modifiers
-            if shift_held and point in existing_points:
+            if shift_held and point in self.existing_points:
                 continue
             await nursery.start(
-                plot_curve_response, point, display.options, not shift_held
+                self.plot_curve_response, point, self.display.options, not shift_held
             )
 
-    async def mpl_motion_event_task(task_status):
+    async def mpl_motion_event_task(
+        self, tooltip_send_chan, pick_send_chan, task_status
+    ):
         send_chan, recv_chan = trio.open_memory_channel(inf)
         task_status.started(send_chan)
         # Peel root_coords out of MouseEvent.guiEvent in MPL callback
@@ -1722,47 +1740,59 @@ async def force_volume_task(display: ForceVolumeTkDisplay, opened_fvol: AsyncFVF
             if mouseevent.inaxes is None:
                 tooltip_send_chan.send_nowait(async_tools.TOOLTIP_CANCEL)
                 continue
-            elif display is None or mouseevent.name != "motion_notify_event":
+            elif self.display is None or mouseevent.name != "motion_notify_event":
                 continue
-            elif mouseevent.inaxes is display.img_ax:
-                tooltip_send_chan.send_nowait((*root_coords, display.img_ax_tip_text))
+            elif mouseevent.inaxes is self.display.img_ax:
+                tooltip_send_chan.send_nowait(
+                    (*root_coords, self.display.img_ax_tip_text)
+                )
                 if "ctrl" in mouseevent.modifiers:
                     pick_send_chan.send_nowait(mouseevent)
-            elif mouseevent.inaxes is display.plot_ax:
-                tooltip_send_chan.send_nowait((*root_coords, display.plot_ax_tip_text))
+            elif mouseevent.inaxes is self.display.plot_ax:
+                tooltip_send_chan.send_nowait(
+                    (*root_coords, self.display.plot_ax_tip_text)
+                )
 
-    nursery: trio.Nursery
-    async with trio.open_nursery() as nursery:
-        spinner_scope = await nursery.start(
-            async_tools.spinner_task, display.spinner_start, display.spinner_stop
-        )
-        tooltip_send_chan = await nursery.start(
-            async_tools.tooltip_task, display.show_tooltip, display.hide_tooltip, 2, 3
-        )
-        pick_send_chan = await nursery.start(mpl_img_pick_event_task)
-        motion_send_chan = await nursery.start(mpl_motion_event_task)
-        redraw_send_chan = await nursery.start(redraw_existing_points_task)
+    async def control_task(self):
+        display = self.display
+        nursery: trio.Nursery
+        async with trio.open_nursery() as nursery:
+            self.spinner_scope = await nursery.start(
+                async_tools.spinner_task, display.spinner_start, display.spinner_stop
+            )
+            tooltip_send_chan = await nursery.start(
+                async_tools.tooltip_task,
+                display.show_tooltip,
+                display.hide_tooltip,
+                2,
+                3,
+            )
+            pick_send_chan = await nursery.start(self.mpl_img_pick_event_task, nursery)
+            motion_send_chan = await nursery.start(
+                self.mpl_motion_event_task, tooltip_send_chan, pick_send_chan
+            )
+            redraw_send_chan = await nursery.start(self.redraw_existing_points_task)
 
-        display.navbar.teach_navbar_to_use_trio(
-            nursery=nursery,
-            get_image_names=partial(display.image_name_menu.cget, "values"),
-            get_image_by_name=opened_fvol.get_image,
-            point_data=point_data,
-        )
-        display.canvas.pipe_events_to_trio(
-            spinner_scope, motion_send_chan, pick_send_chan, tooltip_send_chan
-        )
-        display.teach_display_to_use_trio(
-            nursery,
-            redraw_send_chan,
-            calc_prop_map_callback,
-            change_cmap_callback,
-            manipulate_callback,
-            change_image_callback,
-        )
-        # This causes the initial plotting of figures after next checkpoint
-        display.reset_image_name_menu(opened_fvol.image_names)
-        display.image_name_strvar.set(opened_fvol.initial_image_name)
+            display.navbar.teach_navbar_to_use_trio(
+                nursery=nursery,
+                get_image_names=partial(display.image_name_menu.cget, "values"),
+                get_image_by_name=self.opened_fvol.get_image,
+                point_data=self.point_data,
+            )
+            display.canvas.pipe_events_to_trio(
+                self.spinner_scope, motion_send_chan, pick_send_chan, tooltip_send_chan
+            )
+            display.teach_display_to_use_trio(
+                nursery,
+                redraw_send_chan,
+                self.calc_prop_map_callback,
+                self.change_cmap_callback,
+                self.manipulate_callback,
+                self.change_image_callback,
+            )
+            # This causes the initial plotting of figures after next checkpoint
+            display.reset_image_name_menu(self.opened_fvol.image_names)
+            display.image_name_strvar.set(self.opened_fvol.initial_image_name)
 
 
 def draw_data_table(point_data, ax: Axes):
@@ -2083,7 +2113,7 @@ async def open_one(root, path):
         fvfile = await trio.to_thread.run_sync(fvfile_cls.parse, open_thing)
         opened_fv = AsyncFVFile(fvfile)
         display = ForceVolumeTkDisplay(root, path.name, opened_fv)
-        await force_volume_task(display, opened_fv)
+        await ForceVolumeController(display, opened_fv).control_task()
         display.destroy()
     finally:
         with trio.CancelScope(shield=True):
@@ -2093,7 +2123,7 @@ async def open_one(root, path):
 async def demo_task(root):
     opened_fv = DemoForceVolumeFile()
     display = ForceVolumeTkDisplay(root, "Demo", opened_fv)
-    await force_volume_task(display, opened_fv)
+    await ForceVolumeController(display, opened_fv).control_task()
     display.destroy()
 
 
