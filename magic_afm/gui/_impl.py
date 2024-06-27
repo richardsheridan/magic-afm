@@ -752,12 +752,19 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
                 for image_name in image_names:
                     n.start_soon(export_one, image_name)
         except BaseException as e:
+            e_repr = repr(e)
+            if "mode F" in e_repr:
+                message = ext + " format cannot handle this data"
+            elif "not find a backend" in e_repr:
+                message = "Unknown file extension " + ext
+            else:
+                message = e_repr
             await trio.to_thread.run_sync(
                 partial(
                     tkinter.messagebox.showerror,
                     master=self,
                     title="Export error",
-                    message=repr(e),
+                    message=message,
                 )
             )
 
