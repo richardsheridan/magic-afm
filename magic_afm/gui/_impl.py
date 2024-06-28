@@ -511,7 +511,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
 class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
     canvas: AsyncFigureCanvasTkAgg
 
-    def __init__(self, canvas, window):
+    def __init__(self, canvas, window, headers):
         self.toolitems = tuple(
             x for x in self.toolitems if x[-1] != "configure_subplots"
         )
@@ -523,9 +523,27 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
                 "filesave",
                 "export_force_curves",
             ),
+            ("Headers", "Show headers", "help", "popup_headers"),
         )
         self._prev_filename = ""
         super().__init__(canvas, window)
+        self._headers = headers
+        self._headers_name = window.wm_title()
+
+    def popup_headers(self):
+        toplevel = tk.Toplevel(self)
+        toplevel.wm_title(self._headers_name + " headers")
+        toplevel.wm_attributes("-topmost", 1)
+        toplevel.after("idle", lambda: toplevel.wm_attributes("-topmost", 0))
+        toplevel.columnconfigure(0, weight=1)
+        toplevel.rowconfigure(0, weight=1)
+        treeview = ttk.Treeview(toplevel, columns=["value"], selectmode="none")
+        treeview.grid(row=0, column=0, sticky="news")
+        scrollbar = ttk.Scrollbar(master=toplevel, command=treeview.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        treeview.configure(yscrollcommand=scrollbar.set)
+        for key, value in self._headers.items():
+            treeview.insert("", "end", text=key, values=[value])
 
     def drag_pan(self, event):
         """Callback for dragging in pan/zoom mode."""
@@ -1012,7 +1030,14 @@ def unbind_mousewheel(widget_with_bind):
 
 
 class ForceVolumeTkDisplay:
-    def __init__(self, root, name, initial_values: ForceVolumeParams, **kwargs):
+    def __init__(
+        self,
+        root,
+        name,
+        initial_values: ForceVolumeParams,
+        headers: dict[str, str],
+        **kwargs,
+    ):
         self._traces: list[tuple[tk.Variable, str]] = []
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
         self.name = name
@@ -1030,7 +1055,7 @@ class ForceVolumeTkDisplay:
         # Build figure
         self.fig = Figure((9, 2.75), facecolor="#f0f0f0", layout=LAYOUT_ENGINE)
         self.canvas = AsyncFigureCanvasTkAgg(self.fig, window)
-        self.navbar = AsyncNavigationToolbar2Tk(self.canvas, window)
+        self.navbar = AsyncNavigationToolbar2Tk(self.canvas, window, headers)
         self.img_ax = None
         self.plot_ax = None
 
@@ -2030,7 +2055,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
                     data.defl,
                     data.ind,
                     data.defl / data.ind,
-                    data.a_c
+                    data.a_c,
                 )
                 for data in point_data.values()
             ],
@@ -2309,7 +2334,9 @@ async def open_one(root, path):
     try:
         fvfile = await trio.to_thread.run_sync(fvfile_cls.parse, open_thing)
         opened_fv = AsyncFVFile(fvfile)
-        display = ForceVolumeTkDisplay(root, path.name, opened_fv.initial_parameters)
+        display = ForceVolumeTkDisplay(
+            root, path.name, opened_fv.initial_parameters, opened_fv.fvfile.headers
+        )
         await ForceVolumeController(display, opened_fv).control_task()
         display.destroy()
     finally:
@@ -2319,7 +2346,7 @@ async def open_one(root, path):
 
 async def demo_task(root):
     opened_fv = DemoForceVolumeFile()
-    display = ForceVolumeTkDisplay(root, "Demo", opened_fv.initial_parameters)
+    display = ForceVolumeTkDisplay(root, "Demo", opened_fv.initial_parameters, {})
     await ForceVolumeController(display, opened_fv).control_task()
     display.destroy()
 
