@@ -867,13 +867,20 @@ def unbind_mousewheel(widget_with_bind):
 
 
 class ForceVolumeTkDisplay:
-    def __init__(self, root, name, opened_fvfile: AsyncFVFile, **kwargs):
-        initial_values = opened_fvfile.initial_parameters
+    def __init__(self, root, name, initial_values: ForceVolumeParams, **kwargs):
         self._traces: list[tuple[tk.Variable, str]] = []
-        self._nursery = None
         self.tkwindow = window = tk.Toplevel(root, **kwargs)
         self.name = name
         window.wm_title(name)
+
+        # Trio objects
+        # these will be overwritten by teach_display_to_use_trio
+        null_send_chan: trio.MemorySendChannel = trio.open_memory_channel(inf)[0]
+        self.redraw_send_chan = null_send_chan
+        self.calc_prop_map_send_chan = null_send_chan
+        self.change_cmap_send_chan = null_send_chan
+        self.manipulate_send_chan = null_send_chan
+        self.change_image_send_chan = null_send_chan
 
         # Build figure
         self.fig = Figure((9, 2.75), facecolor="#f0f0f0", layout=LAYOUT_ENGINE)
@@ -1190,6 +1197,13 @@ class ForceVolumeTkDisplay:
         )
         self.tipwindow_label.pack(ipadx=2)
         self._opts = self.options
+        self.calc_props_button.configure(
+            command=lambda: self.calc_prop_map_send_chan.send_nowait(self.options)
+        )
+        self._add_trace(self.colormap_strvar, self.change_cmap_callback)
+        self._add_trace(self.manipulate_strvar, self.manipulate_callback)
+        self._add_trace(self.image_name_strvar, self.change_image_callback)
+        self._add_trace(self.log_scale_intvar, self.change_image_callback)
 
     def _add_trace(self, tkvar, callback):
         self._traces.append((tkvar, tkvar.trace_add("write", callback)))
@@ -1249,45 +1263,21 @@ class ForceVolumeTkDisplay:
         longest = max(map(len, names))
         self.image_name_menu.configure(values=names, width=min(longest - 1, 40))
 
-    def replot(self):
-        pass
-
-    def replot_tight(self):
-        pass
-
-    # noinspection PyTypeChecker
     def teach_display_to_use_trio(
         self,
         nursery,
-        redraw_send_chan,
-        calc_prop_map_callback,
-        change_cmap_callback,
-        manipulate_callback,
-        change_image_callback,
+        redraw_send_chan: trio.MemorySendChannel,
+        calc_prop_map_send_chan: trio.MemorySendChannel,
+        change_cmap_send_chan: trio.MemorySendChannel,
+        manipulate_send_chan: trio.MemorySendChannel,
+        change_image_send_chan: trio.MemorySendChannel,
     ):
         self.tkwindow.protocol("WM_DELETE_WINDOW", nursery.cancel_scope.cancel)
-        self.calc_props_button.configure(
-            command=lambda: nursery.start_soon(calc_prop_map_callback, self.options)
-        )
-        self._add_trace(
-            self.colormap_strvar,
-            impartial(partial(nursery.start_soon, change_cmap_callback)),
-        )
-        self._add_trace(
-            self.manipulate_strvar,
-            impartial(partial(nursery.start_soon, manipulate_callback)),
-        )
-        self._add_trace(
-            self.image_name_strvar,
-            impartial(partial(nursery.start_soon, change_image_callback)),
-        )
-        self._add_trace(
-            self.log_scale_intvar,
-            impartial(partial(nursery.start_soon, change_image_callback)),
-        )
-        self.replot = partial(redraw_send_chan.send_nowait, False)
-        self.replot_tight = partial(redraw_send_chan.send_nowait, True)
-
+        self.redraw_send_chan = redraw_send_chan
+        self.calc_prop_map_send_chan = calc_prop_map_send_chan
+        self.change_cmap_send_chan = change_cmap_send_chan
+        self.manipulate_send_chan = manipulate_send_chan
+        self.change_image_send_chan = change_image_send_chan
         nursery.start_soon(self.canvas.idle_draw_task)
 
     def defl_sens_callback(self, *args):
@@ -1297,7 +1287,7 @@ class ForceVolumeTkDisplay:
             self.defl_sens_sbox.configure(foreground="red2")
         else:
             self.defl_sens_sbox.configure(foreground="black")
-            self.replot()
+            self.redraw_send_chan.send_nowait(False)
 
     def spring_const_callback(self, *args):
         try:
@@ -1306,7 +1296,7 @@ class ForceVolumeTkDisplay:
             self.spring_const_sbox.configure(foreground="red2")
         else:
             self.spring_const_sbox.configure(foreground="black")
-            self.replot()
+            self.redraw_send_chan.send_nowait(False)
 
     def sync_dist_callback(self, *args):
         try:
@@ -1315,7 +1305,7 @@ class ForceVolumeTkDisplay:
             self.sync_dist_sbox.configure(foreground="red2")
         else:
             self.sync_dist_sbox.configure(foreground="black")
-            self.replot()
+            self.redraw_send_chan.send_nowait(False)
 
     def radius_callback(self, *args):
         try:
@@ -1324,7 +1314,7 @@ class ForceVolumeTkDisplay:
             self.fit_radius_sbox.configure(foreground="red2")
         else:
             self.fit_radius_sbox.configure(foreground="black")
-            self.replot()
+            self.redraw_send_chan.send_nowait(False)
 
     def tau_callback(self, *args):
         try:
@@ -1333,7 +1323,7 @@ class ForceVolumeTkDisplay:
             self.fit_tau_sbox.configure(foreground="red2")
         else:
             self.fit_tau_sbox.configure(foreground="black")
-            self.replot()
+            self.redraw_send_chan.send_nowait(False)
 
     def change_fit_kind_callback(self, *args):
         if self.fit_intvar.get():
@@ -1341,13 +1331,32 @@ class ForceVolumeTkDisplay:
         else:
             state = "disabled"
         self.calc_props_button.configure(state=state)
-        self.replot_tight()
+        self.redraw_send_chan.send_nowait(True)
 
     def change_disp_kind_callback(self, *args):
-        self.replot_tight()
+        self.redraw_send_chan.send_nowait(True)
 
     def change_data_select_callback(self, *args):
-        self.replot()
+        self.redraw_send_chan.send_nowait(False)
+
+    def calc_prop_map_callback(self, *args):
+        self.calc_prop_map_send_chan.send_nowait(self.options)
+
+    def change_cmap_callback(self, *args):
+        colormap_name = self.colormap_strvar.get()
+        self.change_cmap_send_chan.send_nowait(colormap_name)
+
+    def manipulate_callback(self, *args):
+        manip_name = self.manipulate_strvar.get()
+        current_name = self.image_name_strvar.get()
+        current_names = list(self.image_name_menu.cget("values"))
+        self.manipulate_send_chan.send_nowait((manip_name, current_name, current_names))
+
+    def change_image_callback(self, *args):
+        image_name = self.image_name_strvar.get()
+        cmap = self.colormap_strvar.get()
+        log_scale = self.log_scale_intvar.get()
+        self.change_image_send_chan.send_nowait((image_name, cmap, log_scale))
 
 
 @mutable
@@ -1363,14 +1372,20 @@ class ForceVolumeController:
     existing_points: set = field(init=False, factory=set)
     point_data: dict[ImagePoint, ForceCurveData] = {}
 
-    # set in change_image_callback
-    colorbar: Optional[Colorbar] = None
+    # set in change_image_task
     axesimage: Optional[AxesImage] = None
-    image_stats: Optional[ImageStats] = None
-    unit: Optional[str] = None
+
+    # set in control_task
     spinner_scope: Optional[AsyncContextManager] = None
 
-    async def calc_prop_map_callback(self, options: ForceCurveOptions):
+    async def calc_prop_map_task(self, *, task_status):
+        send_chan, recv_chan = trio.open_memory_channel(inf)
+        task_status.started(send_chan)
+        async with trio.open_nursery() as n:
+            async for options in recv_chan:
+                n.start_soon(self.calc_prop_map_response, options)
+
+    async def calc_prop_map_response(self, options: ForceCurveOptions):
         assert options.fit_mode
         img_shape = self.axesimage.get_size()
         ncurves = img_shape[0] * img_shape[1]
@@ -1495,81 +1510,110 @@ class ForceVolumeController:
         self.display.reset_image_name_menu(combobox_values)
         self.display.image_name_menu.set(self.display.image_name_menu.get())
 
-    async def change_cmap_callback(self):
-        colormap_name = self.display.colormap_strvar.get()
+    async def change_cmap_task(self, *, task_status):
+        send_chan, recv_chan = trio.open_memory_channel(inf)
+        task_status.started(send_chan)
 
-        def change_cmap_draw_fn():
-            self.axesimage.set_cmap(colormap_name)
+        def change_cmap_draw_fn(name):
+            self.axesimage.set_cmap(name)
 
-        await self.display.canvas.draw_send.send(change_cmap_draw_fn)
+        while True:
+            colormap_name = await async_tools.receive_drain_and_get_latest(recv_chan)
+            self.display.canvas.draw_send.send_nowait(
+                partial(change_cmap_draw_fn, colormap_name)
+            )
 
-    async def change_image_callback(self):
-        image_name = self.display.image_name_strvar.get()
-        cmap = self.display.colormap_strvar.get()
-        image_array = await self.opened_fvol.get_image(image_name)
-        self.image_stats = ImageStats.from_array(image_array)
-        self.unit = self.opened_fvol.get_image_units(image_name)
+    async def change_image_task(self, *, task_status):
+        send_chan, recv_chan = trio.open_memory_channel(inf)
+        task_status.started(send_chan)
+        colorbar: Optional[Colorbar] = None
 
-        positive = self.image_stats.q01 > 0
-        log_scale = self.display.log_scale_intvar.get()
-        norm = Normalize
+        while True:
+            image_name, cmap, log_scale = (
+                await async_tools.receive_drain_and_get_latest(recv_chan)
+            )
+            image_array = await self.opened_fvol.get_image(image_name)
+            image_stats = ImageStats.from_array(image_array)
+            unit = self.opened_fvol.get_image_units(image_name)
+            fastscansize, slowscansize = self.opened_fvol.fvfile.scansize
 
-        if log_scale:
-            if positive:
-                norm = LogNorm
-            else:
-                await trio.to_thread.run_sync(
-                    partial(
-                        tkinter.messagebox.showwarning,
-                        master=self.display.tkwindow,
-                        title="Logarithmic scale warning",
-                        message=(
-                            "Many negative values in image; "
-                            "logarithmic scaling ignored.\n"
-                            "Consider applying image manipulations."
-                        ),
+            positive = image_stats.q01 > 0
+            norm = Normalize
+
+            if log_scale:
+                if positive:
+                    norm = LogNorm
+                else:
+                    await trio.to_thread.run_sync(
+                        partial(
+                            tkinter.messagebox.showwarning,
+                            master=self.display.tkwindow,
+                            title="Logarithmic scale warning",
+                            message=(
+                                "Many negative values in image; "
+                                "logarithmic scaling ignored.\n"
+                                "Consider applying image manipulations."
+                            ),
+                        )
                     )
+
+            def change_image_draw_fn():
+                nonlocal colorbar
+                if colorbar is not None:
+                    colorbar.remove()
+                if self.axesimage is not None:
+                    self.axesimage.remove()
+                img_ax = self.display.img_ax
+                img_ax.set_title(image_name.replace("_", "\n"))
+                img_ax.set_ylabel("Y piezo (nm)")
+                img_ax.set_xlabel("X piezo (nm)")
+
+                self.axesimage = img_ax.imshow(
+                    image_array,
+                    origin="lower",
+                    extent=(
+                        -0.5 * fastscansize / image_array.shape[1],
+                        fastscansize + 0.5 * fastscansize / image_array.shape[1],
+                        -0.5 * slowscansize / image_array.shape[0],
+                        slowscansize + 0.5 * slowscansize / image_array.shape[0],
+                    ),
+                    picker=True,
+                    norm=norm(vmin=image_stats.q01, vmax=image_stats.q99),
+                    cmap=cmap,
                 )
+                img_ax.autoscale()
+                self.axesimage.get_array().fill_value = np.nan
 
-        fastscansize, slowscansize = self.opened_fvol.fvfile.scansize
+                colorbar = self.display.fig.colorbar(
+                    self.axesimage, ax=img_ax, use_gridspec=True
+                )
+                self.display.navbar.update()  # let navbar catch new cax in fig for tooltips
 
-        def change_image_draw_fn():
-            if self.colorbar is not None:
-                self.colorbar.remove()
-            if self.axesimage is not None:
-                self.axesimage.remove()
-            img_ax = self.display.img_ax
-            img_ax.set_title(image_name.replace("_", "\n"))
-            img_ax.set_ylabel("Y piezo (nm)")
-            img_ax.set_xlabel("X piezo (nm)")
+                colorbar.formatter = EngFormatter(unit, places=1)
+                colorbar.update_ticks()
 
-            self.axesimage = img_ax.imshow(
-                image_array,
-                origin="lower",
-                extent=(
-                    -0.5 * fastscansize / image_array.shape[1],
-                    fastscansize + 0.5 * fastscansize / image_array.shape[1],
-                    -0.5 * slowscansize / image_array.shape[0],
-                    slowscansize + 0.5 * slowscansize / image_array.shape[0],
-                ),
-                picker=True,
-                norm=norm(vmin=self.image_stats.q01, vmax=self.image_stats.q99),
-                cmap=cmap,
-            )
-            img_ax.autoscale()
-            self.axesimage.get_array().fill_value = np.nan
+                self.display.fig.set_layout_engine(LAYOUT_ENGINE)
 
-            self.colorbar = self.display.fig.colorbar(
-                self.axesimage, ax=img_ax, use_gridspec=True
-            )
-            self.display.navbar.update()  # let navbar catch new cax in fig for tooltips
-            if self.unit is not None:
-                self.colorbar.formatter = EngFormatter(self.unit, places=1)
-                self.colorbar.update_ticks()
+            self.display.canvas.draw_send.send_nowait(change_image_draw_fn)
 
-            self.display.fig.set_layout_engine(LAYOUT_ENGINE)
+    async def manipulate_task(self, *, task_status):
+        send_chan, recv_chan = trio.open_memory_channel(inf)
+        task_status.started(send_chan)
 
-        await self.display.canvas.draw_send.send(change_image_draw_fn)
+        async for manip_name, current_name, current_names in recv_chan:
+            unit = self.opened_fvol.get_image_units(current_name)
+            name = "Calc" + manip_name + "_" + current_name
+            if name not in self.opened_fvol.image_names:
+                manip_fn = calculation.MANIPULATIONS[manip_name]
+                async with self.spinner_scope():
+                    manip_img = await trio.to_thread.run_sync(
+                        manip_fn, self.axesimage.get_array().data
+                    )
+                self.opened_fvol.add_image(name, unit, manip_img)
+                if name not in current_names:
+                    current_names.append(name)
+                self.display.reset_image_name_menu(current_names)
+            self.display.image_name_menu.set(name)
 
     async def redraw_existing_points_task(self, task_status):
         redraw_send, redraw_recv = trio.open_memory_channel(inf)
@@ -1605,24 +1649,7 @@ class ForceVolumeController:
                 ) in self.existing_points.copy():  # avoid crash on concurrent clear
                     await self.plot_curve_response(point, options, False)
                 if msg:
-                    await self.display.canvas.draw_send.send(tight_points_draw_fn)
-
-    async def manipulate_callback(self):
-        manip_name = self.display.manipulate_strvar.get()
-        current_name = self.display.image_name_strvar.get()
-        current_names = list(self.display.image_name_menu.cget("values"))
-        name = "Calc" + manip_name + "_" + current_name
-        if name not in self.opened_fvol.image_names:
-            manip_fn = calculation.MANIPULATIONS[manip_name]
-            async with self.spinner_scope():
-                manip_img = await trio.to_thread.run_sync(
-                    manip_fn, self.axesimage.get_array().data
-                )
-            self.opened_fvol.add_image(name, self.unit, manip_img)
-            if name not in current_names:
-                current_names.append(name)
-            self.display.reset_image_name_menu(current_names)
-        self.display.image_name_menu.set(name)
+                    self.display.canvas.draw_send.send_nowait(tight_points_draw_fn)
 
     async def plot_curve_response(
         self,
@@ -1712,7 +1739,7 @@ class ForceVolumeController:
                 if options.fit_mode:
                     self.table = draw_data_table(self.point_data, self.display.plot_ax)
 
-            await self.display.canvas.draw_send.send(plot_point_draw_fn)
+            self.display.canvas.draw_send.send_nowait(plot_point_draw_fn)
 
     async def mpl_img_pick_event_task(self, nursery, *, task_status):
         send_chan, recv_chan = trio.open_memory_channel(inf)
@@ -1772,6 +1799,10 @@ class ForceVolumeController:
                 self.mpl_motion_event_task, tooltip_send_chan, pick_send_chan
             )
             redraw_send_chan = await nursery.start(self.redraw_existing_points_task)
+            calc_prop_map_send_chan = await nursery.start(self.calc_prop_map_task)
+            change_cmap_send_chan = await nursery.start(self.change_cmap_task)
+            manipulate_send_chan = await nursery.start(self.manipulate_task)
+            change_image_send_chan = await nursery.start(self.change_image_task)
 
             display.navbar.teach_navbar_to_use_trio(
                 nursery=nursery,
@@ -1785,10 +1816,10 @@ class ForceVolumeController:
             display.teach_display_to_use_trio(
                 nursery,
                 redraw_send_chan,
-                self.calc_prop_map_callback,
-                self.change_cmap_callback,
-                self.manipulate_callback,
-                self.change_image_callback,
+                calc_prop_map_send_chan,
+                change_cmap_send_chan,
+                manipulate_send_chan,
+                change_image_send_chan,
             )
             # This causes the initial plotting of figures after next checkpoint
             display.reset_image_name_menu(self.opened_fvol.image_names)
@@ -2112,7 +2143,7 @@ async def open_one(root, path):
     try:
         fvfile = await trio.to_thread.run_sync(fvfile_cls.parse, open_thing)
         opened_fv = AsyncFVFile(fvfile)
-        display = ForceVolumeTkDisplay(root, path.name, opened_fv)
+        display = ForceVolumeTkDisplay(root, path.name, opened_fv.initial_parameters)
         await ForceVolumeController(display, opened_fv).control_task()
         display.destroy()
     finally:
@@ -2122,7 +2153,7 @@ async def open_one(root, path):
 
 async def demo_task(root):
     opened_fv = DemoForceVolumeFile()
-    display = ForceVolumeTkDisplay(root, "Demo", opened_fv)
+    display = ForceVolumeTkDisplay(root, "Demo", opened_fv.initial_parameters)
     await ForceVolumeController(display, opened_fv).control_task()
     display.destroy()
 

@@ -215,3 +215,13 @@ async def tooltip_task(show_tooltip, hide_tooltip, show_delay, hide_delay, task_
                         tooltip_command = TOOLTIP_CANCEL
                 finally:
                     hide_tooltip()
+
+
+async def receive_drain_and_get_latest(chan: trio.MemoryReceiveChannel):
+    value = await chan.receive()
+    try:
+        while True:
+            value = chan.receive_nowait()
+    except trio.WouldBlock:
+        pass
+    return value
