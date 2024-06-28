@@ -943,9 +943,9 @@ def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
     )
 
     maxforce -= force_shift
-    red_fc = (tau - 4) / -2
-    ref_force = -fc / red_fc
-    df = maxforce / ref_force - red_fc
+    red_fc = (tau - 4) / 2
+    ref_force = fc / red_fc
+    df = abs(maxforce / ref_force - red_fc)
     red_contact_radius = ((3 * red_fc + 6) ** (1 / 2) + df ** (1 / 2)) ** (2 / 3)
     contact_radius = red_contact_radius * (M / ref_force / radius) ** (-1 / 3)
 
