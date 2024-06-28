@@ -2095,7 +2095,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
                     "{:.2f}±{:.2f}".format(np.mean(defl), np.std(defl, ddof=1)),
                     "{:.2f}±{:.2f}".format(np.mean(ind), np.std(ind, ddof=1)),
                     "{:.2f}±{:.2f}".format(np.mean(rat), np.std(rat, ddof=1)),
-                    "{:.2f}±{:.2f}".format(np.mean(a_c), np.std(rat, ddof=1)),
+                    "{:.2f}±{:.2f}".format(np.mean(a_c), np.std(a_c, ddof=1)),
                 ],
             ],
             loc="top",
