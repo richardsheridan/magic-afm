@@ -1710,7 +1710,7 @@ class ForceVolumeController:
                     )
                 )
                 if options.fit_mode:
-                    table = draw_data_table(self.point_data, self.display.plot_ax)
+                    self.table = draw_data_table(self.point_data, self.display.plot_ax)
 
             await self.display.canvas.draw_send.send(plot_point_draw_fn)
 
