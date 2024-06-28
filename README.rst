@@ -152,7 +152,8 @@ FillNaNs
    best when bad fits are sparse!
 
 All calculated images can be exported by clicking "Export calculated maps" to various
-image and data formats.
+image and data formats. The current preprocessing and fit parameters will be written
+as JSON in the same folder.
 
 Viewing Force Curves
 ^^^^^^^^^^^^^^^^^^^^
@@ -237,7 +238,8 @@ Max/Crit markers indicate the apparent point of the "Maximum" and "Critical"
 
 The "calculate properties" button rapidly fits all data in the file and
 creates new images for each in the "Image" menu. All calculated property maps can
-be exported like any other image by clicking "Export calculated maps".
+be exported like any other image by clicking "Export calculated maps". Again, The
+current preprocessing and fit parameters will be written as JSON in the same folder.
 
 .. TODO: establish if you are in the magic ratio regime
 

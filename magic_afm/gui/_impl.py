@@ -572,11 +572,12 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             self.canvas.figure.set_frameon(True)
 
     def teach_navbar_to_use_trio(
-        self, nursery, get_image_names, get_image_by_name, point_data
+        self, nursery, get_image_names, get_image_by_name, get_options, point_data
     ):
         self._parent_nursery = nursery
         self._get_image_names = get_image_names
         self._get_image_by_name = get_image_by_name
+        self._get_options = get_options
         self._point_data: dict[ImagePoint, ForceCurveData] = point_data
         self._wait_cursor_for_draw_cm = nullcontext
 
@@ -760,6 +761,16 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         exporter = exporter_map.get(ext, imageio.imwrite)
         image_names = [x for x in self._get_image_names() if x.startswith("Calc")]
 
+        async def write_options():
+            import json
+
+            options = asdict(self._get_options())
+            del options["disp_kind"]
+            options["fit_mode"] = options["fit_mode"].name
+            options = json.dumps(options)
+            async with await trio.open_file(root + "_options.json", "w") as f:
+                await f.write(options)
+
         async def export_one(image_name):
             # to date, all afm images have been "flipped" on disk, which is
             # why they are displayed with "lower" origin, but on export users
@@ -773,6 +784,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         try:
             async with trio.open_nursery() as n:
                 n.cancel_scope.shield = True
+                n.start_soon(write_options)
                 for image_name in image_names:
                     n.start_soon(export_one, image_name)
         except BaseException as e:
@@ -1991,6 +2003,7 @@ class ForceVolumeController:
                 nursery=nursery,
                 get_image_names=partial(display.image_name_menu.cget, "values"),
                 get_image_by_name=self.opened_fvol.get_image,
+                get_options=lambda: display.options,
                 point_data=self.point_data,
             )
             display.canvas.pipe_events_to_trio(
