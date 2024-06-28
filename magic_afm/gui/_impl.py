@@ -177,6 +177,7 @@ class ForceCurveData:
     ind: Optional[np.ndarray] = None
     z_tru: Optional[np.ndarray] = None
     mindelta: Optional[np.ndarray] = None
+    a_c: Optional[np.ndarray] = None
     sens: Optional[np.ndarray] = None
     sse: Optional[np.ndarray] = None
 
@@ -1985,10 +1986,10 @@ class ForceVolumeController:
             display.image_name_strvar.set(self.opened_fvol.initial_image_name)
 
 
-def draw_data_table(point_data, ax: Axes):
+def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
     assert point_data
     if len(point_data) == 1:
-        data = next(iter(point_data.values()))
+        data: ForceCurveData = next(iter(point_data.values()))
         exp = np.log10(data.beta[0])
         prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get(
             (-exp + 2.7) // 3, ("", 1)
@@ -2000,6 +2001,7 @@ def draw_data_table(point_data, ax: Axes):
             "d (nm)",
             "δ (nm)",
             "d/δ",
+            "$a_c$ (nm)",
             "SSE",
         ]
         table: Table = ax.table(
@@ -2011,6 +2013,7 @@ def draw_data_table(point_data, ax: Axes):
                     "{:.2f}".format(data.defl),
                     "{:.2f}".format(data.ind),
                     "{:.2f}".format(data.defl / data.ind),
+                    "{:.2f}".format(data.a_c),
                     "{:.2f}".format(data.sse),
                 ],
             ],
@@ -2020,7 +2023,7 @@ def draw_data_table(point_data, ax: Axes):
         )
     else:
         # noinspection PyTypeChecker
-        m, sens, fadh, defl, ind, rat = np.transpose(
+        m, sens, fadh, defl, ind, rat, a_c = np.transpose(
             [
                 (
                     data.beta[0],
@@ -2029,6 +2032,7 @@ def draw_data_table(point_data, ax: Axes):
                     data.defl,
                     data.ind,
                     data.defl / data.ind,
+                    data.a_c
                 )
                 for data in point_data.values()
             ],
@@ -2044,6 +2048,7 @@ def draw_data_table(point_data, ax: Axes):
             "d (nm)",
             "δ (nm)",
             "d/δ",
+            "$a_c$ (nm)",
         ]
         table = ax.table(
             [
@@ -2054,6 +2059,7 @@ def draw_data_table(point_data, ax: Axes):
                     "{:.2f}±{:.2f}".format(np.mean(defl), np.std(defl, ddof=1)),
                     "{:.2f}±{:.2f}".format(np.mean(ind), np.std(ind, ddof=1)),
                     "{:.2f}±{:.2f}".format(np.mean(rat), np.std(rat, ddof=1)),
+                    "{:.2f}±{:.2f}".format(np.mean(a_c), np.std(rat, ddof=1)),
                 ],
             ],
             loc="top",
@@ -2241,9 +2247,11 @@ def calculate_force_data(
             indentation,
             z_true_surface,
             mindelta,
-        ) = calculation.calc_def_ind_ztru(f, beta, **asdict(options), split=split)
+            a_c,
+        ) = calculation.calc_def_ind_ztru_ac(f, beta, split=split, **asdict(options))
     else:
-        deflection, indentation, z_true_surface, mindelta = (
+        deflection, indentation, z_true_surface, mindelta, a_c = (
+            np.nan,
             np.nan,
             np.nan,
             np.nan,
@@ -2265,6 +2273,7 @@ def calculate_force_data(
         ind=indentation,
         z_tru=z_true_surface,
         mindelta=mindelta,
+        a_c=a_c,
         sens=sens,
         sse=sse,
     )

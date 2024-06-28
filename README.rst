@@ -214,6 +214,9 @@ d
 d/δ
     indentation ratio
 
+a_c
+    contact radius at the maximum indentation depth
+
 SSE
     sum of squared errors
 

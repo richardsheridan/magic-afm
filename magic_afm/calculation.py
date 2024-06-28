@@ -50,6 +50,7 @@ PROPERTY_UNITS_DICT = {
     "AdhesionForceErr": "N",
     "Deflection": "m",
     "Indentation": "m",
+    "ContactRadius": "m",
     "TrueHeight": "m",  # Hi z -> lo h
     "IndentationRatio": None,
     "SensIndMod_k": None,
@@ -462,6 +463,7 @@ def schwarz_red(red_f, red_fc, stable, offset):
     # Save computations if pure DMT
     if red_fc == -2:
         return df ** (2 / 3) - offset
+
     # fmt: off
     red_contact_radius = (
         (3 * red_fc + 6) ** (1 / 2) + stable * df ** (1 / 2)
@@ -881,7 +883,7 @@ def fitfun(
     return beta, beta_err, sse, partial_force_curve
 
 
-def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
+def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters."""
     M, fc, delta_shift, force_shift, lj_delta_scale, *_ = beta
 
@@ -940,10 +942,17 @@ def calc_def_ind_ztru(force, beta, radius, k, tau, fit_mode, **kwargs):
         )
     )
 
-    deflection = (maxforce - (fc + force_shift)) / k
+    maxforce -= force_shift
+    red_fc = (tau - 4) / -2
+    ref_force = -fc / red_fc
+    df = maxforce / ref_force - red_fc
+    red_contact_radius = ((3 * red_fc + 6) ** (1 / 2) + df ** (1 / 2)) ** (2 / 3)
+    contact_radius = red_contact_radius * (M / ref_force / radius) ** (-1 / 3)
+
+    deflection = (maxforce - fc) / k
     indentation = maxdelta - mindelta
     z_true_surface = delta_shift + zeroindforce / k
-    return deflection, indentation, z_true_surface, mindelta
+    return deflection, indentation, z_true_surface, mindelta, contact_radius
 
 
 def perturb_k(delta, f, epsilon, k):
@@ -963,7 +972,7 @@ def calc_properties_imap(delta_f_rc, **kwargs):
     adh_force = beta[1]
     ind_mod_err = beta_err[0]
     adh_force_err = beta_err[1]
-    (deflection, indentation, z_true_surface, mindelta) = calc_def_ind_ztru(
+    (deflection, indentation, z_true_surface, mindelta, a_c) = calc_def_ind_ztru_ac(
         force, beta, **kwargs
     )
     k = kwargs.pop("k")
@@ -982,6 +991,7 @@ def calc_properties_imap(delta_f_rc, **kwargs):
     properties["AdhesionForceErr"] = adh_force_err / 1e9
     properties["Deflection"] = deflection / 1e9
     properties["Indentation"] = indentation / 1e9
+    properties["ContactRadius"] = a_c / 1e9
     properties["TrueHeight"] = -z_true_surface / 1e9
     properties["IndentationRatio"] = deflection / indentation
     properties["SensIndMod_k"] = ind_mod_sens_k
