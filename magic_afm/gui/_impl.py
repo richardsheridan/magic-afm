@@ -50,6 +50,7 @@ import itertools
 import math
 import os
 import pathlib
+import re
 import tkinter as tk
 import tkinter.filedialog
 import tkinter.messagebox
@@ -89,14 +90,12 @@ from matplotlib.image import AxesImage
 from matplotlib.table import Table
 from matplotlib.ticker import EngFormatter
 from matplotlib.transforms import Bbox, BboxTransform
-from tqdm.std import TqdmExperimentalWarning
-from tqdm.tk import tqdm_tk
+from tqdm.std import TqdmExperimentalWarning, tqdm as tqdm_std
 
 from magic_afm import async_tools, calculation, data_readers
 from magic_afm.gui.__main__ import nice_workers
 
 warnings.simplefilter("ignore", TqdmExperimentalWarning)
-tqdm_tk.monitor_interval = 0
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
@@ -777,6 +776,153 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             )
 
 
+class tqdm_tk(tqdm_std):
+    monitor_interval = 0
+
+    def __init__(self, *args, **kwargs):
+        """
+        This class accepts the following parameters *in addition* to
+        the parameters accepted by `tqdm`.
+
+        Parameters
+        ----------
+        grab  : bool, optional
+            Grab the input across all windows of the process.
+        tk_parent  : `tkinter.Wm`, optional
+            Parent Tk window.
+        cancel_callback  : Callable, optional
+            Create a cancel button and set `cancel_callback` to be called
+            when the cancel or window close button is clicked.
+        pause_callback  : Callable[str], optional
+            Create a pause button and set `pause_callback` to be called
+            when the pause button is clicked. `pause_callback` will be
+            passed "Pause" or "Resume" depending on the action to take.
+        """
+        kwargs = kwargs.copy()
+        kwargs["gui"] = True
+        # convert disable = None to False
+        kwargs["disable"] = bool(kwargs.get("disable", False))
+        grab = kwargs.pop("grab", False)
+        tk_parent = kwargs.pop("tk_parent", None)
+        self._cancel_callback = kwargs.pop("cancel_callback", None)
+        self._pause_callback = kwargs.pop("pause_callback", None)
+        self._pause_text = "Pause"
+        super(tqdm_tk, self).__init__(*args, **kwargs)
+
+        if self.disable:
+            return
+
+        self._tk_window = tkinter.Toplevel(tk_parent)
+
+        self._tk_window.protocol("WM_DELETE_WINDOW", self.cancel)
+        self._tk_window.wm_title(self.desc)
+        self._tk_window.wm_attributes("-topmost", 1)
+        self._tk_window.after(
+            "idle", lambda: self._tk_window.wm_attributes("-topmost", 0)
+        )
+        self._tk_n_var = tkinter.DoubleVar(self._tk_window, value=0)
+        self._tk_text_var = tkinter.StringVar(self._tk_window)
+        pbar_frame = ttk.Frame(self._tk_window, padding=5)
+        pbar_frame.pack()
+        _tk_label = ttk.Label(
+            pbar_frame,
+            textvariable=self._tk_text_var,
+            wraplength=600,
+            anchor="center",
+            justify="center",
+        )
+        _tk_label.pack()
+        self._tk_pbar = ttk.Progressbar(pbar_frame, variable=self._tk_n_var, length=450)
+        if self.total is not None:
+            self._tk_pbar.configure(maximum=self.total)
+        else:
+            self._tk_pbar.configure(mode="indeterminate")
+        self._tk_pbar.pack()
+        button_frame = ttk.Frame(self._tk_window)
+        button_frame.pack()
+        if self._cancel_callback is not None:
+            _c_button = ttk.Button(button_frame, text="Cancel", command=self.cancel)
+            _c_button.pack(side="left")
+        if self._pause_callback is not None:
+            self._p_button = ttk.Button(
+                button_frame, text=self._pause_text, command=self.pause
+            )
+            self._p_button.pack(side="left")
+        if grab:
+            self._tk_window.grab_set()
+
+    def pause(self):
+        assert self._pause_text in ("Pause", "Resume")
+        if self._pause_callback is not None:
+            self._pause_callback(self._pause_text)
+        self._pause_text = "Resume" if self._pause_text == "Pause" else "Pause"
+        self._p_button.configure(text=self._pause_text)
+
+    def close(self):
+        if self.disable:
+            return
+
+        self.disable = True
+
+        with self.get_lock():
+            self._instances.remove(self)
+
+        def _close():
+            self._tk_window.after("idle", self._tk_window.destroy)
+
+        self._tk_window.protocol("WM_DELETE_WINDOW", _close)
+
+        if not self.leave:
+            _close()
+
+    def clear(self, *_, **__):
+        pass
+
+    def display(self, *_, **__):
+        self._tk_n_var.set(self.n)
+        d = self.format_dict
+        # remove {bar}
+        d["bar_format"] = (d["bar_format"] or "{l_bar}<bar/>{r_bar}").replace(
+            "{bar}", "<bar/>"
+        )
+        msg = self.format_meter(**d)
+        if "<bar/>" in msg:
+            msg = "".join(re.split(r"\|?<bar/>\|?", msg, maxsplit=1))
+        self._tk_text_var.set(msg)
+
+    def set_description(self, desc=None, refresh=True):
+        self.set_description_str(desc, refresh)
+
+    def set_description_str(self, desc=None, refresh=True):
+        self.desc = desc
+        if not self.disable:
+            self._tk_window.wm_title(desc)
+
+    def cancel(self):
+        """
+        `cancel_callback()` followed by `close()`
+        when close/cancel buttons clicked.
+        """
+        if self._cancel_callback is not None:
+            self._cancel_callback()
+        self.close()
+
+    def reset(self, total=None):
+        """
+        Resets to 0 iterations for repeated use.
+
+        Parameters
+        ----------
+        total  : int or float, optional. Total to use for the new bar.
+        """
+        if hasattr(self, "_tk_pbar"):
+            if total is None:
+                self._tk_pbar.configure(maximum=100, mode="indeterminate")
+            else:
+                self._tk_pbar.configure(maximum=total, mode="determinate")
+        super(tqdm_tk, self).reset(total=total)
+
+
 class TkHost:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -1390,6 +1536,15 @@ class ForceVolumeController:
         img_shape = self.axesimage.get_size()
         ncurves = img_shape[0] * img_shape[1]
         chunksize = 4
+        pause_event = trio.Event()
+        pause_event.set()  # running to start with
+
+        def swap_pause_event(pause_text):
+            nonlocal pause_event
+            if pause_text == "Pause":
+                pause_event = trio.Event()
+            else:
+                pause_event.set()
 
         async with self.spinner_scope():
             # assign pbar and progress_image ASAP in case of cancel
@@ -1406,6 +1561,7 @@ class ForceVolumeController:
                     grab=False,
                     leave=False,
                     cancel_callback=cancel_scope.cancel,
+                    pause_callback=swap_pause_event,
                 ) as pbar,
             ):
                 progress_image: matplotlib.image.AxesImage
@@ -1472,6 +1628,9 @@ class ForceVolumeController:
                             progress_array[rc] = half_green
                         if pbar.update():
                             self.display.canvas.draw_send.send_nowait(blit_img_draw_fn)
+                        # This is a hot loop, we should avoid extra checkpoints
+                        if not pause_event.is_set():
+                            await pause_event.wait()
 
         def progress_image_cleanup_draw_fn():
             if progress_image is not None:
