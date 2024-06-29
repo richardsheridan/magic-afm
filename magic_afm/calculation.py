@@ -648,7 +648,7 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
     f = mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100, True)
     d = schwarz_red(f, red_fc, 1.0, 0.0)
 
-    s_f = np.interp(red_delta, d, f, left=np.NINF)
+    s_f = np.interp(red_delta, d, f, left=-np.inf)
 
     return np.maximum(s_f, lj_f)
 
