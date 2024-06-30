@@ -3,6 +3,7 @@ name = "magic-afm"
 dynamic = ["version"]
 #version = "0.9.0"
 description = "Code to analyze and understand Magic Ratio AFM"
+readme = { file = "README.rst", content-type = "text/x-rst" }
 authors = [{ name = "richardsheridan", email = "richard.sheridan@gmail.com" }]
 requires-python = ">= 3.11"
 dependencies = [
@@ -10,6 +11,9 @@ dependencies = [
     "numpy>=1.21",
     "samplerate==0.1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/richardsheridan/magic-afm"
 
 [project.optional-dependencies]
 build = ["pyinstaller", "build", "twine"]
