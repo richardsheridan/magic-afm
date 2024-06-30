@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-build = ["pyinstaller"]
+build = ["pyinstaller", "build", "twine"]
 gui = [
     "imageio",
     "pillow>=9",
