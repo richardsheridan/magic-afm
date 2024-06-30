@@ -1,15 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_dynamic_libs
 
 
 block_cipher = None
 
 
 a = Analysis(['magic_afm\\gui\\__main__.py'],
-             binaries=[
-                 ('./_samplerate_data/libsamplerate-64bit.dll',r'./samplerate/_samplerate_data'),
-                 ('./_samplerate_data/libsamplerate-32bit.dll',r'./samplerate/_samplerate_data'),
-             ],
+             binaries=collect_dynamic_libs("samplerate",search_patterns=["*.dll"]),
              datas=[('README.rst','.')],
              hiddenimports=[],
              hookspath=[],
