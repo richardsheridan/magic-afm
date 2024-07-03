@@ -942,7 +942,11 @@ class ARDFForceMapReader:
                     break
                 # traverse_vsets implicitly fills in seen_vsets
 
-        vset = self._seen_vsets[index]
+        try:
+            vset = self._seen_vsets[index]
+        except KeyError:
+            # index was missing from the line, probably due to "Stop"
+            return NANCURVE
 
         zxr, dxr = NANCURVE
         for vdat in self.traverse_vdats(vset.offset + vset.size):
