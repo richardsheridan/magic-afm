@@ -1031,9 +1031,9 @@ def check_jit():
             print(_.get_metadata().keys())
 
 
-def load_force_curve(opened_fvol, fit_mode, k, rc):
+def load_force_curve(opened_fvol, fit_mode, k, s_ratio, rc):
     x = opened_fvol.get_curve(*rc)
-    return process_force_curve((rc, x), fit_mode, k)
+    return process_force_curve((rc, x), fit_mode, k, s_ratio)
 
 
 def process_force_curve(x, fit_mode, k, s_ratio):

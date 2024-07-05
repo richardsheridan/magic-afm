@@ -403,7 +403,7 @@ class DemoForceVolumeFile(AsyncFVFile):
             image = np.zeros((64, 64), dtype=np.float32)
         return image
 
-    def iter_curves(self, trace, sync_dist):
+    def iter_curves(self, trace=None, sync_dist=None):
         for r, c in np.ndindex((64, 64)):
             yield (r, c), self.get_curve(r, c)
 
@@ -1558,7 +1558,7 @@ class ForceVolumeController:
     axesimage: Optional[AxesImage] = None
 
     # set in control_task
-    spinner_scope: Optional[AsyncContextManager] = None
+    spinner_scope: Optional[Callable[[], AsyncContextManager]] = None
 
     async def calc_prop_map_task(self, *, task_status):
         send_chan, recv_chan = trio.open_memory_channel(inf)
