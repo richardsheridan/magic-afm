@@ -25,12 +25,17 @@ should be loaded lazily. (I'm looking at you h5py..)
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import mmap
 import struct
 from collections.abc import Collection, Iterable
 from functools import partial
-from mmap import mmap
 from subprocess import PIPE
-from typing import Protocol, TypeAlias, Any
+from typing import Protocol, TypeAlias, Any, Union
+
+try:
+    from collections.abc import Buffer
+except ImportError:
+    Buffer: TypeAlias = Union[mmap.mmap, memoryview, bytes, bytearray]
 
 try:
     from subprocess import STARTF_USESHOWWINDOW, STARTUPINFO
@@ -100,9 +105,7 @@ class FVFile(Protocol):
     scansize: tuple[float, float]
 
     @classmethod
-    def parse(cls, data) -> "FVFile":
-        # TODO: data should be data: Buffer after 3.12
-        ...
+    def parse(cls, data: Buffer) -> "FVFile": ...
 
 
 ###############################################
@@ -117,8 +120,6 @@ def open_h5(path):
 
 
 def mmap_path_read_only(path):
-    import mmap
-
     with open(path, mode="rb", buffering=0) as file:
         return mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
 
@@ -444,7 +445,7 @@ class ARH5File:
 
 @frozen
 class ARDFHeader:
-    data: mmap
+    data: Buffer
     offset: int
     crc: int = field(repr=hex)
     size: int
@@ -453,7 +454,7 @@ class ARDFHeader:
     _struct = struct.Struct("<LL4sL")
 
     @classmethod
-    def unpack(cls, data: mmap, offset: int):
+    def unpack(cls, data: Buffer, offset: int):
         return cls(data, offset, *cls._struct.unpack_from(data, offset))
 
     def validate(self):
@@ -472,7 +473,7 @@ class ARDFHeader:
 
 @frozen
 class ARDFTableOfContents:
-    data: mmap
+    data: Buffer
     offset: int
     size: int
     entries: list[tuple[ARDFHeader, int]]
@@ -503,7 +504,7 @@ class ARDFTableOfContents:
 
 @frozen
 class ARDFTextTableOfContents:
-    data: mmap
+    data: Buffer
     offset: int
     size: int
     entries: list[tuple[ARDFHeader, int]]
@@ -542,10 +543,8 @@ class ARDFTextTableOfContents:
         assert i == index, (i, index)
         offset = text_header.offset + 24
         assert text_len < text_header.size - 24, (text_len, text_header)
-        self.data.seek(offset)
-        text = self.data.read(text_len)
-        # self.data.seek(0)  # seems unneeded currently
-        return text.replace(b"\r", b"\n").decode("windows-1252")
+        text = memoryview(self.data)[offset : offset + text_len]
+        return bytes(text).replace(b"\r", b"\n").decode("windows-1252")
 
 
 @frozen
@@ -625,15 +624,14 @@ class ARDFXdef:
         assert _ == 0, _
         if nchars > header.size:
             raise ValueError("Experiment definition too long.", header, nchars)
-        header.data.seek(header.offset + 24)
-        xdef = header.data.read(nchars).decode("windows-1252").split(";")[:-1]
-        # data.seek(0)  # seems unneeded currently
+        xdef = memoryview(header.data)[header.offset + 24 : header.offset + 24 + nchars]
+        xdef = bytes(xdef).decode("windows-1252").split(";")[:-1]
         return cls(header.offset, header.size, xdef)
 
 
 @frozen
 class ARDFVset:
-    data: mmap
+    data: Buffer
     offset: int
     size: int
     force_index: int
@@ -662,7 +660,7 @@ class ARDFVset:
 
 @frozen
 class ARDFVdata:
-    data: mmap
+    data: Buffer
     offset: int
     force_index: int
     line: int
@@ -697,11 +695,11 @@ class ARDFVdata:
         return self.array_offset + self.nfloats * 4
 
     def get_ndarray(self):
-        with memoryview(self.data):  # assert data is open, and hold it open
+        with memoryview(self.data) as v:  # assert data is open, and hold it open
             x = np.ndarray(
                 shape=self.nfloats,
                 dtype="<f4",
-                buffer=self.data,
+                buffer=v,
                 offset=self.array_offset,
             ).astype("f4", copy=True)
         x *= NANOMETER_UNIT_CONVERSION
@@ -710,7 +708,7 @@ class ARDFVdata:
 
 @frozen
 class ARDFImage:
-    data: mmap
+    data: Buffer
     ibox_offset: int
     name: str
     shape: Index
@@ -761,11 +759,11 @@ class ARDFImage:
         points = (stride - 16) // 4  # less IDAT header
         assert (points, lines) == self.shape
         # elide image data validation and map into an array directly
-        with memoryview(self.data):  # assert data is open, and hold it open
+        with memoryview(self.data) as v:  # assert data is open, and hold it open
             arr = np.ndarray(
                 shape=(lines, points),
                 dtype="<f4",
-                buffer=self.data,
+                buffer=v,
                 offset=data_offset,
                 strides=(stride, 4),
             ).astype("f4", copy=True)
@@ -780,7 +778,7 @@ class ARDFImage:
 
 @frozen
 class ARDFFFMReader:
-    data: mmap  # keep checking our mmap is open so array_view cannot segfault
+    data: Buffer
     array_view: np.ndarray = field(repr=False)
     array_offset: int  # hard to recover from views
     channels: list[int]  # [z, d]
@@ -882,7 +880,7 @@ class ARDFFFMReader:
 
 @frozen
 class ARDFForceMapReader:
-    data: mmap
+    data: Buffer
     vtoc: ARDFVolumeTableOfContents
     lines: int
     points: int
@@ -1133,7 +1131,7 @@ class ARDFFile:
     trace: int | None
 
     @classmethod
-    def parse(cls, data: mmap):
+    def parse(cls, data: Buffer):
         file_header = ARDFHeader.unpack(data, 0)
         if file_header.size != 16 or file_header.name != b"ARDF":
             raise ValueError("Not an ARDF file.", file_header)
@@ -1185,7 +1183,7 @@ class ARDFFile:
 
 @frozen
 class NanoscopeImage:
-    data: mmap
+    data: Buffer
     name: str
     offset: int
     length: int
@@ -1224,11 +1222,11 @@ class NanoscopeImage:
         )
 
     def get_image(self) -> np.ndarray:
-        with memoryview(self.data):  # assert data is open, and hold it open
+        with memoryview(self.data) as v:  # assert data is open, and hold it open
             z_floats = np.ndarray(
                 shape=self.shape,
                 dtype=f"<i{self.bpp}",
-                buffer=self.data,
+                buffer=v,
                 offset=self.offset,
             ).astype("f4", copy=True)
         z_floats *= self.unit_scale
@@ -1238,7 +1236,7 @@ class NanoscopeImage:
 
 @frozen
 class FFVReader:
-    data: mmap
+    data: Buffer
     name: str
     ints: np.ndarray = field(repr=False)
     scale: float
@@ -1278,7 +1276,7 @@ class FFVReader:
 
 @frozen
 class QNMDReader:
-    data: mmap
+    data: Buffer
     name: str
     ints: np.ndarray = field(repr=False)
     shape: Index
@@ -1458,7 +1456,7 @@ class NanoscopeFile:
     sync_dist: float | None = None
 
     @classmethod
-    def parse(cls, data: mmap):
+    def parse(cls, data: Buffer):
         # Check for magic string indicating nanoscope
         magic = b"\\*Force file list\r\n"
         start = data[: len(magic)]
@@ -1467,13 +1465,13 @@ class NanoscopeFile:
         # End of header is demarcated by a SUB byte (26 = 0x1A)
         # Longest header so far was 80 kB,
         # stop there to avoid searching gigabytes before fail
-        header_end_pos = data.find(b"\x1A", 0, 80960)
+        header_end_pos = bytes(memoryview(data)[:80960]).find(b"\x1A")
         if header_end_pos < 0:
             raise ValueError(
                 "No stop byte found, are you sure this is a Nanoscope file?"
             )
         header = parse_nanoscope_header(
-            data[:header_end_pos].decode("windows-1252").splitlines()
+            bytes(memoryview(data)[:header_end_pos]).decode("windows-1252").splitlines()
         )
 
         # Header items that I should be reading someday
