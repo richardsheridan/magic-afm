@@ -54,6 +54,7 @@ import re
 import tkinter as tk
 import tkinter.filedialog
 import tkinter.messagebox
+import traceback
 import warnings
 import webbrowser
 
@@ -2342,10 +2343,32 @@ async def open_one(root, path):
     # choose handler based on file suffix
     suffix = path.suffix.lower()
 
-    fvfile_cls, opener = data_readers.SUFFIX_FVFILE_MAP[suffix]
-    open_thing = await trio.to_thread.run_sync(opener, path)
     try:
-        fvfile = await trio.to_thread.run_sync(fvfile_cls.parse, open_thing)
+        fvfile_cls, opener = data_readers.SUFFIX_FVFILE_MAP[suffix]
+        open_thing = await trio.to_thread.run_sync(opener, path)
+    except Exception as e:
+        await trio.to_thread.run_sync(
+            partial(
+                tkinter.messagebox.showerror,
+                master=root,
+                title=f"Failed to open {path.name}",
+                message="".join(traceback.format_exception(e)),
+            )
+        )
+        return
+    try:
+        try:
+            fvfile = await trio.to_thread.run_sync(fvfile_cls.parse, open_thing)
+        except Exception as e:
+            await trio.to_thread.run_sync(
+                partial(
+                    tkinter.messagebox.showerror,
+                    master=root,
+                    title="Parsing error",
+                    message="".join(traceback.format_exception(e)),
+                )
+            )
+            return
         opened_fv = AsyncFVFile(fvfile)
         display = ForceVolumeTkDisplay(
             root, path.name, opened_fv.initial_parameters, opened_fv.fvfile.headers
