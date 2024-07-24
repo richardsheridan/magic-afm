@@ -15,17 +15,12 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - name: Setup python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.11"
-          architecture: x64
-      - name: Install deps
-        run: pip install -r requirements.txt
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi
       - name: Discover version
-        run: python magic_afm/make_version.py
+        run: pixi run make-version
       - name: Build with Pyinstaller
-        run:  pyinstaller -y magic_gui_${RUNNER_OS::3}.spec
+        run:  pixi run -e build pyinstaller -y magic_gui_${RUNNER_OS::3}.spec
         shell: bash
       - name: Tidy dist
         if: startsWith( runner.os, 'mac')
