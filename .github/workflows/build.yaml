@@ -17,6 +17,8 @@ jobs:
           fetch-depth: 0
       - name: Setup Pixi
         uses: prefix-dev/setup-pixi@v0
+        with:
+          environments: build
       - name: Discover version
         run: pixi run make-version
       - name: Build with Pyinstaller
