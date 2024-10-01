@@ -2222,12 +2222,10 @@ def calculate_force_data(
     rnpts = calculation.RESAMPLE_NPTS
     if npts > rnpts:
         split = len(zxr[0]) * rnpts // npts
-        z = calculation.resample_dset(np.concatenate(zxr), rnpts, True)
+        zxr_and_dxr = np.reshape((zxr, dxr), (2, -1))
+        zxr_and_dxr = calculation.resample_wrapper(zxr_and_dxr, rnpts, False)
         cancel_poller()
-        d = calculation.resample_dset(np.concatenate(dxr), rnpts, True)
-        cancel_poller()
-        zxr = z[:split], z[split:]
-        dxr = d[:split], d[split:]
+        zxr, dxr = zxr_and_dxr.reshape(2, 2, -1)
         t_step *= npts / rnpts
         npts = rnpts
     # Transform data to model units

@@ -1,12 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_dynamic_libs
 
 
 block_cipher = None
 
 
 a = Analysis(['magic_afm\\gui\\__main__.py'],
-             binaries=collect_dynamic_libs("samplerate",search_patterns=["*.dll"]),
+             binaries=[],
              datas=[('README.rst','.')],
              hiddenimports=[],
              hookspath=[],

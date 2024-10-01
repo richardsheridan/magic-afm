@@ -26,7 +26,8 @@ import traceback
 
 import numpy as np
 from numpy.linalg import lstsq
-from samplerate import resample
+
+from soxr import resample
 
 try:
     from numba import jit
@@ -182,20 +183,22 @@ MANIPULATIONS = dict(
 )
 
 
-def resample_dset(X, npts, fourier):
-    """Consistent API for resampling force curves with Fourier or interpolation"""
+def resample_wrapper(X, npts, fourier=True, restore_trend=True):
+    """Resample individual z-d curves with Fourier or linear interpolation"""
     X = np.atleast_2d(X)
+    old_npts = X.shape[-1]
     if fourier:
-        ratio = npts / len(X[0])
-        trend = np.copy(X[:, [0]])  # Should be 2D
+        X = X.T  # resample needs (frames, channels) i.e. (npts, features)
+        trend = X[:5].mean(axis=0, keepdims=True)
         X = X - trend
-        return np.squeeze(
-            np.stack([resample(x, ratio, "sinc_fastest") for x in X]) + trend
-        )
+        X = resample(X, old_npts, npts, "LQ")
+        if restore_trend:
+            X += trend
+        return X.T
     else:
         tnew = np.linspace(0, 1, npts, endpoint=False)
-        told = np.linspace(0, 1, X.shape[-1], endpoint=False)
-        return np.stack([np.interp(tnew, told, x) for x in X]).squeeze()
+        told = np.linspace(0, 1, old_npts, endpoint=False)
+        return np.stack([np.interp(tnew, told, x) for x in X])
 
 
 # can't cache because UUID cache busting https://github.com/numba/numba/issues/6284
@@ -1037,21 +1040,20 @@ def load_force_curve(opened_fvol, fit_mode, k, s_ratio, rc):
 
 
 def process_force_curve(x, fit_mode, k, s_ratio):
-    rc, (zxr, dxr) = x
-    npts = sum(map(len, zxr))
+    rc, (zxr_and_dxr) = x
+    npts = sum(map(len, zxr_and_dxr[0]))
     if npts > RESAMPLE_NPTS:
-        split = len(zxr[0]) * RESAMPLE_NPTS // npts
-        z = resample_dset(np.concatenate(zxr), RESAMPLE_NPTS, True)
-        d = resample_dset(np.concatenate(dxr), RESAMPLE_NPTS, True)
-        zxr = z[:split], z[split:]
-        dxr = d[:split], d[split:]
+        zxr_and_dxr = np.reshape(zxr_and_dxr, (2, -1))
+        zxr_and_dxr = resample_wrapper(zxr_and_dxr, RESAMPLE_NPTS, True)
+        zxr_and_dxr = zxr_and_dxr.reshape(2, 2, -1)
+    zxr, dxr = zxr_and_dxr
 
     if fit_mode == FitMode.EXTEND:
         z, d, split = zxr[0], dxr[0], None
     elif fit_mode == FitMode.RETRACT:
         z, d, split = zxr[1], dxr[1], None
     elif fit_mode == FitMode.BOTH:
-        z, d, split = np.concatenate(zxr), np.concatenate(dxr), len(zxr[0])
+        (z, d), split = np.reshape(zxr_and_dxr, (2, -1)), len(zxr_and_dxr[0][0])
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
     d *= s_ratio

@@ -9,7 +9,7 @@ requires-python = ">= 3.11"
 dependencies = [
     "attrs>=23.2.0",
     "numpy>=1.21",
-    "samplerate==0.1.0",
+    "soxr",
 ]
 
 [project.urls]
