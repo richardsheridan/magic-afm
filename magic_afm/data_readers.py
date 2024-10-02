@@ -337,7 +337,7 @@ class ARH5ForceMapVolume:
         x = np.empty((im_r, im_c, 2, self.minext + self.minret), dtype=np.float32)
         for index, curve in self.iter_curves():
             x[*index, :, :] = curve
-        return x.reshape(x.shape[:-1] + (2, -1))
+        return np.moveaxis(x.reshape(x.shape[:-1] + (2, -1)), 2, 0)
 
 
 @frozen
@@ -374,6 +374,8 @@ class ARH5FFMVolume:
     def get_all_curves(self):
         z = self._zreader[:] * NANOMETER_UNIT_CONVERSION
         d = self._dreader[:] * NANOMETER_UNIT_CONVERSION
+        z.reshape(z.shape[:-1] + (2, -1))
+        d.reshape(d.shape[:-1] + (2, -1))
         return z, d
 
 
@@ -875,7 +877,9 @@ class ARDFFFMReader:
         # avoid a second copy with inplace op
         loaded_data *= NANOMETER_UNIT_CONVERSION
         # reshape assuming equal points on extend and retract
-        return loaded_data.reshape(loaded_data.shape[:-1] + (2, -1))
+        loaded_data = loaded_data.reshape(loaded_data.shape[:-1] + (2, -1))
+        # make it look like z, d
+        return np.moveaxis(loaded_data, 2, 0)
 
 
 @frozen
@@ -1006,7 +1010,7 @@ class ARDFForceMapReader:
             sl = np.s_[halfextra : minfloats + halfextra]
             # TODO: verify turnaround point against iter_curves
             x[r, c, :, :] = zvdat.get_ndarray()[sl], dvdat.get_ndarray()[sl]
-        return x.reshape(x.shape[:-1] + (2, -1))
+        return np.moveaxis(x.reshape(x.shape[:-1] + (2, -1)), 2, 0)
 
 
 @frozen
@@ -1441,7 +1445,7 @@ class NanoscopeVolume:
         )
         for index, curve in self.iter_curves():
             x[*index, ...] = curve
-        return x
+        return np.moveaxis(x, 2, 0)
 
 
 @frozen
