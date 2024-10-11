@@ -1430,8 +1430,7 @@ class NanoscopeVolume:
     def iter_indices(self) -> Iterable[Index]:
         """Iterate over force curve indices in on-disk order"""
         # TODO: ensure on-disk order
-        for index in np.ndindex(self.shape):
-            yield index
+        return np.ndindex(self.shape)
 
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
