@@ -685,6 +685,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
                         message=repr(e),
                     )
                 )
+                return
         elif isinstance(exporter, partial) and exporter.func is np.savetxt:
             for name, array in arrays.items():
                 try:
@@ -700,7 +701,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
                             message=repr(e),
                         )
                     )
-                    break
+                    return
         else:
             await trio.to_thread.run_sync(
                 partial(
@@ -710,6 +711,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
                     message=f"Unknown exporter '{exporter}'",
                 )
             )
+            return
 
     def export_calculations(self):
         # This method is bound early in init so can't use the usual trick of swapping
@@ -804,6 +806,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
                     message=message,
                 )
             )
+            return
 
 
 class tqdm_tk(tqdm_std):
