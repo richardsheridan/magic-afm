@@ -1668,6 +1668,7 @@ class ForceVolumeController:
                         # This is a hot loop, we should avoid extra checkpoints
                         if not pause_event.is_set():
                             await pause_event.wait()
+                            pbar.unpause()
 
         def progress_image_cleanup_draw_fn():
             if progress_image is not None:
