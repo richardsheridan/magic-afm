@@ -2411,17 +2411,6 @@ class ApproximateHistogram:
         self._max = -inf
 
     @staticmethod
-    def _update_costs(costs, l, i, val):
-        """update costs array to reflect l.insert(i, val)"""
-        if i > 0:
-            new_cost = val[0] - l[i - 1][0]
-            costs.insert(i - 1, new_cost)
-            if i < len(costs):
-                costs[i] = l[i + 1][0] - val[0]
-        elif len(l) > 1:
-            costs.insert(0, l[1][0] - val[0])
-
-    @staticmethod
     def _update_costs_for_merge(costs, l, i, val):
         """update costs array to reflect l[i:i+2] = (val, )"""
         # TODO: combine with update_costs()
@@ -2432,11 +2421,18 @@ class ApproximateHistogram:
         else:
             costs[i : i + 2] = (l[i + 1][0] - val[0],)
 
-    @classmethod
-    def _insert_with_cost(cls, costs, l, val):
+    @staticmethod
+    def _insert_with_cost(costs, l, val):
         i = bisect_right(l, val)
         l.insert(i, val)
-        cls._update_costs(costs, l, i, val)
+        # update costs array to reflect insertion
+        if i > 0:
+            new_cost = val[0] - l[i - 1][0]
+            costs.insert(i - 1, new_cost)
+            if i < len(costs):
+                costs[i] = l[i + 1][0] - val[0]
+        elif len(l) > 1:
+            costs.insert(0, l[1][0] - val[0])
 
     def add(self, point):
         """Add point to histogram"""
@@ -2470,9 +2466,13 @@ class ApproximateHistogram:
         """Return maximum point represented by this histogram"""
         return self._max
 
+    def sum(self):
+        """Return sum of points;  O(max_bins) complexity."""
+        return sum(x * count for x, count in self._bins)
+
     def mean(self):
         """Return mean;  O(max_bins) complexity."""
-        return sum(p * count for p, count in self._bins) / self._count
+        return self.sum() / self._count
 
     def std(self):
         """Return standard deviation;  O(max_bins) complexity."""
@@ -2499,10 +2499,6 @@ class ApproximateHistogram:
             bp_ratio = (lct - math.sqrt(lct**2 - 2 * s * (lct - rct))) / (lct - rct)
         b = bp_ratio * (rpt - lpt) + lpt
         return b
-
-    def sum(self):
-        """Return sum of points;  O(max_bins) complexity."""
-        return sum(x * count for x, count in self._bins)
 
     def quantile(self, q):
         """Return list of values at given quantile fraction(s).
