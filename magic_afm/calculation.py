@@ -37,6 +37,11 @@ else:
     abs = np.fabs
 
 
+###############################################
+################# Constants ###################
+###############################################
+
+
 EPS = float(np.finfo(np.float64).eps)
 RT_EPS = float(np.sqrt(EPS))
 RESAMPLE_NPTS = 512
@@ -59,6 +64,19 @@ PROPERTY_UNITS_DICT = {
 }
 
 PROPERTY_DTYPE = np.dtype([(name, "f4") for name in PROPERTY_UNITS_DICT])
+
+
+@enum.unique
+class FitMode(enum.IntEnum):
+    SKIP = 0  # needs to be inty and falsy
+    EXTEND = 1
+    RETRACT = 2
+    BOTH = enum.auto()
+
+
+###############################################
+############ Image Manipulations ##############
+###############################################
 
 
 @jit(nopython=True, nogil=True, cache=True)
@@ -181,6 +199,11 @@ MANIPULATIONS = dict(
         ("FillNaNs", fillnan),
     )
 )
+
+
+###############################################
+################# Utilities ###################
+###############################################
 
 
 def resample_wrapper(X, npts, fourier=True, restore_trend=True):
@@ -431,100 +454,6 @@ def mylinspace(start, stop, num, endpoint):
     return y
 
 
-from ._vendored_lstsq import leastsq
-
-
-def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
-    """Wrap to match api of scipy.optimize.curve_fit
-
-    This is faster (?!) and has no scipy dependency."""
-    if bounds is None:
-        constraints = None
-    else:
-        constraints = []
-        for lo, hi in bounds.T.tolist():
-            if lo == 0.0 and hi == np.inf:
-                constraints.append((1, None, None))
-            else:
-                constraints.append((2, lo, hi))
-    return leastsq(function, xdata, ydata, p0, sigma, constraints, full_output=True)
-
-
-@jit(nopython=True, nogil=True, cache=True)
-def schwarz_red(red_f, red_fc, stable, offset):
-    """Calculate Schwarz potential indentation depth from force in reduced units.
-
-    Stable indicates whether to calculate the stable or unstable branch of the solution.
-    1 -> stable, -1 -> unstable
-
-    Offset is useful for root finding routines to solve for a specific value of delta.
-    """
-    # if red_f<red_fc, it is likely a small numerical error
-    # this fixes the issue for arrays and python scalars without weird logic
-    df = abs(red_f - red_fc)
-
-    # Save computations if pure DMT
-    if red_fc == -2:
-        return df ** (2 / 3) - offset
-
-    # fmt: off
-    red_contact_radius = (
-        (3 * red_fc + 6) ** (1 / 2) + stable * df ** (1 / 2)
-    ) ** (2 / 3)
-
-    red_delta = red_contact_radius ** 2 - 4 * (
-        red_contact_radius * (red_fc + 2) / 3
-    ) ** (1 / 2)
-    # fmt: on
-
-    return red_delta - offset
-
-
-@jit(nopython=True, nogil=True, cache=True)
-def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale):
-    """So that schwarz can be directly jammed into delta_curve"""
-    return schwarz_red(red_force, red_fc, 1.0, 0.0)
-
-
-# Exponents for LJ potential
-bigpow = 9
-lilpow = 3
-powrat = bigpow / lilpow
-
-# algebraically solved LJ parameters such that the minimum value is at delta=1
-prefactor = powrat ** (1 / (bigpow - lilpow))
-postfactor = 1 / (prefactor ** (-bigpow) - prefactor ** (-lilpow))  # such that lj(1)=1
-# delta of minimum slope
-lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))
-
-
-@jit(nopython=True, nogil=True, cache=True)
-def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset):
-    """Calculate a leonard-Jones force curve.
-
-    Prefactor scaled such that minimum slope is at delta=1/delta_scale"""
-    nondim_position = (delta - delta_offset) / delta_scale
-    # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
-    attraction = np.divide(1, (prefactor * nondim_position) ** lilpow)
-    return postfactor * force_scale * (attraction**powrat - attraction) - force_offset
-
-
-@jit(nopython=True, nogil=True, cache=True)
-def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
-    """Gradient of lj_force.
-
-    Offset is useful for root finding (reduced spring constant matching)"""
-    nondim_position = (delta - delta_offset) / delta_scale
-    # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
-    attraction = np.divide(
-        lilpow * prefactor ** (-lilpow), nondim_position ** (lilpow + 1)
-    )
-    repulsion = bigpow * prefactor ** (-bigpow) * nondim_position ** (-bigpow - 1)
-    return (
-        postfactor * force_scale * (attraction - repulsion) / delta_scale - force_offset
-    )
-
-
 @jit(nopython=True, nogil=True, cache=True)
 def interp_with_offset(x, xp, fp, offset):
     return np.interp(x, xp, fp) - offset
@@ -585,6 +514,115 @@ def mygradient(f, d):
     out[-1] = (f[-1] - f[-2]) / dx[-1]
 
     return out
+
+
+from ._vendored_lstsq import leastsq
+
+
+def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
+    """Wrap to match api of scipy.optimize.curve_fit
+
+    This is faster (?!) and has no scipy dependency."""
+    if bounds is None:
+        constraints = None
+    else:
+        constraints = []
+        for lo, hi in bounds.T.tolist():
+            if lo == 0.0 and hi == np.inf:
+                constraints.append((1, None, None))
+            else:
+                constraints.append((2, lo, hi))
+    return leastsq(function, xdata, ydata, p0, sigma, constraints, full_output=True)
+
+
+###############################################
+################## Schwarz ####################
+###############################################
+
+
+@jit(nopython=True, nogil=True, cache=True)
+def schwarz_red(red_f, red_fc, stable, offset):
+    """Calculate Schwarz potential indentation depth from force in reduced units.
+
+    Stable indicates whether to calculate the stable or unstable branch of the solution.
+    1 -> stable, -1 -> unstable
+
+    Offset is useful for root finding routines to solve for a specific value of delta.
+    """
+    # if red_f<red_fc, it is likely a small numerical error
+    # this fixes the issue for arrays and python scalars without weird logic
+    df = abs(red_f - red_fc)
+
+    # Save computations if pure DMT
+    if red_fc == -2:
+        return df ** (2 / 3) - offset
+
+    # fmt: off
+    red_contact_radius = (
+        (3 * red_fc + 6) ** (1 / 2) + stable * df ** (1 / 2)
+    ) ** (2 / 3)
+
+    red_delta = red_contact_radius ** 2 - 4 * (
+        red_contact_radius * (red_fc + 2) / 3
+    ) ** (1 / 2)
+    # fmt: on
+
+    return red_delta - offset
+
+
+@jit(nopython=True, nogil=True, cache=True)
+def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale):
+    """So that schwarz can be directly jammed into delta_curve"""
+    return schwarz_red(red_force, red_fc, 1.0, 0.0)
+
+
+###############################################
+############### Lennard-Jones #################
+###############################################
+
+
+# Exponents for LJ potential
+bigpow = 9
+lilpow = 3
+powrat = bigpow / lilpow
+
+# algebraically solved LJ parameters such that the minimum value is at delta=1
+prefactor = powrat ** (1 / (bigpow - lilpow))
+postfactor = 1 / (prefactor ** (-bigpow) - prefactor ** (-lilpow))  # such that lj(1)=1
+# delta of minimum slope
+lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))
+
+
+@jit(nopython=True, nogil=True, cache=True)
+def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset):
+    """Calculate a leonard-Jones force curve.
+
+    Prefactor scaled such that minimum slope is at delta=1/delta_scale"""
+    nondim_position = (delta - delta_offset) / delta_scale
+    # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
+    attraction = np.divide(1, (prefactor * nondim_position) ** lilpow)
+    return postfactor * force_scale * (attraction**powrat - attraction) - force_offset
+
+
+@jit(nopython=True, nogil=True, cache=True)
+def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
+    """Gradient of lj_force.
+
+    Offset is useful for root finding (reduced spring constant matching)"""
+    nondim_position = (delta - delta_offset) / delta_scale
+    # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
+    attraction = np.divide(
+        lilpow * prefactor ** (-lilpow), nondim_position ** (lilpow + 1)
+    )
+    repulsion = bigpow * prefactor ** (-bigpow) * nondim_position ** (-bigpow - 1)
+    return (
+        postfactor * force_scale * (attraction - repulsion) / delta_scale - force_offset
+    )
+
+
+###############################################
+################# Force Curves ################
+###############################################
 
 
 def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
@@ -782,14 +820,6 @@ def delta_curve(
     return (red_delta * ref_delta) + delta_shift
 
 
-@enum.unique
-class FitMode(enum.IntEnum):
-    SKIP = 0  # needs to be inty and falsy
-    EXTEND = 1
-    RETRACT = 2
-    BOTH = enum.auto()
-
-
 def rapid_forcecurve_estimate(delta, force, radius):
     """Very coarse estimate of force curve parameters for fit initial guess"""
 
@@ -813,6 +843,11 @@ def rapid_forcecurve_estimate(delta, force, radius):
         M_guess = 1.0
 
     return M_guess, fc_guess, deltamin, fzero, 1.0
+
+
+###############################################
+################## Fitting ####################
+###############################################
 
 
 def fitfun(
@@ -1005,6 +1040,34 @@ def calc_properties_imap(delta_f_rc, **kwargs):
     return rc, properties
 
 
+def process_force_curve(x, fit_mode, k, s_ratio):
+    rc, (zxr_and_dxr) = x
+    npts = sum(map(len, zxr_and_dxr[0]))
+    if npts > RESAMPLE_NPTS:
+        zxr_and_dxr = np.reshape(zxr_and_dxr, (2, -1))
+        zxr_and_dxr = resample_wrapper(zxr_and_dxr, RESAMPLE_NPTS, True)
+        zxr_and_dxr = zxr_and_dxr.reshape(2, 2, -1)
+    zxr, dxr = zxr_and_dxr
+
+    if fit_mode == FitMode.EXTEND:
+        z, d, split = zxr[0], dxr[0], None
+    elif fit_mode == FitMode.RETRACT:
+        z, d, split = zxr[1], dxr[1], None
+    elif fit_mode == FitMode.BOTH:
+        (z, d), split = np.reshape(zxr_and_dxr, (2, -1)), len(zxr_and_dxr[0][0])
+    else:
+        raise ValueError("Unknown fit_mode: ", fit_mode)
+    d *= s_ratio
+    delta = z - d
+    f = d * k
+    return delta, f, split, rc
+
+
+###############################################
+################# JIT utils ###################
+###############################################
+
+
 def warmup_jit():
     """Call jitted functions until check_jit output stabilizes"""
     npts = 1024
@@ -1032,31 +1095,3 @@ def check_jit():
         if hasattr(_, "get_metadata"):
             print(_)
             print(_.get_metadata().keys())
-
-
-def load_force_curve(opened_fvol, fit_mode, k, s_ratio, rc):
-    x = opened_fvol.get_curve(*rc)
-    return process_force_curve((rc, x), fit_mode, k, s_ratio)
-
-
-def process_force_curve(x, fit_mode, k, s_ratio):
-    rc, (zxr_and_dxr) = x
-    npts = sum(map(len, zxr_and_dxr[0]))
-    if npts > RESAMPLE_NPTS:
-        zxr_and_dxr = np.reshape(zxr_and_dxr, (2, -1))
-        zxr_and_dxr = resample_wrapper(zxr_and_dxr, RESAMPLE_NPTS, True)
-        zxr_and_dxr = zxr_and_dxr.reshape(2, 2, -1)
-    zxr, dxr = zxr_and_dxr
-
-    if fit_mode == FitMode.EXTEND:
-        z, d, split = zxr[0], dxr[0], None
-    elif fit_mode == FitMode.RETRACT:
-        z, d, split = zxr[1], dxr[1], None
-    elif fit_mode == FitMode.BOTH:
-        (z, d), split = np.reshape(zxr_and_dxr, (2, -1)), len(zxr_and_dxr[0][0])
-    else:
-        raise ValueError("Unknown fit_mode: ", fit_mode)
-    d *= s_ratio
-    delta = z - d
-    f = d * k
-    return delta, f, split, rc
