@@ -765,7 +765,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
 
 
 def force_curve(
-    red_curve, delta, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale
+    red_curve, delta, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
 ):
     """Calculate a force curve from indentation data."""
     # Catch crazy inputs early
@@ -793,7 +793,7 @@ def force_curve(
 
 
 def delta_curve(
-    red_curve, force, k, radius, M, fc, tau, delta_shift, force_shift, lj_delta_scale
+    red_curve, force, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
 ):
     """Convenience function for inverse of force_curve, i.e. force->delta"""
     # Catch crazy inputs early
@@ -894,9 +894,9 @@ def fitfun(
             delta,
             k,
             radius,
+            tau,
             M,
             fc,
-            tau,
             delta_shift,
             force_shift,
             lj_delta_scale,
@@ -939,9 +939,9 @@ def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
         maxforce,
         k,
         radius,
+        tau,
         M,
         fc,
-        tau,
         delta_shift,
         force_shift,
         lj_delta_scale,
@@ -951,9 +951,9 @@ def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
         force_shift - fc,
         k,
         radius,
+        tau,
         M,
         fc,
-        tau,
         delta_shift,
         force_shift,
         lj_delta_scale,
@@ -965,9 +965,9 @@ def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
             delta_shift,
             k,
             radius,
+            tau,
             M,
             fc,
-            tau,
             delta_shift,
             force_shift,
             lj_delta_scale,
@@ -1070,13 +1070,13 @@ def warmup_jit():
         (np.cos(np.linspace(0, np.pi * 2, npts, endpoint=False)) - 0.90) * 25
     )
 
-    fext = force_curve(red_extend, delta[:split], 1, 10, 1, 10, 1, 0, 0, 1)
-    fret = force_curve(red_retract, delta[split:], 1, 10, 1, 10, 1, 0, 0, 1)
-    fext = force_curve(red_extend, delta[:split], 1, 10, 1, 10, 0, 0, 0, 1)
-    fret = force_curve(red_retract, delta[split:], 1, 10, 1, 10, 0, 0, 0, 1)
+    fext = force_curve(red_extend, delta[:split], 1, 10, 1, 1, 10, 0, 0, 1)
+    fret = force_curve(red_retract, delta[split:], 1, 10, 1, 1, 10, 0, 0, 1)
+    fext = force_curve(red_extend, delta[:split], 1, 10, 0, 1, 10, 0, 0, 1)
+    fret = force_curve(red_retract, delta[split:], 1, 10, 0, 1, 10, 0, 0, 1)
     maxforce = fret[slice(len(fret) // 25)].mean()
-    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, 10, 0, 0, 0, 1)
-    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, 10, 1, 0, 0, 1)
+    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 0, 1, 10, 0, 0, 1)
+    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, 1, 10, 0, 0, 1)
     image = np.zeros((64, 64), dtype=np.float32)
     gauss3x3(image)
     median3x1(image)
