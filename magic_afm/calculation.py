@@ -772,13 +772,13 @@ def force_curve(
     assert k > 0, k
     assert radius > 0, radius
     assert M > 0, M
-    assert fc < 0, fc
+    assert fc > 0, fc
     assert 0 <= tau <= 1, tau
 
     # Calculate reduced/dimensionless values of inputs
     # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
     red_fc = (tau - 4) / 2
-    ref_force = fc / red_fc
+    ref_force = -fc / red_fc
     ref_radius = (ref_force * radius / M) ** (1 / 3)
     ref_delta = ref_radius * ref_radius / radius
     red_delta = (delta - delta_shift) / ref_delta
@@ -800,13 +800,13 @@ def delta_curve(
     assert k > 0, k
     assert radius > 0, radius
     assert M > 0, M
-    assert fc < 0, fc
+    assert fc > 0, fc
     assert 0 <= tau <= 1, tau
 
     # Calculate reduced/dimensionless values of inputs
     # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
     red_fc = (tau - 4) / 2
-    ref_force = fc / red_fc
+    ref_force = -fc / red_fc
     red_force = (force - force_shift) / ref_force
     ref_radius = (ref_force * radius / M) ** (1 / 3)
     ref_delta = ref_radius * ref_radius / radius
@@ -889,16 +889,13 @@ def fitfun(
 
     def partial_force_curve(delta, M, fc, delta_shift, force_shift, lj_delta_scale):
         cancel_poller()
-        if np.any(np.isnan((M, fc, delta_shift, force_shift, lj_delta_scale))):
-            print("Fit likely failed: NaNs in params")
-            return np.full_like(delta, np.nan)
         return force_curve(
             red_curve,
             delta,
             k,
             radius,
             M,
-            -fc,
+            fc,
             tau,
             delta_shift,
             force_shift,
@@ -924,9 +921,6 @@ def fitfun(
 def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters."""
     M, fc, delta_shift, force_shift, lj_delta_scale, *_ = beta
-
-    # sign convention mismatch
-    fc = -fc
 
     assert fit_mode
     n_pts_max = len(force) // 25
@@ -954,7 +948,7 @@ def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
     )
     mindelta = delta_curve(
         schwarz_wrap,
-        force_shift + fc,
+        force_shift - fc,
         k,
         radius,
         M,
@@ -982,12 +976,12 @@ def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
 
     maxforce -= force_shift
     red_fc = (tau - 4) / 2
-    ref_force = fc / red_fc
+    ref_force = -fc / red_fc
     df = abs(maxforce / ref_force - red_fc)
     red_contact_radius = ((3 * red_fc + 6) ** (1 / 2) + df ** (1 / 2)) ** (2 / 3)
     contact_radius = red_contact_radius * (M / ref_force / radius) ** (-1 / 3)
 
-    deflection = (maxforce - fc) / k
+    deflection = (maxforce + fc) / k
     indentation = maxdelta - mindelta
     z_true_surface = delta_shift + zeroindforce / k
     return deflection, indentation, z_true_surface, mindelta, contact_radius
@@ -1076,13 +1070,13 @@ def warmup_jit():
         (np.cos(np.linspace(0, np.pi * 2, npts, endpoint=False)) - 0.90) * 25
     )
 
-    fext = force_curve(red_extend, delta[:split], 1, 10, 1, -10, 1, 0, 0, 1)
-    fret = force_curve(red_retract, delta[split:], 1, 10, 1, -10, 1, 0, 0, 1)
-    fext = force_curve(red_extend, delta[:split], 1, 10, 1, -10, 0, 0, 0, 1)
-    fret = force_curve(red_retract, delta[split:], 1, 10, 1, -10, 0, 0, 0, 1)
+    fext = force_curve(red_extend, delta[:split], 1, 10, 1, 10, 1, 0, 0, 1)
+    fret = force_curve(red_retract, delta[split:], 1, 10, 1, 10, 1, 0, 0, 1)
+    fext = force_curve(red_extend, delta[:split], 1, 10, 1, 10, 0, 0, 0, 1)
+    fret = force_curve(red_retract, delta[split:], 1, 10, 1, 10, 0, 0, 0, 1)
     maxforce = fret[slice(len(fret) // 25)].mean()
-    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, -10, 0, 0, 0, 1)
-    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, -10, 1, 0, 0, 1)
+    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, 10, 0, 0, 0, 1)
+    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, 10, 1, 0, 0, 1)
     image = np.zeros((64, 64), dtype=np.float32)
     gauss3x3(image)
     median3x1(image)

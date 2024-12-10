@@ -385,7 +385,7 @@ class DemoForceVolumeFile(AsyncFVFile):
 
     def get_curve(self, r, c, trace=None, sync_dist=None):
         gen = np.random.default_rng(seed=(int(r), int(c)))
-        parms = (1, 10, 0.1, -2, 1, 0, 0, 1)
+        parms = (1, 10, 0.1, 2, 1, 0, 0, 1)
         deltaext = self.delta[: self.delta.size // 2]
         deltaret = self.delta[self.delta.size // 2 :]
         fext = calculation.force_curve(calculation.red_extend, deltaext, *parms)
