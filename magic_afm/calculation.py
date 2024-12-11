@@ -536,6 +536,24 @@ def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
 
 
 ###############################################
+################# Artifacts ###################
+###############################################
+
+
+def laser_interference(z, wave_number, sin_amp, cos_amp):
+    theta = z * wave_number
+    return sin_amp * np.sin(theta) + cos_amp * np.cos(theta)
+
+
+def virtual_deflection(z_poly_basis, poly_coefs):
+    return z_poly_basis @ poly_coefs
+
+
+def hydrodynamic_drag(z_velocity, drag_factor):
+    return -z_velocity * drag_factor
+
+
+###############################################
 ################## Schwarz ####################
 ###############################################
 
