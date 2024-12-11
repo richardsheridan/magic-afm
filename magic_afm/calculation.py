@@ -74,6 +74,15 @@ class FitMode(enum.IntEnum):
     BOTH = enum.auto()
 
 
+class FitArtifacts(enum.IntFlag):
+    VIRTUAL_DEFLECTION_OFFSET = 0
+    VIRTUAL_DEFLECTION_LINEAR = 1
+    VIRTUAL_DEFLECTION_SQUARE = 2  # higher orders not supported
+    VIRTUAL_DEFLECTION_VANDER = 3  # check vander order
+    LASER_INTERFERENCE = enum.auto()
+    HYDRODYNAMIC_DRAG = enum.auto()
+
+
 ###############################################
 ############ Image Manipulations ##############
 ###############################################
@@ -528,7 +537,9 @@ def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
     else:
         constraints = []
         for lo, hi in bounds.T.tolist():
-            if lo == 0.0 and hi == np.inf:
+            if lo == -np.inf and hi == np.inf:
+                constraints.append((0, None, None))
+            elif lo == 0.0 and hi == np.inf:
                 constraints.append((1, None, None))
             else:
                 constraints.append((2, lo, hi))
@@ -782,9 +793,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     return np.minimum(s_f, lj_f)
 
 
-def force_curve(
-    red_curve, delta, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
-):
+def force_curve(red_curve, delta, k, radius, tau, M, fc, delta_shift, lj_delta_scale):
     """Calculate a force curve from indentation data."""
     # Catch crazy inputs early
     assert k > 0, k
@@ -807,12 +816,10 @@ def force_curve(
     red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale)
 
     # Rescale to dimensioned units
-    return (red_force * ref_force) + force_shift
+    return red_force * ref_force
 
 
-def delta_curve(
-    red_curve, force, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
-):
+def delta_curve(red_curve, force, k, radius, tau, M, fc, delta_shift, lj_delta_scale):
     """Convenience function for inverse of force_curve, i.e. force->delta"""
     # Catch crazy inputs early
     assert k > 0, k
@@ -825,7 +832,7 @@ def delta_curve(
     # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
     red_fc = (tau - 4) / 2
     ref_force = -fc / red_fc
-    red_force = (force - force_shift) / ref_force
+    red_force = force / ref_force
     ref_radius = (ref_force * radius / M) ** (1 / 3)
     ref_delta = ref_radius * ref_radius / radius
     red_k = k / ref_force * ref_delta
@@ -860,7 +867,7 @@ def rapid_forcecurve_estimate(delta, force, radius):
     if not np.isfinite(M_guess):
         M_guess = 1.0
 
-    return M_guess, fc_guess, deltamin, fzero, 1.0
+    return M_guess, fc_guess, deltamin
 
 
 ###############################################
@@ -869,21 +876,41 @@ def rapid_forcecurve_estimate(delta, force, radius):
 
 
 def fitfun(
-    delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, **kwargs
+    z, d, k, radius, tau, fit_mode, artifacts, cancel_poller=bool, p0=None, **kwargs
 ):
+    vd_order = artifacts & FitArtifacts.VIRTUAL_DEFLECTION_VANDER
+    z_poly_basis = np.vander(z, vd_order + 1, increasing=True)
+    delta = z - d
+    force = d * k
     if p0 is None:
         p0 = rapid_forcecurve_estimate(delta, force, radius)
+        p0 += (np.median(d), *(0.0,) * vd_order)
+        if artifacts & FitArtifacts.LASER_INTERFERENCE:
+            p0 += (1.0, 0.0, 0.0)
+        if artifacts & FitArtifacts.HYDRODYNAMIC_DRAG:
+            p0 += (0.0,)
 
-    bounds = np.transpose(
-        (
-            (0.0, np.inf),  # M
-            (0.0, np.inf),  # fc
-            # (0, 1),           # tau
-            (np.min(delta), np.max(delta)),  # delta_shift
-            (np.min(force), np.max(force)),  # force_shift
-            (-6.0, 6.0),  # lj_delta_scale
-        )
+    bounds = (
+        (0.0, np.inf),  # M
+        (0.0, np.inf),  # fc
+        (np.min(delta), np.max(delta)),  # delta_shift
+        (-6.0, 6.0),  # lj_delta_scale
+        (np.min(d), np.max(d)),  # constant virtual deflection
     )
+    if artifacts & FitArtifacts.VIRTUAL_DEFLECTION_LINEAR:
+        bounds += ((-np.inf, np.inf),)  # linear virtual deflection
+    if artifacts & FitArtifacts.VIRTUAL_DEFLECTION_SQUARE:
+        bounds += ((-np.inf, np.inf),)  # quadratic virtual deflection
+    if artifacts & FitArtifacts.LASER_INTERFERENCE:
+        bounds += (
+            (0.0, np.inf),  # wavenumber
+            (-np.inf, np.inf),  # sinamp
+            (-np.inf, np.inf),  # cosamp
+        )
+    if artifacts & FitArtifacts.HYDRODYNAMIC_DRAG:
+        bounds += ((0.0, np.inf),)  # drag coefficient
+        z_velocity = np.gradient(z)
+    bounds = np.transpose(bounds)
     p0 = np.clip(p0, *bounds)
 
     assert fit_mode
@@ -905,20 +932,21 @@ def fitfun(
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
-    def partial_force_curve(delta, M, fc, delta_shift, force_shift, lj_delta_scale):
+    def partial_force_curve(delta, *parms):
         cancel_poller()
-        return force_curve(
-            red_curve,
-            delta,
-            k,
-            radius,
-            tau,
-            M,
-            fc,
-            delta_shift,
-            force_shift,
-            lj_delta_scale,
-        )
+        d_artifact = np.zeros_like(d)
+        fc_parms, parms = parms[:4], parms[4:]
+        poly_coefs, parms = parms[: vd_order + 1], parms[vd_order + 1 :]
+        d_artifact += virtual_deflection(z_poly_basis, poly_coefs)
+        if artifacts & FitArtifacts.LASER_INTERFERENCE:
+            li_parms, parms = parms[:3], parms[3:]
+            d_artifact += laser_interference(z, *li_parms)
+        if artifacts & FitArtifacts.HYDRODYNAMIC_DRAG:
+            hd_parms, parms = parms[:1], parms[1:]
+            d_artifact += hydrodynamic_drag(z_velocity, *hd_parms)
+        delta = z - (d - d_artifact)
+        force_shift = d_artifact * k
+        return force_curve(red_curve, delta, k, radius, tau, *fc_parms) - force_shift
 
     try:
         beta, cov, infodict, *_ = curve_fit(
@@ -938,7 +966,7 @@ def fitfun(
 
 def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters."""
-    M, fc, delta_shift, force_shift, lj_delta_scale, *_ = beta
+    M, fc, delta_shift, lj_delta_scale, *_ = beta
 
     assert fit_mode
     n_pts_max = len(force) // 25
@@ -961,19 +989,17 @@ def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
         M,
         fc,
         delta_shift,
-        force_shift,
         lj_delta_scale,
     )
     mindelta = delta_curve(
         schwarz_wrap,
-        force_shift - fc,
+        -fc,
         k,
         radius,
         tau,
         M,
         fc,
         delta_shift,
-        force_shift,
         lj_delta_scale,
     )
     # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
@@ -987,12 +1013,10 @@ def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
             M,
             fc,
             delta_shift,
-            force_shift,
             lj_delta_scale,
         )
     )
 
-    maxforce -= force_shift
     red_fc = (tau - 4) / 2
     ref_force = -fc / red_fc
     df = abs(maxforce / ref_force - red_fc)
