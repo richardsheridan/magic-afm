@@ -1604,7 +1604,7 @@ class ForceVolumeController:
                     pause_callback=swap_pause_event,
                 ) as pbar,
             ):
-                progress_image: matplotlib.image.AxesImage
+                progress_image: matplotlib.image.AxesImage | None = None
                 progress_array = np.zeros(img_shape + (4,), dtype="f4")
                 half_red = np.array((1, 0, 0, 0.5), dtype="f4")
                 half_green = np.array((0, 1, 0, 0.5), dtype="f4")
@@ -1627,6 +1627,8 @@ class ForceVolumeController:
                 self.display.canvas.draw_send.send_nowait(make_progress_image_draw_fn)
 
                 def blit_img_draw_fn():
+                    if progress_image is None:
+                        return True
                     bg = self.display.canvas.copy_from_bbox(progress_image.clipbox)
                     progress_image.set_visible(True)
                     self.display.img_ax.draw_artist(progress_image)
