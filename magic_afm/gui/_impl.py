@@ -1383,9 +1383,7 @@ class ForceVolumeTkDisplay:
         )
         self.tipwindow_label.pack(ipadx=2)
         self._opts = self.options
-        self.calc_props_button.configure(
-            command=lambda: self.calc_prop_map_send_chan.send_nowait(self.options)
-        )
+        self.calc_props_button.configure(command=self.calc_prop_map_callback)
         self._add_trace(self.colormap_strvar, self.change_cmap_callback)
         self._add_trace(self.manipulate_strvar, self.manipulate_callback)
         self._add_trace(self.image_name_strvar, self.change_image_callback)
