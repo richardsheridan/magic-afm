@@ -202,7 +202,7 @@ def leastsq(
     function_call_counter = 0
     if numpy.isscalar(p0):
         p0 = [p0]
-    parameters = numpy.array(p0, dtype=float, copy=False)
+    parameters = numpy.asarray(p0, dtype=float)
     if deltachi is None:
         deltachi = 0.001
 
