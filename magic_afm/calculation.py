@@ -74,11 +74,10 @@ class FitMode(enum.IntEnum):
     BOTH = enum.auto()
 
 
-class FitArtifacts(enum.IntFlag):
-    VIRTUAL_DEFLECTION_OFFSET = 0
-    VIRTUAL_DEFLECTION_LINEAR = 1
-    VIRTUAL_DEFLECTION_SQUARE = 2  # higher orders not supported
-    VIRTUAL_DEFLECTION_VANDER = 3  # check vander order
+class FitFix(enum.IntFlag, boundary=enum.STRICT):
+    TAU = enum.auto()
+    LJ_SCALE = enum.auto()
+    VIRTUAL_DEFLECTION = enum.auto()
     LASER_INTERFERENCE = enum.auto()
     HYDRODYNAMIC_DRAG = enum.auto()
 
@@ -541,6 +540,8 @@ def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
                 constraints.append((0, None, None))
             elif lo == 0.0 and hi == np.inf:
                 constraints.append((1, None, None))
+            elif lo == hi:
+                constraints.append((3, None, None))
             else:
                 constraints.append((2, lo, hi))
     return leastsq(function, xdata, ydata, p0, sigma, constraints, full_output=True)
@@ -876,40 +877,54 @@ def rapid_forcecurve_estimate(delta, force, radius):
 
 
 def fitfun(
-    z, d, k, radius, tau, fit_mode, artifacts, cancel_poller=bool, p0=None, **kwargs
+    z,
+    d,
+    k,
+    radius,
+    tau,
+    vd,
+    lj_scale,
+    drag,
+    li_wn,
+    fit_mode,
+    fit_fix,
+    cancel_poller=bool,
+    p0=None,
+    **kwargs
 ):
-    vd_order = artifacts & FitArtifacts.VIRTUAL_DEFLECTION_VANDER
-    z_poly_basis = np.vander(z, vd_order + 1, increasing=True)
+    z_poly_basis = np.vander(z, 2, increasing=True)
     delta = z - d
     force = d * k
+
+    lg = laser_guesses = li_wn, 0.0, 0.0
+
     if p0 is None:
-        p0 = rapid_forcecurve_estimate(delta, force, radius)
-        p0 += (np.median(d), *(0.0,) * vd_order)
-        if artifacts & FitArtifacts.LASER_INTERFERENCE:
-            p0 += (1.0, 0.0, 0.0)
-        if artifacts & FitArtifacts.HYDRODYNAMIC_DRAG:
-            p0 += (0.0,)
+        M_guess, fc_guess, deltamin = rapid_forcecurve_estimate(delta, force, radius)
+        p0 = (
+            tau,
+            M_guess,
+            fc_guess,
+            deltamin,
+            lj_scale,
+            np.median(d),
+            vd,
+            *laser_guesses,
+            drag,
+        )
 
     bounds = (
+        (tau,) * 2 if fit_fix & FitFix.TAU else (0.0, 1.0),
         (0.0, np.inf),  # M
         (0.0, np.inf),  # fc
         (np.min(delta), np.max(delta)),  # delta_shift
-        (-6.0, 6.0),  # lj_delta_scale
-        (np.min(d), np.max(d)),  # constant virtual deflection
+        (lj_scale,) * 2 if fit_fix & FitFix.LJ_SCALE else (-6.0, 6.0),
+        (np.min(d), np.max(d)),  # deflection offset
+        (vd,) * 2 if fit_fix & FitFix.VIRTUAL_DEFLECTION else (-np.inf, np.inf),
+        ((lg[0],) * 2 if fit_fix & FitFix.LASER_INTERFERENCE else (0.0, np.inf)),
+        ((lg[1],) * 2 if fit_fix & FitFix.LASER_INTERFERENCE else (-np.inf, np.inf)),
+        ((lg[2],) * 2 if fit_fix & FitFix.LASER_INTERFERENCE else (-np.inf, np.inf)),
+        (drag,) * 2 if fit_fix & FitFix.HYDRODYNAMIC_DRAG else (0.0, np.inf),
     )
-    if artifacts & FitArtifacts.VIRTUAL_DEFLECTION_LINEAR:
-        bounds += ((-np.inf, np.inf),)  # linear virtual deflection
-    if artifacts & FitArtifacts.VIRTUAL_DEFLECTION_SQUARE:
-        bounds += ((-np.inf, np.inf),)  # quadratic virtual deflection
-    if artifacts & FitArtifacts.LASER_INTERFERENCE:
-        bounds += (
-            (0.0, np.inf),  # wavenumber
-            (-np.inf, np.inf),  # sinamp
-            (-np.inf, np.inf),  # cosamp
-        )
-    if artifacts & FitArtifacts.HYDRODYNAMIC_DRAG:
-        bounds += ((0.0, np.inf),)  # drag coefficient
-        z_velocity = np.gradient(z)
     bounds = np.transpose(bounds)
     p0 = np.clip(p0, *bounds)
 
@@ -935,18 +950,19 @@ def fitfun(
     def partial_force_curve(delta, *parms):
         cancel_poller()
         d_artifact = np.zeros_like(d)
-        fc_parms, parms = parms[:4], parms[4:]
-        poly_coefs, parms = parms[: vd_order + 1], parms[vd_order + 1 :]
+        fc_parms = parms[:5]
+        poly_coefs = parms[5 : 5 + 2]
         d_artifact += virtual_deflection(z_poly_basis, poly_coefs)
-        if artifacts & FitArtifacts.LASER_INTERFERENCE:
-            li_parms, parms = parms[:3], parms[3:]
+        li_parms = parms[7 : 7 + 3]
+        if np.any(li_parms[1:]):
             d_artifact += laser_interference(z, *li_parms)
-        if artifacts & FitArtifacts.HYDRODYNAMIC_DRAG:
-            hd_parms, parms = parms[:1], parms[1:]
-            d_artifact += hydrodynamic_drag(z_velocity, *hd_parms)
+        drag_factor = parms[-1]
+        if drag_factor:
+            z_velocity = np.gradient(z)
+            d_artifact += hydrodynamic_drag(z_velocity, drag_factor)
         delta = z - (d - d_artifact)
         force_shift = d_artifact * k
-        return force_curve(red_curve, delta, k, radius, tau, *fc_parms) - force_shift
+        return force_curve(red_curve, delta, k, radius, *fc_parms) - force_shift
 
     try:
         beta, cov, infodict, *_ = curve_fit(
@@ -1076,7 +1092,7 @@ def calc_properties_imap(delta_f_rc, **kwargs):
     return rc, properties
 
 
-def process_force_curve(x, fit_mode, k, s_ratio):
+def process_force_curve(x, fit_mode, s_ratio):
     rc, (zxr_and_dxr) = x
     npts = sum(map(len, zxr_and_dxr[0]))
     if npts > RESAMPLE_NPTS:
@@ -1094,9 +1110,7 @@ def process_force_curve(x, fit_mode, k, s_ratio):
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
     d *= s_ratio
-    delta = z - d
-    f = d * k
-    return delta, f, split, rc
+    return z, d, split, rc
 
 
 ###############################################

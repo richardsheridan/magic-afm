@@ -149,12 +149,17 @@ class DispKind(enum.IntEnum):
 @frozen
 class ForceCurveOptions:
     fit_mode: calculation.FitMode
+    fit_fix: calculation.FitFix
     disp_kind: DispKind
     k: float
     defl_sens: float
     sync_dist: float | None
     radius: float
     tau: float
+    lj_scale: float
+    vd: float
+    li_wn: float
+    drag: float
     trace: int | None
 
 
@@ -1199,7 +1204,6 @@ class ForceVolumeTkDisplay:
 
         preproc_labelframe = ttk.Labelframe(self.options_frame, text="Preprocessing")
         self.defl_sens_strvar = tk.StringVar(preproc_labelframe)
-        self._add_trace(self.defl_sens_strvar, self.defl_sens_callback)
         self.defl_sens_sbox = ttk.Spinbox(
             preproc_labelframe,
             from_=0,
@@ -1209,6 +1213,10 @@ class ForceVolumeTkDisplay:
             width=6,
             textvariable=self.defl_sens_strvar,
         )
+        self._add_trace(
+            self.defl_sens_strvar,
+            self.gen_check_sbox_callback(self.defl_sens_strvar, self.defl_sens_sbox),
+        )
         self.defl_sens_sbox.set(initial_values.defl_sens)
         self.defl_sens_sbox.grid(row=0, column=2, sticky="E")
         defl_sens_label = ttk.Label(
@@ -1216,7 +1224,6 @@ class ForceVolumeTkDisplay:
         )
         defl_sens_label.grid(row=0, column=0, columnspan=2, sticky="W")
         self.spring_const_strvar = tk.StringVar(preproc_labelframe)
-        self._add_trace(self.spring_const_strvar, self.spring_const_callback)
         self.spring_const_sbox = ttk.Spinbox(
             preproc_labelframe,
             from_=0,
@@ -1226,6 +1233,12 @@ class ForceVolumeTkDisplay:
             width=6,
             textvariable=self.spring_const_strvar,
         )
+        self._add_trace(
+            self.spring_const_strvar,
+            self.gen_check_sbox_callback(
+                self.spring_const_strvar, self.spring_const_sbox
+            ),
+        )
         self.spring_const_sbox.set(initial_values.k)
         self.spring_const_sbox.grid(row=1, column=2, sticky="E")
         spring_const_label = ttk.Label(
@@ -1234,7 +1247,6 @@ class ForceVolumeTkDisplay:
         spring_const_label.grid(row=1, column=0, columnspan=2, sticky="W")
         if initial_values.sync_dist is not None:
             self.sync_dist_strvar = tk.StringVar(preproc_labelframe)
-            self._add_trace(self.sync_dist_strvar, self.sync_dist_callback)
             self.sync_dist_sbox = ttk.Spinbox(
                 preproc_labelframe,
                 from_=-initial_values.sync_dist * 2,
@@ -1243,6 +1255,12 @@ class ForceVolumeTkDisplay:
                 format="%0.2f",
                 width=6,
                 textvariable=self.sync_dist_strvar,
+            )
+            self._add_trace(
+                self.sync_dist_strvar,
+                self.gen_check_sbox_callback(
+                    self.sync_dist_strvar, self.sync_dist_sbox
+                ),
             )
             self.sync_dist_sbox.set(initial_values.sync_dist)
             self.sync_dist_sbox.grid(row=2, column=2, sticky="E")
@@ -1290,7 +1308,6 @@ class ForceVolumeTkDisplay:
         fit_radius_label = ttk.Label(fit_labelframe, text="Tip radius (nm)")
         fit_radius_label.grid(row=2, column=0, columnspan=2, sticky="W")
         self.radius_strvar = tk.StringVar(fit_labelframe)
-        self._add_trace(self.radius_strvar, self.radius_callback)
         self.fit_radius_sbox = ttk.Spinbox(
             fit_labelframe,
             from_=1,
@@ -1300,12 +1317,15 @@ class ForceVolumeTkDisplay:
             width=6,
             textvariable=self.radius_strvar,
         )
+        self._add_trace(
+            self.radius_strvar,
+            self.gen_check_sbox_callback(self.radius_strvar, self.fit_radius_sbox),
+        )
         self.fit_radius_sbox.set(20.0)
         self.fit_radius_sbox.grid(row=2, column=2, sticky="E")
         fit_tau_label = ttk.Label(fit_labelframe, text="DMT-JKR (0-1)", justify="left")
         fit_tau_label.grid(row=3, column=0, columnspan=2, sticky="W")
         self.tau_strvar = tk.StringVar(fit_labelframe)
-        self._add_trace(self.tau_strvar, self.tau_callback)
         self.fit_tau_sbox = ttk.Spinbox(
             fit_labelframe,
             from_=0,
@@ -1315,13 +1335,93 @@ class ForceVolumeTkDisplay:
             width=6,
             textvariable=self.tau_strvar,
         )
+        self._add_trace(
+            self.tau_strvar,
+            self.gen_check_sbox_callback(self.tau_strvar, self.fit_tau_sbox),
+        )
         self.fit_tau_sbox.set(0.0)
         self.fit_tau_sbox.grid(row=3, column=2, sticky="E")
+
+        fit_vd_label = ttk.Label(fit_labelframe, text="Virtual Deflection")
+        fit_vd_label.grid(row=4, column=0, sticky="W")
+        self.vd_strvar = tk.StringVar(fit_labelframe)
+        self.fit_vd_sbox = ttk.Spinbox(
+            fit_labelframe,
+            from_=-1e5,
+            to=1e5,
+            increment=0.1,
+            format="%0.1f",
+            width=6,
+            textvariable=self.vd_strvar,
+        )
+        self._add_trace(
+            self.vd_strvar,
+            self.gen_check_sbox_callback(self.vd_strvar, self.fit_vd_sbox),
+        )
+        self.fit_vd_sbox.set(0.0)
+        self.fit_vd_sbox.grid(row=4, column=2, sticky="E")
+
+        fit_lj_scale_label = ttk.Label(fit_labelframe, text="Lennard-Jones")
+        fit_lj_scale_label.grid(row=5, column=0, sticky="W")
+        self.lj_scale_strvar = tk.StringVar(fit_labelframe)
+        self.fit_lj_scale_sbox = ttk.Spinbox(
+            fit_labelframe,
+            from_=-6,
+            to=6,
+            increment=0.1,
+            format="%0.1f",
+            width=6,
+            textvariable=self.lj_scale_strvar,
+        )
+        self._add_trace(
+            self.lj_scale_strvar,
+            self.gen_check_sbox_callback(self.lj_scale_strvar, self.fit_lj_scale_sbox),
+        )
+        self.fit_lj_scale_sbox.set(0.0)
+        self.fit_lj_scale_sbox.grid(row=5, column=2, sticky="E")
+
+        fit_drag_label = ttk.Label(fit_labelframe, text="Hydrodynamic drag")
+        fit_drag_label.grid(row=6, column=0, sticky="W")
+        self.drag_strvar = tk.StringVar(fit_labelframe)
+        self.fit_drag_sbox = ttk.Spinbox(
+            fit_labelframe,
+            from_=0,
+            to=1e5,
+            increment=0.1,
+            format="%0.1f",
+            width=6,
+            textvariable=self.drag_strvar,
+        )
+        self._add_trace(
+            self.drag_strvar,
+            self.gen_check_sbox_callback(self.drag_strvar, self.fit_drag_sbox),
+        )
+        self.fit_drag_sbox.set(0.0)
+        self.fit_drag_sbox.grid(row=6, column=2, sticky="E")
+
+        fit_li_wn_label = ttk.Label(fit_labelframe, text="Laser Interf.")
+        fit_li_wn_label.grid(row=7, column=0, sticky="W")
+        self.li_wn_strvar = tk.StringVar(fit_labelframe)
+        self.fit_li_wn_sbox = ttk.Spinbox(
+            fit_labelframe,
+            from_=0,
+            to=1e5,
+            increment=0.1,
+            format="%0.1f",
+            width=6,
+            textvariable=self.li_wn_strvar,
+        )
+        self._add_trace(
+            self.li_wn_strvar,
+            self.gen_check_sbox_callback(self.li_wn_strvar, self.fit_li_wn_sbox),
+        )
+        self.fit_li_wn_sbox.set(0.0)
+        self.fit_li_wn_sbox.grid(row=7, column=2, sticky="E")
 
         self.calc_props_button = ttk.Button(
             fit_labelframe, text="Calculate Property Maps", state="disabled"
         )
-        self.calc_props_button.grid(row=4, column=0, columnspan=3)
+        self.calc_props_button.grid(row=8, column=0, columnspan=3)
         fit_labelframe.grid(row=1, column=1, rowspan=3, sticky="EW")
 
         self.options_frame.grid(row=1, column=0, sticky="NSEW")
@@ -1403,15 +1503,22 @@ class ForceVolumeTkDisplay:
         try:
             self._opts = ForceCurveOptions(
                 fit_mode=calculation.FitMode(self.fit_intvar.get()),
+                fit_fix=0,
                 disp_kind=DispKind(self.disp_kind_intvar.get()),
                 k=float(self.spring_const_strvar.get()),
                 defl_sens=float(self.defl_sens_strvar.get()),
-                radius=float(self.fit_radius_sbox.get()),
-                tau=float(self.fit_tau_sbox.get()),
+                radius=float(self.radius_strvar.get()),
+                tau=float(self.tau_strvar.get()),
+                lj_scale=float(self.lj_scale_strvar.get()),
+                vd=float(self.vd_strvar.get()),
+                li_wn=float(self.li_wn_strvar.get()),
+                drag=float(self.drag_strvar.get()),
                 sync_dist=self.get_sync_dist_or_none(),
                 trace=self.get_trace_or_none(),
             )
         except Exception as e:
+            # Convert to warning so goofballs don't crash the app
+            # by filling fields with nonsense.
             warnings.warn(str(e))
         return self._opts
 
@@ -1464,50 +1571,17 @@ class ForceVolumeTkDisplay:
         self.change_image_send_chan = change_image_send_chan
         nursery.start_soon(self.canvas.idle_draw_task)
 
-    def defl_sens_callback(self, *args):
-        try:
-            float(self.defl_sens_strvar.get())
-        except ValueError:
-            self.defl_sens_sbox.configure(foreground="red2")
-        else:
-            self.defl_sens_sbox.configure(foreground="black")
-            self.redraw_send_chan.send_nowait(False)
+    def gen_check_sbox_callback(self, strvar, sbox):
+        def sbox_callback(*args):
+            try:
+                float(strvar.get())
+            except ValueError:
+                sbox.configure(foreground="red2")
+            else:
+                sbox.configure(foreground="black")
+                self.redraw_send_chan.send_nowait(False)
 
-    def spring_const_callback(self, *args):
-        try:
-            float(self.spring_const_strvar.get())
-        except ValueError:
-            self.spring_const_sbox.configure(foreground="red2")
-        else:
-            self.spring_const_sbox.configure(foreground="black")
-            self.redraw_send_chan.send_nowait(False)
-
-    def sync_dist_callback(self, *args):
-        try:
-            float(self.sync_dist_strvar.get())
-        except ValueError:
-            self.sync_dist_sbox.configure(foreground="red2")
-        else:
-            self.sync_dist_sbox.configure(foreground="black")
-            self.redraw_send_chan.send_nowait(False)
-
-    def radius_callback(self, *args):
-        try:
-            float(self.radius_strvar.get())
-        except ValueError:
-            self.fit_radius_sbox.configure(foreground="red2")
-        else:
-            self.fit_radius_sbox.configure(foreground="black")
-            self.redraw_send_chan.send_nowait(False)
-
-    def tau_callback(self, *args):
-        try:
-            float(self.tau_strvar.get())
-        except ValueError:
-            self.fit_tau_sbox.configure(foreground="red2")
-        else:
-            self.fit_tau_sbox.configure(foreground="black")
-            self.redraw_send_chan.send_nowait(False)
+        return sbox_callback
 
     def change_fit_kind_callback(self, *args):
         if self.fit_intvar.get():
@@ -1639,7 +1713,6 @@ class ForceVolumeController:
                         trio.to_thread.run_sync,
                         partial(
                             calculation.process_force_curve,
-                            k=options.k,
                             s_ratio=options.defl_sens
                             / self.opened_fvol.initial_parameters.defl_sens,
                             fit_mode=options.fit_mode,
@@ -2260,7 +2333,11 @@ def calculate_force_data(
     cancel_poller()
     optionsdict = asdict(options)
     beta, beta_err, sse, calc_fun = calculation.fitfun(
-        delta, f, **optionsdict, cancel_poller=cancel_poller, split=split
+        delta,
+        f,
+        cancel_poller=cancel_poller,
+        split=split,
+        **optionsdict,
     )
     f_fit = calc_fun(delta, *beta)
     d_fit = f_fit / options.k
@@ -2273,9 +2350,9 @@ def calculate_force_data(
         delta_new,
         f_new,
         k_new,
-        **optionsdict,
         cancel_poller=cancel_poller,
         split=split,
+        **optionsdict,
     )[0]
     sens = (beta_perturb - beta) / beta / eps
     if np.all(np.isfinite(beta)):
