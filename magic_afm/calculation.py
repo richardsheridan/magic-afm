@@ -947,7 +947,7 @@ def fitfun(
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
-    def partial_force_curve(delta, *parms):
+    def partial_force_curve(z, *parms):
         cancel_poller()
         d_artifact = np.zeros_like(d)
         fc_parms = parms[:5]
@@ -962,7 +962,8 @@ def fitfun(
             d_artifact += hydrodynamic_drag(z_velocity, drag_factor)
         delta = z - (d - d_artifact)
         force_shift = d_artifact * k
-        return force_curve(red_curve, delta, k, radius, *fc_parms) - force_shift
+        fout = force_curve(red_curve, delta, k, radius, *fc_parms) - force_shift
+        return fout / k
 
     try:
         beta, cov, infodict, *_ = curve_fit(
@@ -980,9 +981,10 @@ def fitfun(
     return beta, beta_err, sse, partial_force_curve
 
 
-def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
+def calc_def_ind_ztru_ac(
+    force, tau, M, fc, delta_shift, lj_delta_scale, radius, k, fit_mode, **kwargs
+):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters."""
-    M, fc, delta_shift, lj_delta_scale, *_ = beta
 
     assert fit_mode
     n_pts_max = len(force) // 25
@@ -1045,39 +1047,41 @@ def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
     return deflection, indentation, z_true_surface, mindelta, contact_radius
 
 
-def perturb_k(delta, f, epsilon, k):
+def perturb_k(d, k, epsilon):
     k_new = (1 + epsilon) * k
-    f_new = f * ((1 + epsilon) ** 0.5)
-    delta_new = delta + (f - f_new / (1 + epsilon)) / k
-    return delta_new, f_new, k_new
+    d_new = d * ((1 + epsilon) ** -0.5)
+    return d_new, k_new
 
 
-def calc_properties_imap(delta_f_rc, **kwargs):
-    delta, force, split, rc = delta_f_rc
+def calc_properties_imap(z_d_s_rc, **kwargs):
+    z, d, split, rc = z_d_s_rc
     kwargs["split"] = split
-    beta, beta_err, sse, partial_force_curve = fitfun(delta, force, **kwargs)
+    beta, beta_err, sse, _ = fitfun(z, d, **kwargs)
     if np.any(np.isnan(beta)):
         return rc, None
-    ind_mod = beta[0]
-    adh_force = beta[1]
-    ind_mod_err = beta_err[0]
-    adh_force_err = beta_err[1]
+    kwargs["tau"] = beta[0]
+    M = kwargs["M"] = beta[1]
+    fc = kwargs["fc"] = beta[2]
+    kwargs["delta_shift"] = beta[3]
+    kwargs["lj_delta_scale"] = beta[4]
+    M_err = beta_err[1]
+    adh_force_err = beta_err[2]
     (deflection, indentation, z_true_surface, mindelta, a_c) = calc_def_ind_ztru_ac(
-        force, beta, **kwargs
+        d, **kwargs
     )
     k = kwargs.pop("k")
     eps = 1e-3
-    beta_perturb, *_ = fitfun(*perturb_k(delta, force, eps, k), p0=beta, **kwargs)
+    beta_perturb, *_ = fitfun(z, *perturb_k(d, k, eps), p0=beta, **kwargs)
     if np.any(np.isnan(beta_perturb)):
         return rc, None
     ind_mod_perturb = beta_perturb[0]
-    ind_mod_sens_k = (ind_mod_perturb - ind_mod) / ind_mod / eps
+    ind_mod_sens_k = (ind_mod_perturb - M) / M / eps
 
     # pack up properties, ensuring all fields are filled in order
     properties = np.void(np.nan, dtype=PROPERTY_DTYPE)
-    properties["IndentationModulus"] = ind_mod * 1e9
-    properties["AdhesionForce"] = adh_force / 1e9
-    properties["IndentationModulusErr"] = ind_mod_err * 1e9
+    properties["IndentationModulus"] = M * 1e9
+    properties["AdhesionForce"] = fc / 1e9
+    properties["IndentationModulusErr"] = M_err * 1e9
     properties["AdhesionForceErr"] = adh_force_err / 1e9
     properties["Deflection"] = deflection / 1e9
     properties["Indentation"] = indentation / 1e9

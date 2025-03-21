@@ -1503,7 +1503,7 @@ class ForceVolumeTkDisplay:
         try:
             self._opts = ForceCurveOptions(
                 fit_mode=calculation.FitMode(self.fit_intvar.get()),
-                fit_fix=0,
+                fit_fix=~calculation.FitFix(0),
                 disp_kind=DispKind(self.disp_kind_intvar.get()),
                 k=float(self.spring_const_strvar.get()),
                 defl_sens=float(self.defl_sens_strvar.get()),
@@ -2102,7 +2102,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
     assert point_data
     if len(point_data) == 1:
         data: ForceCurveData = next(iter(point_data.values()))
-        exp = np.log10(data.beta[0])
+        exp = np.log10(data.beta[1])
         prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get(
             (-exp + 2.7) // 3, ("", 1)
         )
@@ -2119,9 +2119,9 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
         table: Table = ax.table(
             [
                 [
-                    "{:.2f}±{:.2f}".format(data.beta[0] * fac, data.beta_err[0] * fac),
-                    "{:.2e}".format(data.sens[0]),
-                    "{:.2f}±{:.2f}".format(data.beta[1], data.beta_err[1]),
+                    "{:.2f}±{:.2f}".format(data.beta[1] * fac, data.beta_err[1] * fac),
+                    "{:.2e}".format(data.sens[1]),
+                    "{:.2f}±{:.2f}".format(data.beta[2], data.beta_err[2]),
                     "{:.2f}".format(data.defl),
                     "{:.2f}".format(data.ind),
                     "{:.2f}".format(data.defl / data.ind),
@@ -2138,9 +2138,9 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
         m, sens, fadh, defl, ind, rat, a_c = np.transpose(
             [
                 (
-                    data.beta[0],
-                    data.sens[0],
                     data.beta[1],
+                    data.sens[1],
+                    data.beta[2],
                     data.defl,
                     data.ind,
                     data.defl / data.ind,
@@ -2211,25 +2211,25 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
         plot_ax.set_xlabel("Indentation depth (nm)")
         plot_ax.set_ylabel("Indentation force (nN)")
         if options.fit_mode:
-            f_fit = data.f_fit - data.beta[3]
+            f_fit = data.f_fit - data.beta[4]
             aex(
                 plot_ax.plot(
-                    data.deltaxr[0] - data.beta[2],
-                    data.fxr[0] - data.beta[3],
+                    data.deltaxr[0] - data.beta[3],
+                    data.fxr[0] - data.beta[4],
                     label="Extend",
                 )
             )
             aex(
                 plot_ax.plot(
-                    data.deltaxr[1] - data.beta[2],
-                    data.fxr[1] - data.beta[3],
+                    data.deltaxr[1] - data.beta[3],
+                    data.fxr[1] - data.beta[4],
                     label="Retract",
                 )
             )
             if options.fit_mode == calculation.FitMode.BOTH:
                 aex(
                     plot_ax.plot(
-                        np.concatenate(data.deltaxr) - data.beta[2],
+                        np.concatenate(data.deltaxr) - data.beta[3],
                         f_fit,
                         "--",
                         label="Model",
@@ -2238,7 +2238,7 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
             else:
                 aex(
                     plot_ax.plot(
-                        data.deltaxr[options.fit_mode - 1] - data.beta[2],
+                        data.deltaxr[options.fit_mode - 1] - data.beta[3],
                         f_fit,
                         "--",
                         label="Model",
@@ -2255,10 +2255,10 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
             aex(
                 plot_ax.plot(
                     [
-                        data.ind + data.mindelta - data.beta[2],
-                        data.mindelta - data.beta[2],
+                        data.ind + data.mindelta - data.beta[3],
+                        data.mindelta - data.beta[3],
                     ],
-                    [data.defl * options.k - data.beta[1], -data.beta[1]],
+                    [data.defl * options.k - data.beta[2], -data.beta[2]],
                     label="Max/Crit",
                     **mopts,
                 )
@@ -2322,55 +2322,51 @@ def calculate_force_data(
         return ForceCurveData(zxr=zxr, dxr=dxr, txr=txr, fxr=fxr, deltaxr=deltaxr)
 
     if options.fit_mode == calculation.FitMode.EXTEND:
-        delta, f, split = deltaxr[0], fxr[0], None
+        z, d, split = zxr[0], dxr[0], None
     elif options.fit_mode == calculation.FitMode.RETRACT:
-        delta, f, split = deltaxr[1], fxr[1], None
+        z, d, split = zxr[1], dxr[1], None
     elif options.fit_mode == calculation.FitMode.BOTH:
-        delta, f, split = np.concatenate(deltaxr), np.concatenate(fxr), len(deltaxr[0])
+        z, d, split = np.concatenate(zxr), np.concatenate(dxr), len(deltaxr[0])
     else:
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
     cancel_poller()
     optionsdict = asdict(options)
     beta, beta_err, sse, calc_fun = calculation.fitfun(
-        delta,
-        f,
+        z,
+        d,
         cancel_poller=cancel_poller,
         split=split,
         **optionsdict,
     )
-    f_fit = calc_fun(delta, *beta)
-    d_fit = f_fit / options.k
+    d_fit = calc_fun(z, *beta)
+    f_fit = d_fit * options.k
     cancel_poller()
 
     eps = 1e-3
-    delta_new, f_new, k_new = calculation.perturb_k(delta, f, eps, options.k)
+    d_new, k_new = calculation.perturb_k(d, options.k, eps)
     optionsdict.pop("k")
     beta_perturb = calculation.fitfun(
-        delta_new,
-        f_new,
+        z,
+        d_new,
         k_new,
         cancel_poller=cancel_poller,
         split=split,
         **optionsdict,
     )[0]
-    sens = (beta_perturb - beta) / beta / eps
-    if np.all(np.isfinite(beta)):
-        (
-            deflection,
-            indentation,
-            z_true_surface,
-            mindelta,
-            a_c,
-        ) = calculation.calc_def_ind_ztru_ac(f, beta, split=split, **asdict(options))
-    else:
-        deflection, indentation, z_true_surface, mindelta, a_c = (
-            np.nan,
-            np.nan,
-            np.nan,
-            np.nan,
-            np.nan,
-        )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sens = (beta_perturb - beta) / beta / eps
+    optionsdict = asdict(options)
+    optionsdict.pop("tau")
+    (
+        deflection,
+        indentation,
+        z_true_surface,
+        mindelta,
+        a_c,
+    ) = calculation.calc_def_ind_ztru_ac(
+        d * options.k, *beta[:5], split=split, **optionsdict
+    )
     return ForceCurveData(
         zxr=zxr,
         dxr=dxr,
