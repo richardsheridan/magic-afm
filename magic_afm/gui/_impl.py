@@ -1145,7 +1145,7 @@ class ForceVolumeTkDisplay:
         manipulate_menu.pack(fill="x")
         manipulate_labelframe.pack(fill="x")
 
-        image_opts_frame.grid(row=2, column=0, rowspan=2)
+        image_opts_frame.grid(row=2, column=0)
 
         if initial_values.trace is not None:
             data_select_frame = ttk.Labelframe(
@@ -1203,71 +1203,34 @@ class ForceVolumeTkDisplay:
         disp_labelframe.grid(row=0, column=0)
 
         preproc_labelframe = ttk.Labelframe(self.options_frame, text="Preprocessing")
-        self.defl_sens_strvar = tk.StringVar(preproc_labelframe)
-        self.defl_sens_sbox = ttk.Spinbox(
+        self.defl_sens_strvar = self._add_parm(
             preproc_labelframe,
+            0,
+            "Deflection Sens.",
+            initial_values.defl_sens,
             from_=0,
             to=1e3,
             increment=0.1,
-            format="%0.1f",
-            width=6,
-            textvariable=self.defl_sens_strvar,
         )
-        self._add_trace(
-            self.defl_sens_strvar,
-            self.gen_check_sbox_callback(self.defl_sens_strvar, self.defl_sens_sbox),
-        )
-        self.defl_sens_sbox.set(initial_values.defl_sens)
-        self.defl_sens_sbox.grid(row=0, column=2, sticky="E")
-        defl_sens_label = ttk.Label(
-            preproc_labelframe, text="Deflection Sens.", justify="left"
-        )
-        defl_sens_label.grid(row=0, column=0, columnspan=2, sticky="W")
-        self.spring_const_strvar = tk.StringVar(preproc_labelframe)
-        self.spring_const_sbox = ttk.Spinbox(
+        self.spring_const_strvar = self._add_parm(
             preproc_labelframe,
+            1,
+            "Spring Constant",
+            initial_values.k,
             from_=0,
             to=1e3,
             increment=0.1,
-            format="%0.1f",
-            width=6,
-            textvariable=self.spring_const_strvar,
         )
-        self._add_trace(
-            self.spring_const_strvar,
-            self.gen_check_sbox_callback(
-                self.spring_const_strvar, self.spring_const_sbox
-            ),
-        )
-        self.spring_const_sbox.set(initial_values.k)
-        self.spring_const_sbox.grid(row=1, column=2, sticky="E")
-        spring_const_label = ttk.Label(
-            preproc_labelframe, text="Spring Constant", justify="left"
-        )
-        spring_const_label.grid(row=1, column=0, columnspan=2, sticky="W")
         if initial_values.sync_dist is not None:
-            self.sync_dist_strvar = tk.StringVar(preproc_labelframe)
-            self.sync_dist_sbox = ttk.Spinbox(
+            self.sync_dist_strvar = self._add_parm(
                 preproc_labelframe,
+                2,
+                "Sync Distance",
+                initial_values.k,
                 from_=-initial_values.sync_dist * 2,
                 to=initial_values.sync_dist * 2,
                 increment=0.1,
-                format="%0.2f",
-                width=6,
-                textvariable=self.sync_dist_strvar,
             )
-            self._add_trace(
-                self.sync_dist_strvar,
-                self.gen_check_sbox_callback(
-                    self.sync_dist_strvar, self.sync_dist_sbox
-                ),
-            )
-            self.sync_dist_sbox.set(initial_values.sync_dist)
-            self.sync_dist_sbox.grid(row=2, column=2, sticky="E")
-            sync_dist_label = ttk.Label(
-                preproc_labelframe, text="Sync Distance", justify="left"
-            )
-            sync_dist_label.grid(row=2, column=0, columnspan=2, sticky="W")
         preproc_labelframe.grid(row=0, column=1, sticky="EW")
         preproc_labelframe.grid_columnconfigure(1, weight=1)
 
@@ -1282,7 +1245,7 @@ class ForceVolumeTkDisplay:
             value=calculation.FitMode.SKIP.value,
             variable=self.fit_intvar,
         )
-        fit_skip_button.grid(row=1, column=0, sticky="W")
+        fit_skip_button.grid(row=1, column=2, sticky="W")
         fit_ext_button = ttk.Radiobutton(
             fit_labelframe,
             text="Extend",
@@ -1296,133 +1259,41 @@ class ForceVolumeTkDisplay:
             value=calculation.FitMode.RETRACT.value,
             variable=self.fit_intvar,
         )
-        fit_ret_button.grid(row=0, column=1, sticky="W")
-        fit_ret_button = ttk.Radiobutton(
+        fit_ret_button.grid(row=1, column=0, sticky="W")
+        fit_both_button = ttk.Radiobutton(
             fit_labelframe,
             text="Both",
             value=calculation.FitMode.BOTH.value,
             variable=self.fit_intvar,
         )
-        fit_ret_button.grid(row=1, column=1, sticky="W")
+        fit_both_button.grid(row=0, column=2, sticky="W")
 
-        fit_radius_label = ttk.Label(fit_labelframe, text="Tip radius (nm)")
-        fit_radius_label.grid(row=2, column=0, columnspan=2, sticky="W")
-        self.radius_strvar = tk.StringVar(fit_labelframe)
-        self.fit_radius_sbox = ttk.Spinbox(
+        self.radius_strvar = self._add_parm(
+            fit_labelframe, 2, "Tip radius (nm)", default=20.0
+        )
+        self.tau_strvar = self._add_parm(
+            fit_labelframe, 3, "DMT-JKR (0-1)", to=1, increment=0.05, format="%0.2f"
+        )
+        self.vd_strvar = self._add_parm(
             fit_labelframe,
-            from_=1,
-            to=10000,
-            increment=0.1,
-            format="%0.1f",
-            width=6,
-            textvariable=self.radius_strvar,
-        )
-        self._add_trace(
-            self.radius_strvar,
-            self.gen_check_sbox_callback(self.radius_strvar, self.fit_radius_sbox),
-        )
-        self.fit_radius_sbox.set(20.0)
-        self.fit_radius_sbox.grid(row=2, column=2, sticky="E")
-        fit_tau_label = ttk.Label(fit_labelframe, text="DMT-JKR (0-1)", justify="left")
-        fit_tau_label.grid(row=3, column=0, columnspan=2, sticky="W")
-        self.tau_strvar = tk.StringVar(fit_labelframe)
-        self.fit_tau_sbox = ttk.Spinbox(
-            fit_labelframe,
-            from_=0,
-            to=1,
-            increment=0.05,
-            format="%0.2f",
-            width=6,
-            textvariable=self.tau_strvar,
-        )
-        self._add_trace(
-            self.tau_strvar,
-            self.gen_check_sbox_callback(self.tau_strvar, self.fit_tau_sbox),
-        )
-        self.fit_tau_sbox.set(0.0)
-        self.fit_tau_sbox.grid(row=3, column=2, sticky="E")
-
-        fit_vd_label = ttk.Label(fit_labelframe, text="Virtual Deflection")
-        fit_vd_label.grid(row=4, column=0, sticky="W")
-        self.vd_strvar = tk.StringVar(fit_labelframe)
-        self.fit_vd_sbox = ttk.Spinbox(
-            fit_labelframe,
+            4,
+            "Virtual Deflection",
             from_=-1e5,
             to=1e5,
             increment=0.1,
-            format="%0.1f",
-            width=6,
-            textvariable=self.vd_strvar,
         )
-        self._add_trace(
-            self.vd_strvar,
-            self.gen_check_sbox_callback(self.vd_strvar, self.fit_vd_sbox),
+        self.lj_scale_strvar = self._add_parm(
+            fit_labelframe, 5, "Lennard-Jones", from_=-6, to=6
         )
-        self.fit_vd_sbox.set(0.0)
-        self.fit_vd_sbox.grid(row=4, column=2, sticky="E")
+        self.drag_strvar = self._add_parm(fit_labelframe, 6, "Hydrodynamic drag")
+        self.li_wn_strvar = self._add_parm(fit_labelframe, 7, "Laser Interf.", 1.0)
 
-        fit_lj_scale_label = ttk.Label(fit_labelframe, text="Lennard-Jones")
-        fit_lj_scale_label.grid(row=5, column=0, sticky="W")
-        self.lj_scale_strvar = tk.StringVar(fit_labelframe)
-        self.fit_lj_scale_sbox = ttk.Spinbox(
-            fit_labelframe,
-            from_=-6,
-            to=6,
-            increment=0.1,
-            format="%0.1f",
-            width=6,
-            textvariable=self.lj_scale_strvar,
-        )
-        self._add_trace(
-            self.lj_scale_strvar,
-            self.gen_check_sbox_callback(self.lj_scale_strvar, self.fit_lj_scale_sbox),
-        )
-        self.fit_lj_scale_sbox.set(0.0)
-        self.fit_lj_scale_sbox.grid(row=5, column=2, sticky="E")
-
-        fit_drag_label = ttk.Label(fit_labelframe, text="Hydrodynamic drag")
-        fit_drag_label.grid(row=6, column=0, sticky="W")
-        self.drag_strvar = tk.StringVar(fit_labelframe)
-        self.fit_drag_sbox = ttk.Spinbox(
-            fit_labelframe,
-            from_=0,
-            to=1e5,
-            increment=0.1,
-            format="%0.1f",
-            width=6,
-            textvariable=self.drag_strvar,
-        )
-        self._add_trace(
-            self.drag_strvar,
-            self.gen_check_sbox_callback(self.drag_strvar, self.fit_drag_sbox),
-        )
-        self.fit_drag_sbox.set(0.0)
-        self.fit_drag_sbox.grid(row=6, column=2, sticky="E")
-
-        fit_li_wn_label = ttk.Label(fit_labelframe, text="Laser Interf.")
-        fit_li_wn_label.grid(row=7, column=0, sticky="W")
-        self.li_wn_strvar = tk.StringVar(fit_labelframe)
-        self.fit_li_wn_sbox = ttk.Spinbox(
-            fit_labelframe,
-            from_=0,
-            to=1e5,
-            increment=0.1,
-            format="%0.1f",
-            width=6,
-            textvariable=self.li_wn_strvar,
-        )
-        self._add_trace(
-            self.li_wn_strvar,
-            self.gen_check_sbox_callback(self.li_wn_strvar, self.fit_li_wn_sbox),
-        )
-        self.fit_li_wn_sbox.set(0.0)
-        self.fit_li_wn_sbox.grid(row=7, column=2, sticky="E")
+        fit_labelframe.grid(row=1, column=1, rowspan=3, sticky="EW")
 
         self.calc_props_button = ttk.Button(
-            fit_labelframe, text="Calculate Property Maps", state="disabled"
+            self.options_frame, text="Calculate Property Maps", state="disabled"
         )
-        self.calc_props_button.grid(row=8, column=0, columnspan=3)
-        fit_labelframe.grid(row=1, column=1, rowspan=3, sticky="EW")
+        self.calc_props_button.grid(row=3, column=0)
 
         self.options_frame.grid(row=1, column=0, sticky="NSEW")
 
@@ -1491,6 +1362,45 @@ class ForceVolumeTkDisplay:
 
     def _add_trace(self, tkvar, callback):
         self._traces.append((tkvar, tkvar.trace_add("write", callback)))
+
+    def _add_parm(
+        self,
+        frame,
+        row,
+        name,
+        default=0.0,
+        from_=0.0,
+        to=1e4,
+        increment=0.1,
+        format="%0.1f",
+    ):
+        label = ttk.Label(frame, text=name)
+        label.grid(row=row, column=0, columnspan=2, sticky="W")
+        strvar = tk.StringVar(frame)
+        sbox = ttk.Spinbox(
+            frame,
+            from_=from_,
+            to=to,
+            increment=increment,
+            format=format,
+            width=6,
+            textvariable=strvar,
+        )
+
+        def sbox_callback(*args):
+            try:
+                float(strvar.get())
+            except ValueError:
+                sbox.configure(foreground="red2")
+            else:
+                sbox.configure(foreground="black")
+                self.redraw_send_chan.send_nowait(False)
+
+        self._add_trace(strvar, sbox_callback)
+        sbox.set(default)
+        sbox.grid(row=row, column=2, sticky="E")
+        sbox.grid_columnconfigure(0, weight=1)
+        return strvar
 
     def destroy(self):
         for tkvar, cbname in self._traces:
@@ -1570,18 +1480,6 @@ class ForceVolumeTkDisplay:
         self.manipulate_send_chan = manipulate_send_chan
         self.change_image_send_chan = change_image_send_chan
         nursery.start_soon(self.canvas.idle_draw_task)
-
-    def gen_check_sbox_callback(self, strvar, sbox):
-        def sbox_callback(*args):
-            try:
-                float(strvar.get())
-            except ValueError:
-                sbox.configure(foreground="red2")
-            else:
-                sbox.configure(foreground="black")
-                self.redraw_send_chan.send_nowait(False)
-
-        return sbox_callback
 
     def change_fit_kind_callback(self, *args):
         if self.fit_intvar.get():
