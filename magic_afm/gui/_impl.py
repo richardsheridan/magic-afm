@@ -417,7 +417,6 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         super().__init__(figure, master)
 
         self._tkcanvas.configure(background="#f0f0f0")
-        self._tkcanvas_image_region = "1"
 
     async def idle_draw_task(self):
         # One of the slowest processes. Stick everything in a thread.
@@ -442,13 +441,17 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                 # if draw_fn returns a truthy value, no draw needed
                 if await trio.to_thread.run_sync(draw_fn):
                     continue
+                draw_fn = None
                 # Batch rapid artist call requests if a draw is incoming
                 # spend roughly equal time building artists and drawing
-                while True:
-                    with trio.move_on_at(deadline) as delay_scope:
-                        draw_fn = await self.draw_recv.receive()
-                    if delay_scope.cancelled_caught:
-                        break
+                with trio.move_on_at(deadline) as delay_scope:
+                    async for draw_fn in self.draw_recv:
+                        await trio.to_thread.run_sync(draw_fn)
+                        draw_fn = None
+                if draw_fn is not None:
+                    # The deadline was hit between recieving draw_fn and await run_sync.
+                    # Since we never use from_thread to check cancellation, we must
+                    # assume draw_fn still needs to be executed!
                     await trio.to_thread.run_sync(draw_fn)
                 self._maybe_resize()
                 t = trio.current_time()
