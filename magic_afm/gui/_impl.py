@@ -1229,7 +1229,7 @@ class ForceVolumeTkDisplay:
                 preproc_labelframe,
                 2,
                 "Sync Distance",
-                initial_values.k,
+                initial_values.sync_dist,
                 from_=-initial_values.sync_dist * 2,
                 to=initial_values.sync_dist * 2,
                 increment=0.1,
