@@ -967,7 +967,7 @@ def fitfun(
 
     try:
         beta, cov, infodict, *_ = curve_fit(
-            partial_force_curve, delta, force, p0=p0, bounds=bounds
+            partial_force_curve, z, d, p0=p0, bounds=bounds
         )
         sse = infodict["chisq"]
         beta_err = infodict["uncertainties"]

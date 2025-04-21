@@ -1416,7 +1416,7 @@ class ForceVolumeTkDisplay:
         try:
             self._opts = ForceCurveOptions(
                 fit_mode=calculation.FitMode(self.fit_intvar.get()),
-                fit_fix=~calculation.FitFix(0),
+                fit_fix=~calculation.FitFix(0)&~calculation.FitFix.LJ_SCALE,
                 disp_kind=DispKind(self.disp_kind_intvar.get()),
                 k=float(self.spring_const_strvar.get()),
                 defl_sens=float(self.defl_sens_strvar.get()),
