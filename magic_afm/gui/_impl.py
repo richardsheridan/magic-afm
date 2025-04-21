@@ -390,7 +390,7 @@ class DemoForceVolumeFile(AsyncFVFile):
 
     def get_curve(self, r, c, trace=None, sync_dist=None):
         gen = np.random.default_rng(seed=(int(r), int(c)))
-        parms = (1, 10, 1, 0.1, 2, 0, 1)
+        parms = (self.fvfile.k, 20, 0, 0.1, 2, 0, 1)
         deltaext = self.delta[: self.delta.size // 2]
         deltaret = self.delta[self.delta.size // 2 :]
         fext = calculation.force_curve(calculation.red_extend, deltaext, *parms)
@@ -422,7 +422,6 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
         super().__init__(figure, master)
 
         self._tkcanvas.configure(background="#f0f0f0")
-        self._tkcanvas_image_region = "1"
 
     async def idle_draw_task(self):
         # One of the slowest processes. Stick everything in a thread.
@@ -447,13 +446,17 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                 # if draw_fn returns a truthy value, no draw needed
                 if await trio.to_thread.run_sync(draw_fn):
                     continue
+                draw_fn = None
                 # Batch rapid artist call requests if a draw is incoming
                 # spend roughly equal time building artists and drawing
-                while True:
-                    with trio.move_on_at(deadline) as delay_scope:
-                        draw_fn = await self.draw_recv.receive()
-                    if delay_scope.cancelled_caught:
-                        break
+                with trio.move_on_at(deadline) as delay_scope:
+                    async for draw_fn in self.draw_recv:
+                        await trio.to_thread.run_sync(draw_fn)
+                        draw_fn = None
+                if draw_fn is not None:
+                    # The deadline was hit between recieving draw_fn and await run_sync.
+                    # Since we never use from_thread to check cancellation, we must
+                    # assume draw_fn still needs to be executed!
                     await trio.to_thread.run_sync(draw_fn)
                 self._maybe_resize()
                 t = trio.current_time()
@@ -1574,7 +1577,7 @@ class ForceVolumeController:
                     pause_callback=swap_pause_event,
                 ) as pbar,
             ):
-                progress_image: matplotlib.image.AxesImage
+                progress_image: matplotlib.image.AxesImage | None = None
                 progress_array = np.zeros(img_shape + (4,), dtype="f4")
                 half_red = np.array((1, 0, 0, 0.5), dtype="f4")
                 half_green = np.array((0, 1, 0, 0.5), dtype="f4")
@@ -1597,6 +1600,8 @@ class ForceVolumeController:
                 self.display.canvas.draw_send.send_nowait(make_progress_image_draw_fn)
 
                 def blit_img_draw_fn():
+                    if progress_image is None:
+                        return True
                     bg = self.display.canvas.copy_from_bbox(progress_image.clipbox)
                     progress_image.set_visible(True)
                     self.display.img_ax.draw_artist(progress_image)
