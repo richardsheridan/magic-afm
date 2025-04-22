@@ -929,6 +929,8 @@ def fitfun(
     )
     bounds = np.transpose(bounds)
     p0 = np.clip(p0, *bounds)
+    if not fit_fix & FitFix.HYDRODYNAMIC_DRAG or p0.item(-1):
+        z_velocity = np.gradient(z)
 
     assert fit_mode
     if fit_mode == FitMode.EXTEND:
@@ -960,7 +962,6 @@ def fitfun(
             dout -= laser_interference(z, *li_parms)
         drag_factor = parms[-1]
         if drag_factor:
-            z_velocity = np.gradient(z)
             dout -= hydrodynamic_drag(z_velocity, drag_factor)
         dout += root_df_sane(
             lambda d: force_curve(red_curve, z - d, k, radius, *fc_parms) / k - d,
