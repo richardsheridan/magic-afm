@@ -557,10 +557,6 @@ def laser_interference(z, wave_number, sin_amp, cos_amp):
     return sin_amp * np.sin(theta) + cos_amp * np.cos(theta)
 
 
-def virtual_deflection(z_poly_basis, poly_coefs):
-    return z_poly_basis @ poly_coefs
-
-
 def hydrodynamic_drag(z_velocity, drag_factor):
     return -z_velocity * drag_factor
 
@@ -794,7 +790,9 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     return np.minimum(s_f, lj_f)
 
 
-def force_curve(red_curve, delta, k, radius, tau, M, fc, delta_shift, lj_delta_scale):
+def force_curve(
+    red_curve, delta, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
+):
     """Calculate a force curve from indentation data."""
     # Catch crazy inputs early
     assert k > 0, k
@@ -817,10 +815,12 @@ def force_curve(red_curve, delta, k, radius, tau, M, fc, delta_shift, lj_delta_s
     red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale)
 
     # Rescale to dimensioned units
-    return red_force * ref_force
+    return (red_force * ref_force) + force_shift
 
 
-def delta_curve(red_curve, force, k, radius, tau, M, fc, delta_shift, lj_delta_scale):
+def delta_curve(
+    red_curve, force, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
+):
     """Convenience function for inverse of force_curve, i.e. force->delta"""
     # Catch crazy inputs early
     assert k > 0, k
@@ -833,7 +833,7 @@ def delta_curve(red_curve, force, k, radius, tau, M, fc, delta_shift, lj_delta_s
     # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
     red_fc = (tau - 4) / 2
     ref_force = -fc / red_fc
-    red_force = force / ref_force
+    red_force = (force - force_shift) / ref_force
     ref_radius = (ref_force * radius / M) ** (1 / 3)
     ref_delta = ref_radius * ref_radius / radius
     red_k = k / ref_force * ref_delta
@@ -868,7 +868,7 @@ def rapid_forcecurve_estimate(delta, force, radius):
     if not np.isfinite(M_guess):
         M_guess = 1.0
 
-    return M_guess, fc_guess, deltamin
+    return M_guess, fc_guess, deltamin, fzero
 
 
 ###############################################
@@ -900,14 +900,16 @@ def fitfun(
     lg = laser_guesses = li_wn, 0.0, 0.0
 
     if p0 is None:
-        M_guess, fc_guess, deltamin = rapid_forcecurve_estimate(delta, force, radius)
+        M_guess, fc_guess, deltamin, fzero = rapid_forcecurve_estimate(
+            delta, force, radius
+        )
         p0 = (
             tau,
             M_guess,
             fc_guess,
             deltamin,
+            fzero,
             lj_scale,
-            np.median(d),
             vd,
             *laser_guesses,
             drag,
@@ -918,8 +920,8 @@ def fitfun(
         (0.0, np.inf),  # M
         (0.0, np.inf),  # fc
         (np.min(delta), np.max(delta)),  # delta_shift
+        (np.min(force), np.max(force)),  # force_shift
         (lj_scale,) * 2 if fit_fix & FitFix.LJ_SCALE else (-6.0, 6.0),
-        (np.min(d), np.max(d)),  # deflection offset
         (vd,) * 2 if fit_fix & FitFix.VIRTUAL_DEFLECTION else (-np.inf, np.inf),
         ((lg[0],) * 2 if fit_fix & FitFix.LASER_INTERFERENCE else (0.0, np.inf)),
         ((lg[1],) * 2 if fit_fix & FitFix.LASER_INTERFERENCE else (-np.inf, np.inf)),
@@ -951,10 +953,9 @@ def fitfun(
     def partial_force_curve(z, *parms):
         cancel_poller()
         dout = np.zeros_like(d)
-        fc_parms = parms[:5]
-        poly_coefs = parms[5 : 5 + 2]
-        z_poly_basis = np.vander(z, 2, increasing=True)
-        dout -= virtual_deflection(z_poly_basis, poly_coefs)
+        fc_parms = parms[:6]
+        vd = parms[6]
+        dout -= z * vd
         li_parms = parms[7 : 7 + 3]
         if np.any(li_parms[1:]):
             dout -= laser_interference(z, *li_parms)
@@ -985,10 +986,10 @@ def fitfun(
     return beta, beta_err, sse, partial_force_curve
 
 
-def calc_def_ind_ztru_ac(
-    d, tau, M, fc, delta_shift, lj_delta_scale, radius, k, fit_mode, **kwargs
-):
+def calc_def_ind_ztru_ac(d, beta, radius, k, fit_mode, **kwargs):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters."""
+
+    tau, M, fc, delta_shift, force_shift, lj_delta_scale, vd, *li, drag = beta
 
     assert fit_mode
     force = d * k
@@ -1012,17 +1013,19 @@ def calc_def_ind_ztru_ac(
         M,
         fc,
         delta_shift,
+        force_shift,
         lj_delta_scale,
     )
     mindelta = delta_curve(
         schwarz_wrap,
-        -fc,
+        force_shift - fc,
         k,
         radius,
         tau,
         M,
         fc,
         delta_shift,
+        force_shift,
         lj_delta_scale,
     )
     # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
@@ -1036,10 +1039,12 @@ def calc_def_ind_ztru_ac(
             M,
             fc,
             delta_shift,
+            force_shift,
             lj_delta_scale,
         )
     )
 
+    maxforce -= force_shift
     red_fc = (tau - 4) / 2
     ref_force = -fc / red_fc
     df = abs(maxforce / ref_force - red_fc)
@@ -1064,15 +1069,12 @@ def calc_properties_imap(z_d_s_rc, **kwargs):
     beta, beta_err, sse, _ = fitfun(z, d, **kwargs)
     if np.any(np.isnan(beta)):
         return rc, None
-    kwargs["tau"] = beta[0]
-    M = kwargs["M"] = beta[1]
-    fc = kwargs["fc"] = beta[2]
-    kwargs["delta_shift"] = beta[3]
-    kwargs["lj_delta_scale"] = beta[4]
+    M = beta[1]
+    fc = beta[2]
     M_err = beta_err[1]
     adh_force_err = beta_err[2]
     (deflection, indentation, z_true_surface, mindelta, a_c) = calc_def_ind_ztru_ac(
-        d, **kwargs
+        d, beta, **kwargs
     )
     k = kwargs.pop("k")
     eps = 1e-3
@@ -1135,13 +1137,13 @@ def warmup_jit():
         (np.cos(np.linspace(0, np.pi * 2, npts, endpoint=False)) - 0.90) * 25
     )
 
-    fext = force_curve(red_extend, delta[:split], 1, 10, 1, 1, 10, 0, 1)
-    fret = force_curve(red_retract, delta[split:], 1, 10, 1, 1, 10, 0, 1)
-    fext = force_curve(red_extend, delta[:split], 1, 10, 0, 1, 10, 0, 1)
-    fret = force_curve(red_retract, delta[split:], 1, 10, 0, 1, 10, 0, 1)
+    fext = force_curve(red_extend, delta[:split], 1, 10, 1, 1, 10, 0, 0, 1)
+    fret = force_curve(red_retract, delta[split:], 1, 10, 1, 1, 10, 0, 0, 1)
+    fext = force_curve(red_extend, delta[:split], 1, 10, 0, 1, 10, 0, 0, 1)
+    fret = force_curve(red_retract, delta[split:], 1, 10, 0, 1, 10, 0, 0, 1)
     maxforce = fret[slice(len(fret) // 25)].mean()
-    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 0, 1, 10, 0, 1)
-    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, 1, 10, 0, 1)
+    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 0, 1, 10, 0, 0, 1)
+    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, 1, 10, 0, 0, 1)
     image = np.zeros((64, 64), dtype=np.float32)
     gauss3x3(image)
     median3x1(image)

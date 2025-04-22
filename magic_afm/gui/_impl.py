@@ -390,7 +390,7 @@ class DemoForceVolumeFile(AsyncFVFile):
 
     def get_curve(self, r, c, trace=None, sync_dist=None):
         gen = np.random.default_rng(seed=(int(r), int(c)))
-        parms = (self.fvfile.k, 20, 0, 0.1, 2, 0, 1)
+        parms = (self.fvfile.k, 20, 0, 0.1, 2, 0, 0, 1)
         deltaext = self.delta[: self.delta.size // 2]
         deltaret = self.delta[self.delta.size // 2 :]
         fext = calculation.force_curve(calculation.red_extend, deltaext, *parms)
@@ -2267,7 +2267,7 @@ def calculate_force_data(
         z_true_surface,
         mindelta,
         a_c,
-    ) = calculation.calc_def_ind_ztru_ac(d, *beta[:5], split=split, **optionsdict)
+    ) = calculation.calc_def_ind_ztru_ac(d, beta, split=split, **optionsdict)
     return ForceCurveData(
         zxr=zxr,
         dxr=dxr,
