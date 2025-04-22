@@ -1846,26 +1846,30 @@ class ForceVolumeController:
         async with self.spinner_scope():
             with trio.CancelScope() as cancel_scope:
                 self.plot_curve_cancels_pending.add(cancel_scope)
-
-                # Calculation phase
-                # Do a few long-running jobs, likely to be canceled
-                force_curve = await trio.to_thread.run_sync(
-                    self.opened_fvol.get_curve,
-                    point.r,
-                    point.c,
-                    options.trace,
-                    options.sync_dist,
-                )
-                force_curve_data = await trio.to_thread.run_sync(
-                    calculate_force_data,
-                    *force_curve,
-                    self.opened_fvol.fvfile.t_step,
-                    options,
-                    self.opened_fvol.initial_parameters,
-                    trio.from_thread.check_cancelled,
-                )
-                del force_curve  # contained in data
-            self.plot_curve_cancels_pending.discard(cancel_scope)
+                try:
+                    # Calculation phase
+                    # Do a few long-running jobs, likely to be canceled
+                    force_curve = await trio.to_thread.run_sync(
+                        self.opened_fvol.get_curve,
+                        point.r,
+                        point.c,
+                        options.trace,
+                        options.sync_dist,
+                    )
+                    force_curve_data = await trio.to_thread.run_sync(
+                        calculate_force_data,
+                        *force_curve,
+                        self.opened_fvol.fvfile.t_step,
+                        options,
+                        self.opened_fvol.initial_parameters,
+                        trio.from_thread.check_cancelled,
+                    )
+                    del force_curve  # contained in data
+                except Exception:
+                    traceback.print_exc()
+                    return
+                finally:
+                    self.plot_curve_cancels_pending.discard(cancel_scope)
 
             if cancel_scope.cancelled_caught:
                 self.existing_points.discard(point)
