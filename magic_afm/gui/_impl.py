@@ -1416,7 +1416,7 @@ class ForceVolumeTkDisplay:
         try:
             self._opts = ForceCurveOptions(
                 fit_mode=calculation.FitMode(self.fit_intvar.get()),
-                fit_fix=~calculation.FitFix(0)&~calculation.FitFix.LJ_SCALE,
+                fit_fix=~calculation.FitFix(0) & ~calculation.FitFix.LJ_SCALE,
                 disp_kind=DispKind(self.disp_kind_intvar.get()),
                 k=float(self.spring_const_strvar.get()),
                 defl_sens=float(self.defl_sens_strvar.get()),
@@ -2267,9 +2267,7 @@ def calculate_force_data(
         z_true_surface,
         mindelta,
         a_c,
-    ) = calculation.calc_def_ind_ztru_ac(
-        d * options.k, *beta[:5], split=split, **optionsdict
-    )
+    ) = calculation.calc_def_ind_ztru_ac(d, *beta[:5], split=split, **optionsdict)
     return ForceCurveData(
         zxr=zxr,
         dxr=dxr,

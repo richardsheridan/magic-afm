@@ -986,11 +986,12 @@ def fitfun(
 
 
 def calc_def_ind_ztru_ac(
-    force, tau, M, fc, delta_shift, lj_delta_scale, radius, k, fit_mode, **kwargs
+    d, tau, M, fc, delta_shift, lj_delta_scale, radius, k, fit_mode, **kwargs
 ):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters."""
 
     assert fit_mode
+    force = d * k
     n_pts_max = len(force) // 25
     if fit_mode == FitMode.EXTEND:
         maxforce = force[-n_pts_max:].mean()
