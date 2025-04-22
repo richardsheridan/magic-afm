@@ -894,7 +894,6 @@ def fitfun(
     p0=None,
     **kwargs
 ):
-    z_poly_basis = np.vander(z, 2, increasing=True)
     delta = z - d
     force = d * k
 
@@ -929,8 +928,6 @@ def fitfun(
     )
     bounds = np.transpose(bounds)
     p0 = np.clip(p0, *bounds)
-    if not fit_fix & FitFix.HYDRODYNAMIC_DRAG or p0.item(-1):
-        z_velocity = np.gradient(z)
 
     assert fit_mode
     if fit_mode == FitMode.EXTEND:
@@ -956,12 +953,14 @@ def fitfun(
         dout = np.zeros_like(d)
         fc_parms = parms[:5]
         poly_coefs = parms[5 : 5 + 2]
+        z_poly_basis = np.vander(z, 2, increasing=True)
         dout -= virtual_deflection(z_poly_basis, poly_coefs)
         li_parms = parms[7 : 7 + 3]
         if np.any(li_parms[1:]):
             dout -= laser_interference(z, *li_parms)
         drag_factor = parms[-1]
         if drag_factor:
+            z_velocity = np.gradient(z)
             dout -= hydrodynamic_drag(z_velocity, drag_factor)
         dout += root_df_sane(
             lambda d: force_curve(red_curve, z - d, k, radius, *fc_parms) / k - d,
