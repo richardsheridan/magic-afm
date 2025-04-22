@@ -875,6 +875,8 @@ def rapid_forcecurve_estimate(delta, force, radius):
 ################## Fitting ####################
 ###############################################
 
+from ._vendored_root import root_df_sane
+
 
 def fitfun(
     z,
@@ -949,21 +951,23 @@ def fitfun(
 
     def partial_force_curve(z, *parms):
         cancel_poller()
-        d_artifact = np.zeros_like(d)
+        dout = np.zeros_like(d)
         fc_parms = parms[:5]
         poly_coefs = parms[5 : 5 + 2]
-        d_artifact += virtual_deflection(z_poly_basis, poly_coefs)
+        dout -= virtual_deflection(z_poly_basis, poly_coefs)
         li_parms = parms[7 : 7 + 3]
         if np.any(li_parms[1:]):
-            d_artifact += laser_interference(z, *li_parms)
+            dout -= laser_interference(z, *li_parms)
         drag_factor = parms[-1]
         if drag_factor:
             z_velocity = np.gradient(z)
-            d_artifact += hydrodynamic_drag(z_velocity, drag_factor)
-        delta = z - (d - d_artifact)
-        force_shift = d_artifact * k
-        fout = force_curve(red_curve, delta, k, radius, *fc_parms) - force_shift
-        return fout / k
+            dout -= hydrodynamic_drag(z_velocity, drag_factor)
+        dout += root_df_sane(
+            lambda d: force_curve(red_curve, z - d, k, radius, *fc_parms) / k - d,
+            d + dout,
+            ftol=1e-5,
+        )
+        return dout
 
     try:
         beta, cov, infodict, *_ = curve_fit(
