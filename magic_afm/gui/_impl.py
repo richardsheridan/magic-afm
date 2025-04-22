@@ -173,7 +173,6 @@ class ForceCurveData:
     # everything else set only if fit
     beta: Optional[np.ndarray] = None
     beta_err: Optional[np.ndarray] = None
-    calc_fun: Optional[Callable] = None
     fit_mode: Optional[calculation.FitMode] = None
     f_fit: Optional[np.ndarray] = None
     d_fit: Optional[np.ndarray] = None
@@ -2239,14 +2238,13 @@ def calculate_force_data(
 
     cancel_poller()
     optionsdict = asdict(options)
-    beta, beta_err, sse, calc_fun = calculation.fitfun(
+    beta, beta_err, sse, d_fit = calculation.fitfun(
         z,
         d,
         cancel_poller=cancel_poller,
         split=split,
         **optionsdict,
     )
-    d_fit = calc_fun(z, *beta)
     f_fit = d_fit * options.k
     cancel_poller()
 
@@ -2259,6 +2257,7 @@ def calculate_force_data(
         k_new,
         cancel_poller=cancel_poller,
         split=split,
+        p0=beta,
         **optionsdict,
     )[0]
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -2280,7 +2279,6 @@ def calculate_force_data(
         txr=txr,
         beta=beta,
         beta_err=beta_err,
-        calc_fun=calc_fun,
         fit_mode=options.fit_mode,
         f_fit=f_fit,
         d_fit=d_fit,

@@ -36,6 +36,9 @@ except ImportError:
 else:
     abs = np.fabs
 
+from ._vendored_lstsq import leastsq
+from ._vendored_root import root_df_sane
+
 
 ###############################################
 ################# Constants ###################
@@ -524,9 +527,6 @@ def mygradient(f, d):
     return out
 
 
-from ._vendored_lstsq import leastsq
-
-
 def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
     """Wrap to match api of scipy.optimize.curve_fit
 
@@ -875,8 +875,6 @@ def rapid_forcecurve_estimate(delta, force, radius):
 ################## Fitting ####################
 ###############################################
 
-from ._vendored_root import root_df_sane
-
 
 def fitfun(
     z,
@@ -965,8 +963,8 @@ def fitfun(
             dout -= hydrodynamic_drag(z_velocity, drag_factor)
         dout += root_df_sane(
             lambda d: force_curve(red_curve, z - d, k, radius, *fc_parms) / k - d,
-            d + dout,
-            ftol=1e-5,
+            x0=d + dout,
+            ftol=1e-3,
         )
         return dout
 
@@ -974,16 +972,18 @@ def fitfun(
         beta, cov, infodict, *_ = curve_fit(
             partial_force_curve, z, d, p0=p0, bounds=bounds
         )
-        sse = infodict["chisq"]
         beta_err = infodict["uncertainties"]
+        sse = infodict["chisq"]
+        d_fit = infodict["fvec"]
     except Exception:
         traceback.print_exc()
         print(p0)
         beta = np.full_like(p0, np.nan)
         beta_err = beta
         sse = np.nan
+        d_fit = np.nan
 
-    return beta, beta_err, sse, partial_force_curve
+    return beta, beta_err, sse, d_fit
 
 
 def calc_def_ind_ztru_ac(d, beta, radius, k, fit_mode, **kwargs):
