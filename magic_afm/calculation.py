@@ -78,11 +78,15 @@ class FitMode(enum.IntEnum):
 
 
 class FitFix(enum.IntFlag, boundary=enum.STRICT):
+    RADIUS = enum.auto()
     TAU = enum.auto()
     LJ_SCALE = enum.auto()
     VIRTUAL_DEFLECTION = enum.auto()
     LASER_INTERFERENCE = enum.auto()
     HYDRODYNAMIC_DRAG = enum.auto()
+
+
+FitFix.DEFAULTS = ~FitFix(0) & ~FitFix.LJ_SCALE
 
 
 ###############################################
@@ -882,6 +886,7 @@ def fitfun(
     k,
     radius,
     tau,
+    M,
     vd,
     lj_scale,
     drag,
@@ -902,6 +907,7 @@ def fitfun(
             delta, force, radius
         )
         p0 = (
+            radius,
             tau,
             M_guess,
             fc_guess,
@@ -914,8 +920,9 @@ def fitfun(
         )
 
     bounds = (
+        (radius,) * 2 if fit_fix & FitFix.RADIUS else (0.0, np.inf),
         (tau,) * 2 if fit_fix & FitFix.TAU else (0.0, 1.0),
-        (0.0, np.inf),  # M
+        (M,) * 2 if not (fit_fix & FitFix.RADIUS) else (0.0, np.inf),
         (0.0, np.inf),  # fc
         (np.min(delta), np.max(delta)),  # delta_shift
         (np.min(force), np.max(force)),  # force_shift
@@ -928,6 +935,7 @@ def fitfun(
     )
     bounds = np.transpose(bounds)
     p0 = np.clip(p0, *bounds)
+    print(bounds)
 
     assert fit_mode
     if fit_mode == FitMode.EXTEND:
@@ -951,10 +959,10 @@ def fitfun(
     def partial_force_curve(z, *parms):
         cancel_poller()
         dout = np.zeros_like(d)
-        fc_parms = parms[:6]
-        vd = parms[6]
+        fc_parms = parms[:7]
+        vd = parms[7]
         dout -= z * vd
-        li_parms = parms[7 : 7 + 3]
+        li_parms = parms[8 : 8 + 3]
         if np.any(li_parms[1:]):
             dout -= laser_interference(z, *li_parms)
         drag_factor = parms[-1]
@@ -962,7 +970,7 @@ def fitfun(
             z_velocity = np.gradient(z)
             dout -= hydrodynamic_drag(z_velocity, drag_factor)
         dout += root_df_sane(
-            lambda d: force_curve(red_curve, z - d, k, radius, *fc_parms) / k - d,
+            lambda d: force_curve(red_curve, z - d, k, *fc_parms) / k - d,
             x0=d + dout,
             ftol=1e-3,
         )
@@ -986,10 +994,10 @@ def fitfun(
     return beta, beta_err, sse, d_fit
 
 
-def calc_def_ind_ztru_ac(d, beta, radius, k, fit_mode, **kwargs):
+def calc_def_ind_ztru_ac(d, beta, k, fit_mode, **kwargs):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters."""
 
-    tau, M, fc, delta_shift, force_shift, lj_delta_scale, vd, *li, drag = beta
+    radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale, vd, *li, drag = beta
 
     assert fit_mode
     force = d * k

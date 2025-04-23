@@ -156,6 +156,7 @@ class ForceCurveOptions:
     sync_dist: float | None
     radius: float
     tau: float
+    M: float
     lj_scale: float
     vd: float
     li_wn: float
@@ -1277,17 +1278,25 @@ class ForceVolumeTkDisplay:
         segment_labelframe.grid(row=1, column=1, sticky="EW")
 
         fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
-        parm_label_name = ttk.Label(fit_labelframe,text="Name")
+        parm_label_name = ttk.Label(fit_labelframe, text="Name")
         parm_label_name.grid(row=0, column=0, sticky="W")
         parm_label_fix = ttk.Label(fit_labelframe, text="Fix?")
         parm_label_fix.grid(row=0, column=1, sticky="EW")
         parm_label_val = ttk.Label(fit_labelframe, text="Value")
         parm_label_val.grid(row=0, column=2, sticky="E")
         self.mod_strvar = self._add_parm(
-            fit_labelframe, 1, "log10(M (Pa))", default=(6.0)
+            fit_labelframe,
+            1,
+            "log10(M (Pa))",
+            default=(6.0),
+            fitfix=calculation.FitFix.RADIUS,
         )
         self.radius_strvar = self._add_parm(
-            fit_labelframe, 2, "Tip radius (nm)", default=20.0
+            fit_labelframe,
+            2,
+            "Tip radius (nm)",
+            default=20.0,
+            fitfix=calculation.FitFix.RADIUS,
         )
         self.tau_strvar = self._add_parm(
             fit_labelframe,
@@ -1419,10 +1428,21 @@ class ForceVolumeTkDisplay:
         label.grid(row=row, column=0, sticky="W")
         label.grid_columnconfigure(0, weight=1)
         if fitfix:
-            chkvar = tk.IntVar(frame, fitfix != calculation.FitFix.LJ_SCALE)
-            chkbox = ttk.Checkbutton(frame, variable=chkvar)
-            chkbox.grid(row=row, column=1)  # , sticky="E")
+            if fitfix & calculation.FitFix.RADIUS:
+                # special case radio button pair for modulus and radius
+                radius = 0 in self.chkboxes
+                if radius:
+                    chkvar = self.chkboxes[0][0]
+                else:
+                    # modulus must come first so radius button has nonzero value
+                    chkvar = tk.IntVar(frame, True)  # default to fix radius
+                    fitfix = 0  # don't modify val when reading checkboxes for modulus
+                chkbox = ttk.Radiobutton(frame, variable=chkvar, value=radius)
+            else:
+                chkvar = tk.IntVar(frame, bool(fitfix & calculation.FitFix.DEFAULTS))
+                chkbox = ttk.Checkbutton(frame, variable=chkvar)
             self.chkboxes[fitfix] = chkvar, chkbox
+            chkbox.grid(row=row, column=1)
         strvar = tk.StringVar(frame)
         sbox = ttk.Spinbox(
             frame,
@@ -1453,7 +1473,7 @@ class ForceVolumeTkDisplay:
         for flag, (var, box) in self.chkboxes.items():
             if var.get():
                 val |= flag
-        return calculation.FitFix(val)
+        return val
 
     def destroy(self):
         for tkvar, cbname in self._traces:
@@ -1466,12 +1486,13 @@ class ForceVolumeTkDisplay:
         try:
             self._opts = ForceCurveOptions(
                 fit_mode=calculation.FitMode(self.fit_intvar.get()),
-                fit_fix=self._read_chkboxes(),
+                fit_fix=calculation.FitFix(self._read_chkboxes()),
                 disp_kind=DispKind(self.disp_kind_intvar.get()),
                 k=float(self.spring_const_strvar.get()),
                 defl_sens=float(self.defl_sens_strvar.get()),
                 radius=float(self.radius_strvar.get()),
                 tau=float(self.tau_strvar.get()),
+                M=10 ** (float(self.mod_strvar.get())-9),
                 lj_scale=float(self.lj_scale_strvar.get()),
                 vd=float(self.vd_strvar.get()),
                 li_wn=float(self.li_wn_strvar.get()),
@@ -2059,7 +2080,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
     assert point_data
     if len(point_data) == 1:
         data: ForceCurveData = next(iter(point_data.values()))
-        exp = np.log10(data.beta[1])
+        exp = np.log10(data.beta[2])
         prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get(
             (-exp + 2.7) // 3, ("", 1)
         )
@@ -2076,9 +2097,9 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
         table: Table = ax.table(
             [
                 [
-                    "{:.2f}±{:.2f}".format(data.beta[1] * fac, data.beta_err[1] * fac),
+                    "{:.2f}±{:.2f}".format(data.beta[2] * fac, data.beta_err[2] * fac),
                     "{:.2e}".format(data.sens[1]),
-                    "{:.2f}±{:.2f}".format(data.beta[2], data.beta_err[2]),
+                    "{:.2f}±{:.2f}".format(data.beta[3], data.beta_err[3]),
                     "{:.2f}".format(data.defl),
                     "{:.2f}".format(data.ind),
                     "{:.2f}".format(data.defl / data.ind),
@@ -2095,9 +2116,9 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
         m, sens, fadh, defl, ind, rat, a_c = np.transpose(
             [
                 (
-                    data.beta[1],
-                    data.sens[1],
                     data.beta[2],
+                    data.sens[1],
+                    data.beta[3],
                     data.defl,
                     data.ind,
                     data.defl / data.ind,
