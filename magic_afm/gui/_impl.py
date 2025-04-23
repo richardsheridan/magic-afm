@@ -1237,6 +1237,10 @@ class ForceVolumeTkDisplay:
         preproc_labelframe.grid_columnconfigure(1, weight=1)
 
         fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
+        self.fitfix_intvar = tk.IntVar(
+            fit_labelframe, value=~calculation.FitFix(0) & ~calculation.FitFix.LJ_SCALE
+        )
+        self.chkboxes = {}
         self.fit_intvar = tk.IntVar(
             fit_labelframe, value=calculation.FitMode.SKIP.value
         )
@@ -1274,7 +1278,13 @@ class ForceVolumeTkDisplay:
             fit_labelframe, 2, "Tip radius (nm)", default=20.0
         )
         self.tau_strvar = self._add_parm(
-            fit_labelframe, 3, "DMT-JKR (0-1)", to=1, increment=0.05, format="%0.2f"
+            fit_labelframe,
+            3,
+            "DMT-JKR (0-1)",
+            to=1,
+            increment=0.05,
+            format="%0.2f",
+            fitfix=calculation.FitFix.TAU,
         )
         self.vd_strvar = self._add_parm(
             fit_labelframe,
@@ -1283,12 +1293,29 @@ class ForceVolumeTkDisplay:
             from_=-1e5,
             to=1e5,
             increment=0.1,
+            fitfix=calculation.FitFix.VIRTUAL_DEFLECTION,
         )
         self.lj_scale_strvar = self._add_parm(
-            fit_labelframe, 5, "Lennard-Jones", from_=-6, to=6
+            fit_labelframe,
+            5,
+            "Lennard-Jones",
+            from_=-6,
+            to=6,
+            fitfix=calculation.FitFix.LJ_SCALE,
         )
-        self.drag_strvar = self._add_parm(fit_labelframe, 6, "Hydrodynamic drag")
-        self.li_wn_strvar = self._add_parm(fit_labelframe, 7, "Laser Interf.", 1.0)
+        self.drag_strvar = self._add_parm(
+            fit_labelframe,
+            6,
+            "Hydrodyn. drag",
+            fitfix=calculation.FitFix.HYDRODYNAMIC_DRAG,
+        )
+        self.li_wn_strvar = self._add_parm(
+            fit_labelframe,
+            7,
+            "Laser Interf.",
+            1.0,
+            fitfix=calculation.FitFix.LASER_INTERFERENCE,
+        )
 
         fit_labelframe.grid(row=1, column=1, rowspan=3, sticky="EW")
 
@@ -1375,9 +1402,16 @@ class ForceVolumeTkDisplay:
         to=1e4,
         increment=0.1,
         format="%0.1f",
+        fitfix=calculation.FitFix(0),
     ):
         label = ttk.Label(frame, text=name)
         label.grid(row=row, column=0, columnspan=2, sticky="W")
+        label.grid_columnconfigure(0, weight=1)
+        if fitfix:
+            chkvar = tk.IntVar(frame, fitfix != calculation.FitFix.LJ_SCALE)
+            chkbox = ttk.Checkbutton(frame, variable=chkvar)
+            chkbox.grid(row=row, column=2)  # , sticky="E")
+            self.chkboxes[fitfix] = chkvar, chkbox
         strvar = tk.StringVar(frame)
         sbox = ttk.Spinbox(
             frame,
@@ -1400,9 +1434,15 @@ class ForceVolumeTkDisplay:
 
         self._add_trace(strvar, sbox_callback)
         sbox.set(default)
-        sbox.grid(row=row, column=2, sticky="E")
-        sbox.grid_columnconfigure(0, weight=1)
+        sbox.grid(row=row, column=3, sticky="E")
         return strvar
+
+    def _read_chkboxes(self):
+        val = 0
+        for flag, (var, box) in self.chkboxes.items():
+            if var.get():
+                val |= flag
+        return calculation.FitFix(val)
 
     def destroy(self):
         for tkvar, cbname in self._traces:
@@ -1415,7 +1455,7 @@ class ForceVolumeTkDisplay:
         try:
             self._opts = ForceCurveOptions(
                 fit_mode=calculation.FitMode(self.fit_intvar.get()),
-                fit_fix=~calculation.FitFix(0) & ~calculation.FitFix.LJ_SCALE,
+                fit_fix=self._read_chkboxes(),
                 disp_kind=DispKind(self.disp_kind_intvar.get()),
                 k=float(self.spring_const_strvar.get()),
                 defl_sens=float(self.defl_sens_strvar.get()),
