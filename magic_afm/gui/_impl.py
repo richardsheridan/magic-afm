@@ -1202,7 +1202,7 @@ class ForceVolumeTkDisplay:
             padding=4,
         )
         disp_deltaf_button.pack(side="top")
-        disp_labelframe.grid(row=0, column=0)
+        disp_labelframe.grid(row=0, column=0, rowspan=2)
 
         preproc_labelframe = ttk.Labelframe(self.options_frame, text="Preprocessing")
         self.defl_sens_strvar = self._add_parm(
@@ -1236,44 +1236,56 @@ class ForceVolumeTkDisplay:
         preproc_labelframe.grid(row=0, column=1, sticky="EW")
         preproc_labelframe.grid_columnconfigure(1, weight=1)
 
-        fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
+        segment_labelframe = ttk.Labelframe(self.options_frame, text="Fit segment")
         self.fitfix_intvar = tk.IntVar(
-            fit_labelframe, value=~calculation.FitFix(0) & ~calculation.FitFix.LJ_SCALE
+            segment_labelframe,
+            value=~calculation.FitFix(0) & ~calculation.FitFix.LJ_SCALE,
         )
         self.chkboxes = {}
         self.fit_intvar = tk.IntVar(
-            fit_labelframe, value=calculation.FitMode.SKIP.value
+            segment_labelframe, value=calculation.FitMode.SKIP.value
         )
         self._add_trace(self.fit_intvar, self.change_fit_kind_callback)
         fit_skip_button = ttk.Radiobutton(
-            fit_labelframe,
+            segment_labelframe,
             text="Skip",
             value=calculation.FitMode.SKIP.value,
             variable=self.fit_intvar,
         )
         fit_skip_button.grid(row=1, column=2, sticky="W")
         fit_ext_button = ttk.Radiobutton(
-            fit_labelframe,
+            segment_labelframe,
             text="Extend",
             value=calculation.FitMode.EXTEND.value,
             variable=self.fit_intvar,
         )
         fit_ext_button.grid(row=0, column=0, sticky="W")
         fit_ret_button = ttk.Radiobutton(
-            fit_labelframe,
+            segment_labelframe,
             text="Retract",
             value=calculation.FitMode.RETRACT.value,
             variable=self.fit_intvar,
         )
         fit_ret_button.grid(row=1, column=0, sticky="W")
         fit_both_button = ttk.Radiobutton(
-            fit_labelframe,
+            segment_labelframe,
             text="Both",
             value=calculation.FitMode.BOTH.value,
             variable=self.fit_intvar,
         )
         fit_both_button.grid(row=0, column=2, sticky="W")
+        segment_labelframe.grid(row=1, column=1, sticky="EW")
 
+        fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
+        parm_label_name = ttk.Label(fit_labelframe,text="Name")
+        parm_label_name.grid(row=0, column=0, sticky="W")
+        parm_label_fix = ttk.Label(fit_labelframe, text="Fix?")
+        parm_label_fix.grid(row=0, column=1, sticky="EW")
+        parm_label_val = ttk.Label(fit_labelframe, text="Value")
+        parm_label_val.grid(row=0, column=2, sticky="E")
+        self.mod_strvar = self._add_parm(
+            fit_labelframe, 1, "log10(M (Pa))", default=(6.0)
+        )
         self.radius_strvar = self._add_parm(
             fit_labelframe, 2, "Tip radius (nm)", default=20.0
         )
@@ -1316,8 +1328,7 @@ class ForceVolumeTkDisplay:
             1.0,
             fitfix=calculation.FitFix.LASER_INTERFERENCE,
         )
-
-        fit_labelframe.grid(row=1, column=1, rowspan=3, sticky="EW")
+        fit_labelframe.grid(row=2, column=1, rowspan=2, sticky="EW")
 
         self.calc_props_button = ttk.Button(
             self.options_frame, text="Calculate Property Maps", state="disabled"
@@ -1405,12 +1416,12 @@ class ForceVolumeTkDisplay:
         fitfix=calculation.FitFix(0),
     ):
         label = ttk.Label(frame, text=name)
-        label.grid(row=row, column=0, columnspan=2, sticky="W")
+        label.grid(row=row, column=0, sticky="W")
         label.grid_columnconfigure(0, weight=1)
         if fitfix:
             chkvar = tk.IntVar(frame, fitfix != calculation.FitFix.LJ_SCALE)
             chkbox = ttk.Checkbutton(frame, variable=chkvar)
-            chkbox.grid(row=row, column=2)  # , sticky="E")
+            chkbox.grid(row=row, column=1)  # , sticky="E")
             self.chkboxes[fitfix] = chkvar, chkbox
         strvar = tk.StringVar(frame)
         sbox = ttk.Spinbox(
@@ -1434,7 +1445,7 @@ class ForceVolumeTkDisplay:
 
         self._add_trace(strvar, sbox_callback)
         sbox.set(default)
-        sbox.grid(row=row, column=3, sticky="E")
+        sbox.grid(row=row, column=2, sticky="E")
         return strvar
 
     def _read_chkboxes(self):
