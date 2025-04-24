@@ -1443,6 +1443,7 @@ class ForceVolumeTkDisplay:
                 chkbox = ttk.Checkbutton(frame, variable=chkvar)
             self.chkboxes[fitfix] = chkvar, chkbox
             chkbox.grid(row=row, column=1)
+            self._add_trace(chkvar, lambda *a: self.redraw_send_chan.send_nowait(False))
         strvar = tk.StringVar(frame)
         sbox = ttk.Spinbox(
             frame,
@@ -1492,7 +1493,7 @@ class ForceVolumeTkDisplay:
                 defl_sens=float(self.defl_sens_strvar.get()),
                 radius=float(self.radius_strvar.get()),
                 tau=float(self.tau_strvar.get()),
-                M=10 ** (float(self.mod_strvar.get())-9),
+                M=10 ** (float(self.mod_strvar.get()) - 9),
                 lj_scale=float(self.lj_scale_strvar.get()),
                 vd=float(self.vd_strvar.get()),
                 li_wn=float(self.li_wn_strvar.get()),
