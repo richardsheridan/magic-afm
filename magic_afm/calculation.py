@@ -935,7 +935,6 @@ def fitfun(
     )
     bounds = np.transpose(bounds)
     p0 = np.clip(p0, *bounds)
-    print(bounds)
 
     assert fit_mode
     if fit_mode == FitMode.EXTEND:
