@@ -2190,25 +2190,25 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
         plot_ax.set_xlabel("Indentation depth (nm)")
         plot_ax.set_ylabel("Indentation force (nN)")
         if options.fit_mode:
-            f_fit = data.f_fit - data.beta[4]
+            f_fit = data.f_fit - data.beta[5]
             aex(
                 plot_ax.plot(
-                    data.deltaxr[0] - data.beta[3],
-                    data.fxr[0] - data.beta[4],
+                    data.deltaxr[0] - data.beta[4],
+                    data.fxr[0] - data.beta[5],
                     label="Extend",
                 )
             )
             aex(
                 plot_ax.plot(
-                    data.deltaxr[1] - data.beta[3],
-                    data.fxr[1] - data.beta[4],
+                    data.deltaxr[1] - data.beta[4],
+                    data.fxr[1] - data.beta[5],
                     label="Retract",
                 )
             )
             if options.fit_mode == calculation.FitMode.BOTH:
                 aex(
                     plot_ax.plot(
-                        np.concatenate(data.deltaxr) - data.beta[3],
+                        np.concatenate(data.deltaxr) - data.beta[4],
                         f_fit,
                         "--",
                         label="Model",
@@ -2217,29 +2217,26 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
             else:
                 aex(
                     plot_ax.plot(
-                        data.deltaxr[options.fit_mode - 1] - data.beta[3],
+                        data.deltaxr[options.fit_mode - 1] - data.beta[4],
                         f_fit,
                         "--",
                         label="Model",
                     )
                 )
 
-            mopts = dict(
-                marker="X",
-                markersize=8,
-                linestyle="",
-                markeredgecolor="k",
-                markerfacecolor="k",
-            )
             aex(
                 plot_ax.plot(
                     [
-                        data.ind + data.mindelta - data.beta[3],
-                        data.mindelta - data.beta[3],
+                        data.ind + data.mindelta - data.beta[4],
+                        data.mindelta - data.beta[4],
                     ],
-                    [data.defl * options.k - data.beta[2], -data.beta[2]],
+                    [data.defl * options.k - data.beta[3], -data.beta[3]],
                     label="Max/Crit",
-                    **mopts,
+                    marker="X",
+                    markersize=8,
+                    linestyle="",
+                    markeredgecolor="k",
+                    markerfacecolor="k",
                 )
             )
         else:
