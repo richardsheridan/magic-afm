@@ -2101,7 +2101,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
                     "{:.2f}±{:.2f}".format(
                         float(data.parms["M"] * fac), float(data.parms_err["M"] * fac)
                     ),
-                    "{:.2e}".format(float(data.sens["M"])),
+                    "{:.2e}".format(float(data.sens)),
                     "{:.2f}±{:.2f}".format(
                         float(data.parms["fc"]), float(data.parms_err["fc"])
                     ),
@@ -2337,10 +2337,8 @@ def calculate_force_data(
         p0=parms,
         **optionsdict,
     )[0]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        sens = (
-            (parms_perturb.view("f4") - parms.view("f4")) / parms.view("f4") / eps
-        ).view(calculation.PARAMS_DTYPE)
+
+    sens = (parms_perturb["M"] - parms["M"]) / parms["M"] / eps
     optionsdict = asdict(options)
     optionsdict.pop("tau")
     (

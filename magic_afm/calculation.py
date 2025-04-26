@@ -68,7 +68,7 @@ PROPERTY_UNITS_DICT = {
 
 PROPERTY_DTYPE = np.dtype([(name, "f4") for name in PROPERTY_UNITS_DICT])
 
-PARAMS_UNITS_DICT = {
+PARMS_UNITS_DICT = {
     "radius": "m",
     "tau": None,
     "M": "Pa",
@@ -83,7 +83,7 @@ PARAMS_UNITS_DICT = {
     "drag": "s",
 }
 
-PARAMS_DTYPE = np.dtype([(name, "f4") for name in PARAMS_UNITS_DICT])
+PARMS_DTYPE = np.dtype([(name, "f4") for name in PARMS_UNITS_DICT])
 
 
 @enum.unique
@@ -936,7 +936,7 @@ def fitfun(
             drag,
         )
     elif isinstance(p0, np.ndarray):
-        if p0.dtype == PARAMS_DTYPE:
+        if p0.dtype == PARMS_DTYPE:
             p0 = p0.item()
 
     bounds = (
@@ -1004,17 +1004,17 @@ def fitfun(
         d_fit = infodict["fvec"]
 
         # pack up params, ensuring all fields are filled in order
-        params = beta.astype("f4").view(dtype=PARAMS_DTYPE)
-        params_err = beta_err.astype("f4").view(dtype=PARAMS_DTYPE)
+        parms = beta.astype("f4").view(dtype=PARMS_DTYPE)
+        parms_err = beta_err.astype("f4").view(dtype=PARMS_DTYPE)
     except Exception:
         traceback.print_exc()
         print(p0)
-        params = np.void(np.nan, dtype=PARAMS_DTYPE)
-        params_err = np.void(np.nan, dtype=PARAMS_DTYPE)
+        parms = np.void(np.nan, dtype=PARMS_DTYPE)
+        parms_err = np.void(np.nan, dtype=PARMS_DTYPE)
         sse = np.nan
         d_fit = np.nan
 
-    return params, params_err, sse, d_fit
+    return parms, parms_err, sse, d_fit
 
 
 def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
@@ -1099,25 +1099,25 @@ def perturb_k(d, k, epsilon=1e-3):
 def calc_properties_imap(z_d_s_rc, **kwargs):
     z, d, split, rc = z_d_s_rc
     kwargs["split"] = split
-    params, params_err, sse, _ = fitfun(z, d, **kwargs)
-    if np.any(np.isnan(params.item())):
+    parms, parms_err, sse, _ = fitfun(z, d, **kwargs)
+    if np.any(np.isnan(parms.item())):
         return rc, None
     (deflection, indentation, z_true_surface, mindelta, a_c) = calc_def_ind_ztru_ac(
-        d, params, **kwargs
+        d, parms, **kwargs
     )
     k = kwargs.pop("k")
     eps = 1e-3
-    params_perturb, *_ = fitfun(z, *perturb_k(d, k, eps), p0=params, **kwargs)
+    params_perturb, *_ = fitfun(z, *perturb_k(d, k, eps), p0=parms, **kwargs)
     if np.any(np.isnan(params_perturb.item())):
         return rc, None
-    ind_mod_sens_k = (params_perturb["M"] - params["M"]) / params["M"] / eps
+    ind_mod_sens_k = (params_perturb["M"] - parms["M"]) / parms["M"] / eps
 
     # pack up properties, ensuring all fields are filled in order
     properties = np.void(np.nan, dtype=PROPERTY_DTYPE)
-    properties["IndentationModulus"] = params["M"] * 1e9
-    properties["AdhesionForce"] = params["fc"] / 1e9
-    properties["IndentationModulusErr"] = params_err["M"] * 1e9
-    properties["AdhesionForceErr"] = params_err["fc"] / 1e9
+    properties["IndentationModulus"] = parms["M"] * 1e9
+    properties["AdhesionForce"] = parms["fc"] / 1e9
+    properties["IndentationModulusErr"] = parms_err["M"] * 1e9
+    properties["AdhesionForceErr"] = parms_err["fc"] / 1e9
     properties["Deflection"] = deflection / 1e9
     properties["Indentation"] = indentation / 1e9
     properties["ContactRadius"] = a_c / 1e9
