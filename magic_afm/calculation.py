@@ -68,6 +68,23 @@ PROPERTY_UNITS_DICT = {
 
 PROPERTY_DTYPE = np.dtype([(name, "f4") for name in PROPERTY_UNITS_DICT])
 
+PARAMS_UNITS_DICT = {
+    "radius": "m",
+    "tau": None,
+    "M": "Pa",
+    "fc": "N",
+    "delta_shift": "m",
+    "force_shift": "N",
+    "lj_delta_scale": None,
+    "vd": None,
+    "li_wn": "wn",
+    "li_ra": "m",
+    "li_ia": "m",
+    "drag": "s",
+}
+
+PARAMS_DTYPE = np.dtype([(name, "f4") for name in PARAMS_UNITS_DICT])
+
 
 @enum.unique
 class FitMode(enum.IntEnum):
@@ -918,6 +935,9 @@ def fitfun(
             *laser_guesses,
             drag,
         )
+    elif isinstance(p0, np.ndarray):
+        if p0.dtype == PARAMS_DTYPE:
+            p0 = p0.item()
 
     bounds = (
         (radius,) * 2 if fit_fix & FitFix.RADIUS else (0.0, np.inf),
@@ -982,21 +1002,23 @@ def fitfun(
         beta_err = infodict["uncertainties"]
         sse = infodict["chisq"]
         d_fit = infodict["fvec"]
+
+        # pack up params, ensuring all fields are filled in order
+        params = beta.astype("f4").view(dtype=PARAMS_DTYPE)
+        params_err = beta_err.astype("f4").view(dtype=PARAMS_DTYPE)
     except Exception:
         traceback.print_exc()
         print(p0)
-        beta = np.full_like(p0, np.nan)
-        beta_err = beta
+        params = np.void(np.nan, dtype=PARAMS_DTYPE)
+        params_err = np.void(np.nan, dtype=PARAMS_DTYPE)
         sse = np.nan
         d_fit = np.nan
 
-    return beta, beta_err, sse, d_fit
+    return params, params_err, sse, d_fit
 
 
-def calc_def_ind_ztru_ac(d, beta, k, fit_mode, **kwargs):
+def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters."""
-
-    radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale, vd, *li, drag = beta
 
     assert fit_mode
     force = d * k
@@ -1015,56 +1037,60 @@ def calc_def_ind_ztru_ac(d, beta, k, fit_mode, **kwargs):
         schwarz_wrap,
         maxforce,
         k,
-        radius,
-        tau,
-        M,
-        fc,
-        delta_shift,
-        force_shift,
-        lj_delta_scale,
+        params["radius"],
+        params["tau"],
+        params["M"],
+        params["fc"],
+        params["delta_shift"],
+        params["force_shift"],
+        params["lj_delta_scale"],
     )
     mindelta = delta_curve(
         schwarz_wrap,
-        force_shift - fc,
+        params["force_shift"] - params["fc"],
         k,
-        radius,
-        tau,
-        M,
-        fc,
-        delta_shift,
-        force_shift,
-        lj_delta_scale,
+        params["radius"],
+        params["tau"],
+        params["M"],
+        params["fc"],
+        params["delta_shift"],
+        params["force_shift"],
+        params["lj_delta_scale"],
     )
     # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
     zeroindforce = float(
         force_curve(
             red_retract,
-            delta_shift,
+            params["delta_shift"].squeeze(),
             k,
-            radius,
-            tau,
-            M,
-            fc,
-            delta_shift,
-            force_shift,
-            lj_delta_scale,
+            params["radius"].squeeze(),
+            params["tau"].squeeze(),
+            params["M"].squeeze(),
+            params["fc"].squeeze(),
+            params["delta_shift"].squeeze(),
+            params["force_shift"].squeeze(),
+            params["lj_delta_scale"].squeeze(),
         )
     )
 
-    maxforce -= force_shift
-    red_fc = (tau - 4) / 2
-    ref_force = -fc / red_fc
+    maxforce -= params["force_shift"]
+    red_fc = (params["tau"] - 4) / 2
+    ref_force = -params["fc"] / red_fc
     df = abs(maxforce / ref_force - red_fc)
     red_contact_radius = ((3 * red_fc + 6) ** (1 / 2) + df ** (1 / 2)) ** (2 / 3)
-    contact_radius = red_contact_radius * (M / ref_force / radius) ** (-1 / 3)
+    contact_radius = red_contact_radius * (
+        params["M"] / ref_force / params["radius"]
+    ) ** (-1 / 3)
 
-    deflection = (maxforce + fc) / k
+    deflection = (maxforce + params["fc"]) / k
     indentation = maxdelta - mindelta
-    z_true_surface = delta_shift + zeroindforce / k
-    return deflection, indentation, z_true_surface, mindelta, contact_radius
+    z_true_surface = params["delta_shift"] + zeroindforce / k
+    return tuple(
+        map(float, (deflection, indentation, z_true_surface, mindelta, contact_radius))
+    )
 
 
-def perturb_k(d, k, epsilon):
+def perturb_k(d, k, epsilon=1e-3):
     k_new = (1 + epsilon) * k
     d_new = d * ((1 + epsilon) ** -0.5)
     return d_new, k_new
@@ -1073,30 +1099,25 @@ def perturb_k(d, k, epsilon):
 def calc_properties_imap(z_d_s_rc, **kwargs):
     z, d, split, rc = z_d_s_rc
     kwargs["split"] = split
-    beta, beta_err, sse, _ = fitfun(z, d, **kwargs)
-    if np.any(np.isnan(beta)):
+    params, params_err, sse, _ = fitfun(z, d, **kwargs)
+    if np.any(np.isnan(params.item())):
         return rc, None
-    M = beta[1]
-    fc = beta[2]
-    M_err = beta_err[1]
-    adh_force_err = beta_err[2]
     (deflection, indentation, z_true_surface, mindelta, a_c) = calc_def_ind_ztru_ac(
-        d, beta, **kwargs
+        d, params, **kwargs
     )
     k = kwargs.pop("k")
     eps = 1e-3
-    beta_perturb, *_ = fitfun(z, *perturb_k(d, k, eps), p0=beta, **kwargs)
-    if np.any(np.isnan(beta_perturb)):
+    params_perturb, *_ = fitfun(z, *perturb_k(d, k, eps), p0=params, **kwargs)
+    if np.any(np.isnan(params_perturb.item())):
         return rc, None
-    ind_mod_perturb = beta_perturb[0]
-    ind_mod_sens_k = (ind_mod_perturb - M) / M / eps
+    ind_mod_sens_k = (params_perturb["M"] - params["M"]) / params["M"] / eps
 
     # pack up properties, ensuring all fields are filled in order
     properties = np.void(np.nan, dtype=PROPERTY_DTYPE)
-    properties["IndentationModulus"] = M * 1e9
-    properties["AdhesionForce"] = fc / 1e9
-    properties["IndentationModulusErr"] = M_err * 1e9
-    properties["AdhesionForceErr"] = adh_force_err / 1e9
+    properties["IndentationModulus"] = params["M"] * 1e9
+    properties["AdhesionForce"] = params["fc"] / 1e9
+    properties["IndentationModulusErr"] = params_err["M"] * 1e9
+    properties["AdhesionForceErr"] = params_err["fc"] / 1e9
     properties["Deflection"] = deflection / 1e9
     properties["Indentation"] = indentation / 1e9
     properties["ContactRadius"] = a_c / 1e9

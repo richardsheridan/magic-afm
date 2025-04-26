@@ -172,8 +172,8 @@ class ForceCurveData:
     fxr: tuple[np.ndarray, np.ndarray]
     deltaxr: tuple[np.ndarray, np.ndarray]
     # everything else set only if fit
-    beta: Optional[np.ndarray] = None
-    beta_err: Optional[np.ndarray] = None
+    parms: Optional[np.ndarray] = None
+    parms_err: Optional[np.ndarray] = None
     fit_mode: Optional[calculation.FitMode] = None
     f_fit: Optional[np.ndarray] = None
     d_fit: Optional[np.ndarray] = None
@@ -2081,7 +2081,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
     assert point_data
     if len(point_data) == 1:
         data: ForceCurveData = next(iter(point_data.values()))
-        exp = np.log10(data.beta[2])
+        exp = math.log10(data.parms["M"])
         prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get(
             (-exp + 2.7) // 3, ("", 1)
         )
@@ -2098,9 +2098,13 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
         table: Table = ax.table(
             [
                 [
-                    "{:.2f}±{:.2f}".format(data.beta[2] * fac, data.beta_err[2] * fac),
-                    "{:.2e}".format(data.sens[1]),
-                    "{:.2f}±{:.2f}".format(data.beta[3], data.beta_err[3]),
+                    "{:.2f}±{:.2f}".format(
+                        float(data.parms["M"] * fac), float(data.parms_err["M"] * fac)
+                    ),
+                    "{:.2e}".format(float(data.sens["M"])),
+                    "{:.2f}±{:.2f}".format(
+                        float(data.parms["fc"]), float(data.parms_err["fc"])
+                    ),
                     "{:.2f}".format(data.defl),
                     "{:.2f}".format(data.ind),
                     "{:.2f}".format(data.defl / data.ind),
@@ -2117,9 +2121,9 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
         m, sens, fadh, defl, ind, rat, a_c = np.transpose(
             [
                 (
-                    data.beta[2],
-                    data.sens[1],
-                    data.beta[3],
+                    data.parms["M"],
+                    data.sens["M"],
+                    data.parms["fc"],
                     data.defl,
                     data.ind,
                     data.defl / data.ind,
@@ -2128,7 +2132,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
                 for data in point_data.values()
             ],
         )
-        exp = np.log10(np.mean(m))
+        exp = math.log10(np.mean(m))
         prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get(
             (-exp + 2.7) // 3, ("", 1)
         )
@@ -2190,25 +2194,25 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
         plot_ax.set_xlabel("Indentation depth (nm)")
         plot_ax.set_ylabel("Indentation force (nN)")
         if options.fit_mode:
-            f_fit = data.f_fit - data.beta[5]
+            f_fit = data.f_fit - data.parms["force_shift"]
             aex(
                 plot_ax.plot(
-                    data.deltaxr[0] - data.beta[4],
-                    data.fxr[0] - data.beta[5],
+                    data.deltaxr[0] - data.parms["delta_shift"],
+                    data.fxr[0] - data.parms["force_shift"],
                     label="Extend",
                 )
             )
             aex(
                 plot_ax.plot(
-                    data.deltaxr[1] - data.beta[4],
-                    data.fxr[1] - data.beta[5],
+                    data.deltaxr[1] - data.parms["delta_shift"],
+                    data.fxr[1] - data.parms["force_shift"],
                     label="Retract",
                 )
             )
             if options.fit_mode == calculation.FitMode.BOTH:
                 aex(
                     plot_ax.plot(
-                        np.concatenate(data.deltaxr) - data.beta[4],
+                        np.concatenate(data.deltaxr) - data.parms["delta_shift"],
                         f_fit,
                         "--",
                         label="Model",
@@ -2217,7 +2221,7 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
             else:
                 aex(
                     plot_ax.plot(
-                        data.deltaxr[options.fit_mode - 1] - data.beta[4],
+                        data.deltaxr[options.fit_mode - 1] - data.parms["delta_shift"],
                         f_fit,
                         "--",
                         label="Model",
@@ -2227,10 +2231,13 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
             aex(
                 plot_ax.plot(
                     [
-                        data.ind + data.mindelta - data.beta[4],
-                        data.mindelta - data.beta[4],
+                        data.ind + data.mindelta - data.parms["delta_shift"],
+                        data.mindelta - data.parms["delta_shift"],
                     ],
-                    [data.defl * options.k - data.beta[3], -data.beta[3]],
+                    [
+                        data.defl * options.k - data.parms["fc"],
+                        -data.parms["fc"],
+                    ],
                     label="Max/Crit",
                     marker="X",
                     markersize=8,
@@ -2308,7 +2315,7 @@ def calculate_force_data(
 
     cancel_poller()
     optionsdict = asdict(options)
-    beta, beta_err, sse, d_fit = calculation.fitfun(
+    parms, parms_err, sse, d_fit = calculation.fitfun(
         z,
         d,
         cancel_poller=cancel_poller,
@@ -2321,17 +2328,19 @@ def calculate_force_data(
     eps = 1e-3
     d_new, k_new = calculation.perturb_k(d, options.k, eps)
     optionsdict.pop("k")
-    beta_perturb = calculation.fitfun(
+    parms_perturb = calculation.fitfun(
         z,
         d_new,
         k_new,
         cancel_poller=cancel_poller,
         split=split,
-        p0=beta,
+        p0=parms,
         **optionsdict,
     )[0]
     with np.errstate(divide="ignore", invalid="ignore"):
-        sens = (beta_perturb - beta) / beta / eps
+        sens = (
+            (parms_perturb.view("f4") - parms.view("f4")) / parms.view("f4") / eps
+        ).view(calculation.PARAMS_DTYPE)
     optionsdict = asdict(options)
     optionsdict.pop("tau")
     (
@@ -2340,15 +2349,15 @@ def calculate_force_data(
         z_true_surface,
         mindelta,
         a_c,
-    ) = calculation.calc_def_ind_ztru_ac(d, beta, split=split, **optionsdict)
+    ) = calculation.calc_def_ind_ztru_ac(d, parms, split=split, **optionsdict)
     return ForceCurveData(
         zxr=zxr,
         dxr=dxr,
         fxr=fxr,
         deltaxr=deltaxr,
         txr=txr,
-        beta=beta,
-        beta_err=beta_err,
+        parms=parms,
+        parms_err=parms_err,
         fit_mode=options.fit_mode,
         f_fit=f_fit,
         d_fit=d_fit,
