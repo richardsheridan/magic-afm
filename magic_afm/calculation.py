@@ -980,7 +980,8 @@ def fitfun(
         dout = np.zeros_like(d)
         fc_parms = parms[:7]
         vd = parms[7]
-        dout -= z * vd
+        if vd:
+            dout -= z * vd
         li_parms = parms[8 : 8 + 3]
         if np.any(li_parms[1:]):
             dout -= laser_interference(z, *li_parms)
@@ -988,11 +989,16 @@ def fitfun(
         if drag_factor:
             z_velocity = np.gradient(z)
             dout -= hydrodynamic_drag(z_velocity, drag_factor)
-        dout += root_df_sane(
-            lambda d: force_curve(red_curve, z - d, k, *fc_parms) / k - d,
-            x0=d + dout,
-            ftol=1e-3,
-        )
+        if np.any(dout):
+            dout += root_df_sane(
+                lambda d: force_curve(red_curve, z - d, k, *fc_parms) / k - d,
+                x0=d + dout,
+                ftol=1e-3,
+                callback=lambda *a: cancel_poller,
+            )
+        else:
+            # fast path for no major artifacts
+            dout += force_curve(red_curve, z - d, k, *fc_parms) / k
         return dout
 
     try:
