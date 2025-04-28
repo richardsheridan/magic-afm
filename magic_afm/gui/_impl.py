@@ -159,7 +159,7 @@ class ForceCurveOptions:
     M: float
     lj_scale: float
     vd: float
-    li_wn: float
+    li_pe: float
     drag: float
     trace: int | None
 
@@ -1327,14 +1327,16 @@ class ForceVolumeTkDisplay:
         self.drag_strvar = self._add_parm(
             fit_labelframe,
             6,
-            "Hydrodyn. drag",
+            "Hydrodyn. Drag",
             fitfix=calculation.FitFix.HYDRODYNAMIC_DRAG,
         )
-        self.li_wn_strvar = self._add_parm(
+        self.li_pe_strvar = self._add_parm(
             fit_labelframe,
             7,
-            "Laser Interf.",
-            1.0,
+            "Laser Intf. Period",
+            100.0,
+            increment=1.0,
+            format="%0.0f",
             fitfix=calculation.FitFix.LASER_INTERFERENCE,
         )
         fit_labelframe.grid(row=2, column=1, rowspan=2, sticky="EW")
@@ -1496,7 +1498,7 @@ class ForceVolumeTkDisplay:
                 M=10 ** (float(self.mod_strvar.get()) - 9),
                 lj_scale=float(self.lj_scale_strvar.get()),
                 vd=float(self.vd_strvar.get()),
-                li_wn=float(self.li_wn_strvar.get()),
+                li_pe=float(self.li_pe_strvar.get()),
                 drag=float(self.drag_strvar.get()),
                 sync_dist=self.get_sync_dist_or_none(),
                 trace=self.get_trace_or_none(),

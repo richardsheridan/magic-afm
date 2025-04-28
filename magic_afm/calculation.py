@@ -77,7 +77,7 @@ PARMS_UNITS_DICT = {
     "force_shift": "N",
     "lj_delta_scale": None,
     "vd": None,
-    "li_wn": "wn",
+    "li_pe": "m",
     "li_ra": "m",
     "li_ia": "m",
     "drag": "s",
@@ -573,8 +573,8 @@ def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
 ###############################################
 
 
-def laser_interference(z, wave_number, sin_amp, cos_amp):
-    theta = z * wave_number
+def laser_interference(z, period, sin_amp, cos_amp):
+    theta = z * period * 2 * np.pi
     return sin_amp * np.sin(theta) + cos_amp * np.cos(theta)
 
 
@@ -907,7 +907,7 @@ def fitfun(
     vd,
     lj_scale,
     drag,
-    li_wn,
+    li_pe,
     fit_mode,
     fit_fix,
     cancel_poller=bool,
@@ -918,7 +918,7 @@ def fitfun(
     delta = z - d
     force = d * k
 
-    lg = laser_guesses = li_wn, 0.0, 0.0
+    lg = laser_guesses = li_pe, 0.0, 0.0
 
     if p0 is None:
         M_guess, fc_guess, deltamin, fzero = rapid_forcecurve_estimate(
@@ -982,7 +982,9 @@ def fitfun(
         fc_parms = parms[:7]
         vd = parms[7]
         if vd:
-            dout -= z * vd
+            deltamin, fmin = fc_parms[4:6]
+            zmin = deltamin + fmin / k
+            dout -= (z - zmin) * vd
         li_parms = parms[8 : 8 + 3]
         if np.any(li_parms[1:]):
             dout -= laser_interference(z, *li_parms)
