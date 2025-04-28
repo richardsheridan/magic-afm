@@ -912,6 +912,7 @@ def fitfun(
     fit_fix,
     cancel_poller=bool,
     p0=None,
+    nan_on_error=False,
     **kwargs
 ):
     delta = z - d
@@ -1013,6 +1014,8 @@ def fitfun(
         parms = beta.astype("f4").view(dtype=PARMS_DTYPE)
         parms_err = beta_err.astype("f4").view(dtype=PARMS_DTYPE)
     except Exception:
+        if not nan_on_error:
+            raise
         traceback.print_exc()
         print(p0)
         parms = np.void(np.nan, dtype=PARMS_DTYPE)
@@ -1105,7 +1108,7 @@ def perturb_k(d, k, epsilon=1e-3):
 def calc_properties_imap(z_d_s_rc, **kwargs):
     z, d, split, rc = z_d_s_rc
     kwargs["split"] = split
-    parms, parms_err, sse, _ = fitfun(z, d, **kwargs)
+    parms, parms_err, sse, _ = fitfun(z, d, nan_on_error=True, **kwargs)
     if np.any(np.isnan(parms.item())):
         return rc, None
     (deflection, indentation, z_true_surface, mindelta, a_c) = calc_def_ind_ztru_ac(
@@ -1113,7 +1116,9 @@ def calc_properties_imap(z_d_s_rc, **kwargs):
     )
     k = kwargs.pop("k")
     eps = 1e-3
-    params_perturb, *_ = fitfun(z, *perturb_k(d, k, eps), p0=parms, **kwargs)
+    params_perturb, *_ = fitfun(
+        z, *perturb_k(d, k, eps), p0=parms, nan_on_error=True, **kwargs
+    )
     if np.any(np.isnan(params_perturb.item())):
         return rc, None
     ind_mod_sens_k = (params_perturb["M"] - parms["M"]) / parms["M"] / eps

@@ -2320,6 +2320,7 @@ def calculate_force_data(
         d,
         cancel_poller=cancel_poller,
         split=split,
+        nan_on_error=False,
         **optionsdict,
     )
     f_fit = d_fit * options.k
@@ -2335,6 +2336,7 @@ def calculate_force_data(
         cancel_poller=cancel_poller,
         split=split,
         p0=parms,
+        nan_on_error=False,
         **optionsdict,
     )[0]
 
