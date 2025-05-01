@@ -2123,9 +2123,9 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
         m, sens, fadh, defl, ind, rat, a_c = np.transpose(
             [
                 (
-                    data.parms["M"],
-                    data.sens["M"],
-                    data.parms["fc"],
+                    float(data.parms["M"]),
+                    float(data.sens),
+                    float(data.parms["fc"]),
                     data.defl,
                     data.ind,
                     data.defl / data.ind,
