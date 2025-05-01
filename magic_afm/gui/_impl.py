@@ -1148,7 +1148,7 @@ class ForceVolumeTkDisplay:
         manipulate_menu.pack(fill="x")
         manipulate_labelframe.pack(fill="x")
 
-        image_opts_frame.grid(row=2, column=0)
+        image_opts_frame.grid(row=1, column=0)
 
         if initial_values.trace is not None:
             data_select_frame = ttk.Labelframe(
@@ -1203,7 +1203,7 @@ class ForceVolumeTkDisplay:
             padding=4,
         )
         disp_deltaf_button.pack(side="top")
-        disp_labelframe.grid(row=0, column=0, rowspan=2)
+        disp_labelframe.grid(row=0, column=0)
 
         preproc_labelframe = ttk.Labelframe(self.options_frame, text="Preprocessing")
         self.defl_sens_strvar = self._add_parm(
@@ -1275,7 +1275,8 @@ class ForceVolumeTkDisplay:
             variable=self.fit_intvar,
         )
         fit_both_button.grid(row=0, column=2, sticky="W")
-        segment_labelframe.grid(row=1, column=1, sticky="EW")
+        # note: this was relocated so double check the row and columns
+        segment_labelframe.grid(row=2, column=0, sticky="EW")
 
         fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
         parm_label_name = ttk.Label(fit_labelframe, text="Name")
@@ -1347,7 +1348,7 @@ class ForceVolumeTkDisplay:
             format="%0.0f",
             fitfix=calculation.FitFix.LASER_INTERFERENCE,
         )
-        fit_labelframe.grid(row=2, column=1, rowspan=2, sticky="EW")
+        fit_labelframe.grid(row=1, column=1, rowspan=3, sticky="EW")
 
         self.calc_props_button = ttk.Button(
             self.options_frame, text="Calculate Property Maps", state="disabled"
