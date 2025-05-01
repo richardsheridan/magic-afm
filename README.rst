@@ -125,13 +125,13 @@ and <Ext/Ret/Both> indicates whether the parameter was estimated from the extend
 retract, or both data. The available image manipulations are:
 
 Flatten
-   A linear fit to each row of the image is subtracted from that row
+   A linear fit to each row of the image is subtracted from that row.
 
 PlaneFit
-   A 2D linear fit to the image is subtracted from that image
+   A 2D linear fit to the image is subtracted from that image.
 
 Offset
-   The minimum value present in the image is subtracted from that image
+   The minimum value present in the image is subtracted from that image.
 
 Median3x1
    Each pixel is replaced by the median value of that pixel and its vertical
@@ -185,11 +185,47 @@ Fitting can be toggled between the default nothing (Skip), the approach curve (E
 the retract curve (Retract), or simultaneously fit the extend and retract curves (Both).
 The fit parameters are not read from the file and
 only affect the display when either the extend or the retract portions of the
-force curve are toggled to fit. "Tip Radius (nm)" refers to the nominal radius
-of the parabolic probe assumed in the indentation model. "DMT-JKR (0-1)" refers
-to the transition parameter between the long-range and short-range adhesion
-force regimes. Formally, it is the ratio of the short-range work of adhesion to
-the total work of adhesion (τ1*τ1 in [SCHWARZ]_).
+force curve are toggled to fit. There are a variety of parameters that can be optimized
+against the data or fixed to a constant. The Schwarz [SCHWARZ]_ Model parameters are:
+
+log10(M (Pa))
+    The base-ten logarithm of the indentation modulus M=4/3*E/(1-ν*ν)
+
+Tip Radius (nm)
+    The nominal radius of the parabolic probe assumed in the indentation model. Tip
+    radius and modulus are practically indistinguishable based on data. Therefore, one
+    must be fixed, and traditionally that one is radius.
+
+DMT-JKR (0-1)
+    The transition parameter between the long-range and short-range adhesion
+    force regimes. Formally, it is the ratio of the short-range work of adhesion to
+    the total work of adhesion (τ1*τ1 in [SCHWARZ]_). In any ambiguous cases, this
+    parameter is practically unidentifiable based on data so it is fixed by default.
+    In typical usage simply put 0 for DMT or 1 for JKR behavior.
+
+Lennard-Jones
+    A log-transform of a normalized distance scaling parameter for describing long-range
+    attractive forces.
+
+There are also parameters available to subtract common simple artifacts from the deflection
+signal:
+
+Virtual Deflection
+    A global linear slope of displacement with respect to piezo position.
+
+Hydrodynamic Drag
+    A global force offset proportional to the local piezo velocity.
+
+Laser Intf. Period
+    When force mapping with a laser light source, stray light may interfere with the
+    optical deflection signal creating a sinusoidal deflection offset with respect to
+    the piezo position. Unlike other parameters, you only enter the nonlinear part of
+    this problem, namely the period of the signal in nanometers of piezo travel, and
+    the fitter will only select the amplitude and phase of that wave based on data.
+    Furthermore, the fix checkbox disables fitting AND sets the amplitude to 0.
+
+NOTE: the deflection artifacts are several times more computationally intensive to fit
+compared to the Schwarz parameters, so they are fixed to 0 by default.
 
 The deflection and piezo displacement of all currently displayed force curves can
 be exported by clicking "Export calculated force curves" to various text and binary formats.
