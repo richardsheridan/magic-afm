@@ -1284,37 +1284,32 @@ class ForceVolumeTkDisplay:
         parm_label_fix.grid(row=0, column=1, sticky="EW")
         parm_label_val = ttk.Label(fit_labelframe, text="Value")
         parm_label_val.grid(row=0, column=2, sticky="E")
+        swz_label = ttk.Label(
+            fit_labelframe, text="Schwarz Model", relief="solid", anchor="center"
+        )
+        swz_label.grid(row=1, column=0, columnspan=3, sticky="EW")
         self.mod_strvar = self._add_parm(
             fit_labelframe,
-            1,
+            2,
             "log10(M (Pa))",
             default=(6.0),
             fitfix=calculation.FitFix.RADIUS,
         )
         self.radius_strvar = self._add_parm(
             fit_labelframe,
-            2,
+            3,
             "Tip radius (nm)",
             default=20.0,
             fitfix=calculation.FitFix.RADIUS,
         )
         self.tau_strvar = self._add_parm(
             fit_labelframe,
-            3,
+            4,
             "DMT-JKR (0-1)",
             to=1,
             increment=0.05,
             format="%0.2f",
             fitfix=calculation.FitFix.TAU,
-        )
-        self.vd_strvar = self._add_parm(
-            fit_labelframe,
-            4,
-            "Virtual Deflection",
-            from_=-1e5,
-            to=1e5,
-            increment=0.1,
-            fitfix=calculation.FitFix.VIRTUAL_DEFLECTION,
         )
         self.lj_scale_strvar = self._add_parm(
             fit_labelframe,
@@ -1324,15 +1319,28 @@ class ForceVolumeTkDisplay:
             to=6,
             fitfix=calculation.FitFix.LJ_SCALE,
         )
+        art_label = ttk.Label(
+            fit_labelframe, text="Deflection Artifacts", relief="solid", anchor="center"
+        )
+        art_label.grid(row=6, column=0, columnspan=3, sticky="EW")
+        self.vd_strvar = self._add_parm(
+            fit_labelframe,
+            7,
+            "Virtual Deflection",
+            from_=-1e5,
+            to=1e5,
+            increment=0.1,
+            fitfix=calculation.FitFix.VIRTUAL_DEFLECTION,
+        )
         self.drag_strvar = self._add_parm(
             fit_labelframe,
-            6,
+            8,
             "Hydrodyn. Drag",
             fitfix=calculation.FitFix.HYDRODYNAMIC_DRAG,
         )
         self.li_pe_strvar = self._add_parm(
             fit_labelframe,
-            7,
+            9,
             "Laser Intf. Period",
             100.0,
             increment=1.0,
