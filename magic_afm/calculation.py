@@ -917,6 +917,7 @@ def fitfun(
 ):
     delta = z - d
     force = d * k
+    d0 = d
 
     lg = laser_guesses = li_pe, 0.0, 0.0
 
@@ -977,6 +978,7 @@ def fitfun(
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
     def partial_force_curve(z, *parms):
+        nonlocal d0
         cancel_poller()
         dout = np.zeros_like(d)
         fc_parms = parms[:7]
@@ -993,12 +995,14 @@ def fitfun(
             z_velocity = np.gradient(z)
             dout -= hydrodynamic_drag(z_velocity, drag_factor)
         if np.any(dout):
-            dout += root_df_sane(
+            # update initial guess each round
+            d0 = root_df_sane(
                 lambda d: force_curve(red_curve, z - d, k, *fc_parms) / k - d,
-                x0=d + dout,
+                x0=d0,
                 ftol=1e-3,
                 callback=lambda *a: cancel_poller(),
             )
+            dout += d0
         else:
             # fast path for no major artifacts
             dout += force_curve(red_curve, z - d, k, *fc_parms) / k
