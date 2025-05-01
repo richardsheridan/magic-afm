@@ -997,7 +997,7 @@ def fitfun(
                 lambda d: force_curve(red_curve, z - d, k, *fc_parms) / k - d,
                 x0=d + dout,
                 ftol=1e-3,
-                callback=lambda *a: cancel_poller,
+                callback=lambda *a: cancel_poller(),
             )
         else:
             # fast path for no major artifacts
