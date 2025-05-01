@@ -853,29 +853,36 @@ class tqdm_tk(tqdm_std):
         self._tk_window.protocol("WM_DELETE_WINDOW", self.cancel)
         self._tk_window.wm_title(self.desc)
         self._tk_window.wm_attributes("-topmost", 1)
-        self._tk_window.after(
-            "idle", lambda: self._tk_window.wm_attributes("-topmost", 0)
-        )
+        self._tk_window.wm_attributes("-topmost", 0)
         self._tk_n_var = tkinter.DoubleVar(self._tk_window, value=0)
-        self._tk_text_var = tkinter.StringVar(self._tk_window)
+        self._tk_top_text_var = tkinter.StringVar(self._tk_window)
+        self._tk_bot_text_var = tkinter.StringVar(self._tk_window)
+
+        # Pack layout definitions
         pbar_frame = ttk.Frame(self._tk_window, padding=5)
         pbar_frame.pack()
-        _tk_label = ttk.Label(
+        ttk.Label(
             pbar_frame,
-            textvariable=self._tk_text_var,
+            textvariable=self._tk_top_text_var,
             wraplength=600,
             anchor="center",
             justify="center",
-        )
-        _tk_label.pack()
+        ).pack()
         self._tk_pbar = ttk.Progressbar(pbar_frame, variable=self._tk_n_var, length=450)
         if self.total is not None:
             self._tk_pbar.configure(maximum=self.total)
         else:
             self._tk_pbar.configure(mode="indeterminate")
         self._tk_pbar.pack()
+        ttk.Label(
+            pbar_frame,
+            textvariable=self._tk_bot_text_var,
+            anchor="center",
+            justify="center",
+        ).pack()
         button_frame = ttk.Frame(self._tk_window)
         button_frame.pack()
+
         if self._cancel_callback is not None:
             _c_button = ttk.Button(button_frame, text="Cancel", command=self.cancel)
             _c_button.pack(side="left")
@@ -918,13 +925,17 @@ class tqdm_tk(tqdm_std):
         self._tk_n_var.set(self.n)
         d = self.format_dict
         # remove {bar}
-        d["bar_format"] = (d["bar_format"] or "{l_bar}<bar/>{r_bar}").replace(
+        default_format = ('{desc}\n'
+                          '{percentage:3.0f}%|<bar/>|{n_fmt}/{total_fmt}\n'
+                          '{elapsed}<{remaining}, {rate_fmt}{postfix}')
+        d["bar_format"] = (d["bar_format"] or default_format).replace(
             "{bar}", "<bar/>"
         )
-        msg = self.format_meter(**d)
-        if "<bar/>" in msg:
-            msg = "".join(re.split(r"\|?<bar/>\|?", msg, maxsplit=1))
-        self._tk_text_var.set(msg)
+        for msg, text_var in zip(
+            re.split(r"\|?<bar/>\|?", self.format_meter(**d), maxsplit=1),
+            (self._tk_top_text_var, self._tk_bot_text_var),
+        ):
+            text_var.set(msg)
 
     def set_description(self, desc=None, refresh=True):
         self.set_description_str(desc, refresh)
