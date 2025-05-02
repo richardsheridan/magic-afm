@@ -217,15 +217,15 @@ Hydrodynamic Drag
     A global force offset proportional to the local piezo velocity.
 
 Laser Intf. Period
-    When force mapping with a laser light source, stray light may interfere with the
-    optical deflection signal creating a sinusoidal deflection offset with respect to
-    the piezo position. Unlike other parameters, you only enter the nonlinear part of
-    this problem, namely the period of the signal in nanometers of piezo travel, and
-    the fitter will only select the amplitude and phase of that wave based on data.
-    Furthermore, the fix checkbox disables fitting AND sets the amplitude to 0.
+    The period of the sinusoidal deflection offset in nanometers of piezo travel.
+    Laser interference fitting is disabled if this period is 0.
+
+Laser Intf. Ampl.
+   The amplitude of the sinusoidal deflection offset in nanometers of deflection.
+   Phase is also fit if the amplitude is not fixed to 0.
 
 NOTE: the deflection artifacts are several times more computationally intensive to fit
-compared to the Schwarz parameters, so they are fixed to 0 by default.
+compared to the Schwarz parameters, so they are disables (fixed to 0) by default.
 
 The deflection and piezo displacement of all currently displayed force curves can
 be exported by clicking "Export calculated force curves" to various text and binary formats.

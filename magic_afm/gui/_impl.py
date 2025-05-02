@@ -159,7 +159,8 @@ class ForceCurveOptions:
     M: float
     lj_scale: float
     vd: float
-    li_pe: float
+    li_per: float
+    li_amp: float
     drag: float
     trace: int | None
 
@@ -1330,7 +1331,8 @@ class ForceVolumeTkDisplay:
             "Virtual Deflection",
             from_=-1e5,
             to=1e5,
-            increment=0.1,
+            increment=0.01,
+            format="%0.3f",
             fitfix=calculation.FitFix.VIRTUAL_DEFLECTION,
         )
         self.drag_strvar = self._add_parm(
@@ -1339,14 +1341,23 @@ class ForceVolumeTkDisplay:
             "Hydrodyn. Drag",
             fitfix=calculation.FitFix.HYDRODYNAMIC_DRAG,
         )
-        self.li_pe_strvar = self._add_parm(
+        self.li_per_strvar = self._add_parm(
             fit_labelframe,
             9,
             "Laser Intf. Period",
-            100.0,
-            increment=1.0,
+            0.0,
+            increment=10.0,
             format="%0.0f",
-            fitfix=calculation.FitFix.LASER_INTERFERENCE,
+            fitfix=calculation.FitFix.LI_PERIOD,
+        )
+        self.li_amp_strvar = self._add_parm(
+            fit_labelframe,
+            10,
+            "Laser Intf. Ampl.",
+            0.0,
+            increment=0.1,
+            format="%0.1f",
+            fitfix=calculation.FitFix.LI_AMP,
         )
         fit_labelframe.grid(row=1, column=1, rowspan=3, sticky="EW")
 
@@ -1507,7 +1518,8 @@ class ForceVolumeTkDisplay:
                 M=10 ** (float(self.mod_strvar.get()) - 9),
                 lj_scale=float(self.lj_scale_strvar.get()),
                 vd=float(self.vd_strvar.get()),
-                li_pe=float(self.li_pe_strvar.get()),
+                li_per=float(self.li_per_strvar.get()),
+                li_amp=float(self.li_amp_strvar.get()),
                 drag=float(self.drag_strvar.get()),
                 sync_dist=self.get_sync_dist_or_none(),
                 trace=self.get_trace_or_none(),

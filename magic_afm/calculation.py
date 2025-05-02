@@ -77,9 +77,9 @@ PARMS_UNITS_DICT = {
     "force_shift": "N",
     "lj_delta_scale": None,
     "vd": None,
-    "li_pe": "m",
-    "li_ra": "m",
-    "li_ia": "m",
+    "li_per": "m",
+    "li_amp": "m",
+    "li_pha": "rad",
     "drag": "s",
 }
 
@@ -99,7 +99,8 @@ class FitFix(enum.IntFlag, boundary=enum.STRICT):
     TAU = enum.auto()
     LJ_SCALE = enum.auto()
     VIRTUAL_DEFLECTION = enum.auto()
-    LASER_INTERFERENCE = enum.auto()
+    LI_PERIOD = enum.auto()
+    LI_AMP = enum.auto()
     HYDRODYNAMIC_DRAG = enum.auto()
 
 
@@ -573,9 +574,9 @@ def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
 ###############################################
 
 
-def laser_interference(z, period, sin_amp, cos_amp):
-    theta = z * period * 2 * np.pi
-    return sin_amp * np.sin(theta) + cos_amp * np.cos(theta)
+def laser_interference(z, period, amp, phase):
+    theta = z / period * 2 * np.pi
+    return amp * np.sin(theta + phase)
 
 
 def hydrodynamic_drag(z_velocity, drag_factor):
@@ -907,7 +908,8 @@ def fitfun(
     vd,
     lj_scale,
     drag,
-    li_pe,
+    li_per,
+    li_amp,
     fit_mode,
     fit_fix,
     cancel_poller=bool,
@@ -918,8 +920,8 @@ def fitfun(
     delta = z - d
     force = d * k
     d0 = d
-
-    lg = laser_guesses = li_pe, 0.0, 0.0
+    lg = laser_guesses = li_per, li_amp, 0.0
+    noli = not li_per or (not li_amp and fit_fix & FitFix.LI_AMP)
 
     if p0 is None:
         M_guess, fc_guess, deltamin, fzero = rapid_forcecurve_estimate(
@@ -950,9 +952,9 @@ def fitfun(
         (np.min(force), np.max(force)),  # force_shift
         (lj_scale,) * 2 if fit_fix & FitFix.LJ_SCALE else (-6.0, 6.0),
         (vd,) * 2 if fit_fix & FitFix.VIRTUAL_DEFLECTION else (-np.inf, np.inf),
-        ((lg[0],) * 2 if fit_fix & FitFix.LASER_INTERFERENCE else (0.0, np.inf)),
-        ((lg[1],) * 2 if fit_fix & FitFix.LASER_INTERFERENCE else (-np.inf, np.inf)),
-        ((lg[2],) * 2 if fit_fix & FitFix.LASER_INTERFERENCE else (-np.inf, np.inf)),
+        ((lg[0],) * 2 if noli or fit_fix & FitFix.LI_PERIOD else (0.0, np.inf)),
+        ((lg[1],) * 2 if noli or fit_fix & FitFix.LI_AMP else (-np.inf, np.inf)),
+        ((lg[2],) * 2 if noli else (-np.inf, np.inf)),
         (drag,) * 2 if fit_fix & FitFix.HYDRODYNAMIC_DRAG else (0.0, np.inf),
     )
     bounds = np.transpose(bounds)
@@ -988,7 +990,7 @@ def fitfun(
             zmin = deltamin + fmin / k
             dout -= (z - zmin) * vd
         li_parms = parms[8 : 8 + 3]
-        if np.any(li_parms[1:]):
+        if not noli:
             dout -= laser_interference(z, *li_parms)
         drag_factor = parms[-1]
         if drag_factor:
