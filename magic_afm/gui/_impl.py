@@ -544,7 +544,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         toplevel = tk.Toplevel(self)
         toplevel.wm_title(self._headers_name + " headers")
         toplevel.wm_attributes("-topmost", 1)
-        toplevel.after("idle", lambda: toplevel.wm_attributes("-topmost", 0))
+        toplevel.wm_attributes("-topmost", 0)
         toplevel.columnconfigure(0, weight=1)
         toplevel.rowconfigure(0, weight=1)
         treeview = ttk.Treeview(toplevel, columns=["value"], selectmode="none")
@@ -859,9 +859,7 @@ class tqdm_tk(tqdm_std):
         self._tk_window.protocol("WM_DELETE_WINDOW", self.cancel)
         self._tk_window.wm_title(self.desc)
         self._tk_window.wm_attributes("-topmost", 1)
-        self._tk_window.after(
-            "idle", lambda: self._tk_window.wm_attributes("-topmost", 0)
-        )
+        self._tk_window.wm_attributes("-topmost", 0)
         self._tk_n_var = tkinter.DoubleVar(self._tk_window, value=0)
         self._tk_text_var = tkinter.StringVar(self._tk_window)
         pbar_frame = ttk.Frame(self._tk_window, padding=5)
@@ -1294,7 +1292,7 @@ class ForceVolumeTkDisplay:
             fit_labelframe,
             2,
             "log10(M (Pa))",
-            default=(6.0),
+            default=6.0,
             fitfix=calculation.FitFix.RADIUS,
         )
         self.radius_strvar = self._add_parm(
