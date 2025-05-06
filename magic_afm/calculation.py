@@ -30,7 +30,8 @@ from numpy.linalg import lstsq
 from soxr import resample
 
 try:
-    from numba import jit
+    from numba import jit, objmode, types
+    from numba.extending import overload
 except ImportError:
     jit = lambda *a, **kw: (lambda x: x)
 else:
@@ -239,6 +240,29 @@ MANIPULATIONS = dict(
 ###############################################
 
 
+@overload(np.atleast_1d)
+def _atleast_1d_for_scalars(x):
+    if x in types.number_domain:
+        return lambda x: np.array([x])
+    return None
+
+
+@overload(np.interp)
+def _interp(x, xp, fp, left=None, right=None):
+    if left is not None or right is not None:
+
+        def _interp_impl(x, xp, fp, left=None, right=None):
+            f = np.interp(x, xp, fp)
+            if left is not None:
+                f[x < xp[0]] = left
+            if right is not None:
+                f[x > xp[-1]] = right
+            return f
+
+        return _interp_impl
+    return None
+
+
 def resample_wrapper(X, npts, fourier=True, restore_trend=True):
     """Resample individual z-d curves with Fourier or linear interpolation"""
     X = np.atleast_2d(X)
@@ -381,7 +405,7 @@ def brentq(func, args, xa, xb):
         return xcur
 
     if fpre * fcur > 0:
-        return None
+        return np.nan
 
     for i in range(maxiter):
         if fpre * fcur < 0:
@@ -673,6 +697,7 @@ def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
 ###############################################
 
 
+@jit(nopython=True, nogil=True)
 def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
     """Calculate, in reduced units, an extent Schwarz curve with long range LJ potential and snap-off physics.
 
@@ -707,12 +732,8 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
         red_d_min,
         lj_limit_factor * lj_delta_scale + lj_delta_offset,
     )
-    lj_end_pos = brentq(
-        lj_gradient,
-        args,
-        *bracket,
-    )
-    if lj_end_pos is None:
+    lj_end_pos = brentq(lj_gradient, args, *bracket)
+    if np.isnan(lj_end_pos):
         # If root finding fails, put the end pos somewhere quasi-reasonable
         if lj_gradient(red_d_min, *args) <= 0:
             lj_end_pos = red_d_min
@@ -730,7 +751,7 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
     args = red_fc, 1.0, red_d_max
-    red_f_max = secant(schwarz_red, args, x0=0.0, x1=red_fc)
+    red_f_max = secant(schwarz_red, args, 0.0, red_fc)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
@@ -742,6 +763,7 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
     return np.maximum(s_f, lj_f)
 
 
+@jit(nopython=True, nogil=True)
 def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     """Calculate, in reduced units, a retract Schwarz curve with long range LJ potential and snap-off physics.
 
@@ -767,6 +789,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     lj_delta_offset = red_deltac - lj_delta_scale
     lj_f = lj_force(red_delta, lj_delta_scale, red_fc, lj_delta_offset, 0.0)
     lj_f = np.atleast_1d(lj_f)  # Later parts can choke on scalars
+    red_delta = np.atleast_1d(red_delta)
 
     # make points definitely lose in minimum function if in the contact/stable branch
     lj_f[red_delta >= red_deltac] = np.inf
@@ -775,7 +798,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
     args = red_fc, 1.0, red_d_max
-    red_f_max = secant(schwarz_red, args, x0=red_fc, x1=0.0)
+    red_f_max = secant(schwarz_red, args, red_fc, 0.0)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
@@ -783,26 +806,25 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     d = schwarz_red(f, red_fc, 1.0, 0.0)
 
     # Use this endpoint in DMT case or if there is a problem with the slope finding
-    s_end_pos = 0
-    s_end_force = -2
+    s_end_pos = 0.
+    s_end_force = -2.
 
     if not_DMT:
         # Find slope == red_k between vertical and horizontal parts of unstable branch
-        f0 = mylinspace((7 * red_fc + 8) / 3, red_fc, 100, endpoint=False)
+        f0 = mylinspace((7. * red_fc + 8.) / 3., red_fc, 100, False)
         d0 = schwarz_red(f0, red_fc, -1.0, 0.0)
         df0dd0 = mygradient(f0, d0)
 
         s_end_pos = brentq(interp_with_offset, (d0, df0dd0, red_k), d0[0], d0[-1])
-        if s_end_pos is not None:
+        if np.isnan(s_end_pos):
+            s_end_pos = 0.
+        else:
             # found a good end point
             s_end_force = np.interp(s_end_pos, d0, f0)
             f = np.concatenate((f0, f))
             d = np.concatenate((d0, d))
-        else:
-            s_end_pos = 0
-
-    s_f = np.interp(red_delta, d, f, left=np.inf, right=0)
-    s_f = np.atleast_1d(s_f).squeeze()  # don't choke on weird array shapes or scalars
+    s_f = np.interp(red_delta, d, f, left=np.inf, right=0.0)
+    s_f = np.atleast_1d(s_f).ravel()  # don't choke on weird array shapes or scalars
 
     # overwrite portion after end position with tangent line
     s_f[red_delta <= s_end_pos] = (
@@ -812,6 +834,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     return np.minimum(s_f, lj_f)
 
 
+@jit(nopython=True, nogil=True)
 def force_curve(
     red_curve, delta, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
 ):
@@ -840,6 +863,7 @@ def force_curve(
     return (red_force * ref_force) + force_shift
 
 
+@jit(nopython=True, nogil=True)
 def delta_curve(
     red_curve, force, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
 ):
