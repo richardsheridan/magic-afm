@@ -30,10 +30,10 @@ from numpy.linalg import lstsq
 from soxr import resample
 
 try:
-    from numba import jit, objmode, types
+    from numba import jit
     from numba.extending import overload
 except ImportError:
-    jit = lambda *a, **kw: (lambda x: x)
+    jit = overload = lambda *a, **kw: (lambda x: x)
 else:
     abs = np.fabs
 
@@ -242,7 +242,9 @@ MANIPULATIONS = dict(
 
 @overload(np.atleast_1d)
 def _atleast_1d_for_scalars(x):
-    if x in types.number_domain:
+    from numba.types import number_domain
+
+    if x in number_domain:
         return lambda x: np.array([x])
     return None
 
@@ -583,13 +585,13 @@ def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
         constraints = []
         for lo, hi in bounds.T.tolist():
             if lo == -np.inf and hi == np.inf:
-                constraints.append((0, None, None))
+                constraints.append((0.0, 0.0, 0.0))
             elif lo == 0.0 and hi == np.inf:
-                constraints.append((1, None, None))
+                constraints.append((1.0, 0.0, 0.0))
             elif lo == hi:
-                constraints.append((3, None, None))
+                constraints.append((3.0, 0.0, 0.0))
             else:
-                constraints.append((2, lo, hi))
+                constraints.append((2.0, lo, hi))
     return leastsq(function, xdata, ydata, p0, sigma, constraints, full_output=True)
 
 
@@ -806,18 +808,18 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     d = schwarz_red(f, red_fc, 1.0, 0.0)
 
     # Use this endpoint in DMT case or if there is a problem with the slope finding
-    s_end_pos = 0.
-    s_end_force = -2.
+    s_end_pos = 0.0
+    s_end_force = -2.0
 
     if not_DMT:
         # Find slope == red_k between vertical and horizontal parts of unstable branch
-        f0 = mylinspace((7. * red_fc + 8.) / 3., red_fc, 100, False)
+        f0 = mylinspace((7.0 * red_fc + 8.0) / 3.0, red_fc, 100, False)
         d0 = schwarz_red(f0, red_fc, -1.0, 0.0)
         df0dd0 = mygradient(f0, d0)
 
         s_end_pos = brentq(interp_with_offset, (d0, df0dd0, red_k), d0[0], d0[-1])
         if np.isnan(s_end_pos):
-            s_end_pos = 0.
+            s_end_pos = 0.0
         else:
             # found a good end point
             s_end_force = np.interp(s_end_pos, d0, f0)
