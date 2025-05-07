@@ -37,9 +37,8 @@ Spectral Algorithm for Nonlinear Equations
 import numpy as np
 
 
-class _NoConvergence(Exception):
-    pass
 
+maxfev = 1000
 
 def root_df_sane(
     func,
@@ -47,7 +46,6 @@ def root_df_sane(
     args=(),
     ftol=1e-8,
     fatol=1e-300,
-    maxfev=1000,
     callback=None,
     disp=False,
     eta_strategy=None,
@@ -100,18 +98,9 @@ def root_df_sane(
 
     x_k = x0
     F_k = func(x0, *args)
-    f_k = F_k @ F_k
+    f_k = np.sum(F_k * F_k)
 
     nfev = 1  # starts from one because of above call to func
-
-    def f(x):
-        # This just counts func evals
-        nonlocal nfev
-        if nfev >= maxfev:
-            raise _NoConvergence()
-        nfev += 1
-        F = func(x, *args)
-        return F
 
     k = 0
     f_0 = f_k
@@ -150,17 +139,17 @@ def root_df_sane(
         # Nonmonotone line search
         eta = eta_strategy(k, x_k, F_k)
 
-        try:
-            alpha, xp, fp, Fp, C, Q = _nonmonotone_line_search_cheng(
-                f, x_k, d, f_k, C, Q, eta=eta
-            )
-        except _NoConvergence:
+        search_res = _nonmonotone_line_search_cheng(
+            func, args, x_k, d, f_k, C, Q, eta, nfev
+        )
+        if search_res is None:
             break
+        alpha, xp, fp, Fp, C, Q, nfev = search_res
 
         # Update spectral parameter
         s_k = xp - x_k
         y_k = Fp - F_k
-        sigma_k = (s_k @ s_k) / (s_k @ y_k)
+        sigma_k = np.sum(s_k * s_k) / np.sum(s_k * y_k)
 
         # Take step
         x_k = xp
@@ -177,7 +166,19 @@ def root_df_sane(
 # ------------------------------------------------------------------------------
 
 def _nonmonotone_line_search_cheng(
-    f, x_k, d, f_k, C, Q, eta, gamma=1e-4, tau_min=0.1, tau_max=0.5, nu=0.85
+    func,
+    args,
+    x_k,
+    d,
+    f_k,
+    C,
+    Q,
+    eta,
+    nfev,
+    gamma=1e-4,
+    tau_min=0.1,
+    tau_max=0.5,
+    nu=0.85,
 ):
     """
     Nonmonotone line search from [1]
@@ -185,8 +186,9 @@ def _nonmonotone_line_search_cheng(
     Parameters
     ----------
     f : callable
-        Function returning a tuple ``(f, F)`` where ``f`` is the value
-        of a merit function and ``F`` the residual.
+        Function returning ``F`` the residual.
+    args : tuple
+        Arguments for f.
     x_k : ndarray
         Initial position.
     d : ndarray
@@ -198,6 +200,8 @@ def _nonmonotone_line_search_cheng(
         Q=1.0, C=f_k
     eta : float
         Allowed merit function increase, see [1]_
+    nfev : int
+        function evaluation state passthrough
     nu, gamma, tau_min, tau_max : float, optional
         Search parameters, see [1]_
 
@@ -223,37 +227,43 @@ def _nonmonotone_line_search_cheng(
            method'', IMA J. Numer. Anal. 29, 814 (2009).
 
     """
-    alpha_p = 1
-    alpha_m = 1
-    alpha = 1
+    alpha_p = np.array((1.0,))
+    alpha_m = np.array((1.0,))
+    alpha = np.array((1.0,))
 
     while True:
         xp = x_k + alpha_p * d
-        Fp = f(xp)
-        fp = Fp @ Fp
+        Fp = func(xp, *args)
+        nfev += 1
+        if nfev >= maxfev:
+            return None
+        fp = np.sum(Fp * Fp)
 
         if fp <= C + eta - gamma * alpha_p**2 * f_k:
             alpha = alpha_p
             break
 
-        alpha_tp = alpha_p**2 * f_k / (fp + (2 * alpha_p - 1) * f_k)
+        alpha_tp = alpha_p**2 * f_k / (fp + (2.0 * alpha_p - 1.0) * f_k)
 
         xp = x_k - alpha_m * d
-        Fp = f(xp)
-        fp = Fp @ Fp
+        Fp = func(xp, *args)
+        nfev += 1
+        if nfev >= maxfev:
+            return None
+        fp = np.sum(Fp * Fp)
 
         if fp <= C + eta - gamma * alpha_m**2 * f_k:
             alpha = -alpha_m
             break
 
-        alpha_tm = alpha_m**2 * f_k / (fp + (2 * alpha_m - 1) * f_k)
+        alpha_tm = alpha_m**2 * f_k / (fp + (2.0 * alpha_m - 1.0) * f_k)
 
         alpha_p = np.clip(alpha_tp, tau_min * alpha_p, tau_max * alpha_p)
         alpha_m = np.clip(alpha_tm, tau_min * alpha_m, tau_max * alpha_m)
 
     # Update C and Q
-    Q_next = nu * Q + 1
+    Q_next = nu * Q + 1.0
     C = (nu * Q * (C + eta) + fp) / Q_next
     Q = Q_next
 
-    return alpha, xp, fp, Fp, C, Q
+    return alpha, xp, fp, Fp, C, Q, nfev

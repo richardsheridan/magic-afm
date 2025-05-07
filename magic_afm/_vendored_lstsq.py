@@ -59,7 +59,6 @@ CSUM = 6
 CIGNORED = 7
 
 
-# @jit(nopython=True, nogil=True)
 def leastsq(
     model,
     xdata,
@@ -270,9 +269,8 @@ def leastsq(
         flag = 0
         while flag == 0:
             alpha = alpha0 * (1.0 + flambda * numpy.identity(nr))
-            deltapar = (numpy.linalg.solve(alpha.T, beta.T).T @ numpy.diag(free)[free])[
-                0
-            ]
+            deltapar = numpy.linalg.solve(alpha.T, beta.T).T @ numpy.diag(free)[free]
+            deltapar = deltapar[0]
             newpar = fitparam + deltapar
             if constraints is not None:
                 for i, (cons, cmin, cmax) in enumerate(constraints):
@@ -369,7 +367,6 @@ def leastsq(
         return fittedpar, cov, ddict
 
 
-# @jit(nopython=True, nogil=True)
 def chisq_alpha_beta(
     model,
     parameters,
@@ -590,7 +587,7 @@ def chisq_alpha_beta(
         return chisq, alpha, beta
 
 
-# @jit(nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def _get_parameters(parameters, constraints):
     """
     Apply constraints to input parameters.
@@ -635,7 +632,7 @@ def _get_parameters(parameters, constraints):
     return newparam
 
 
-# @jit(nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def _get_sigma_parameters(parameters, sigma0, constraints):
     """
     Internal function propagating the uncertainty on the actually fitted

@@ -26,12 +26,15 @@ import traceback
 
 import numpy as np
 from numpy.linalg import lstsq
+from numpy.random import uniform
 
 from soxr import resample
 
 try:
     from numba import jit
     from numba.extending import overload
+    import numba.core.errors
+    numba.core.errors.NumbaExperimentalFeatureWarning = Warning
 except ImportError:
     jit = overload = lambda *a, **kw: (lambda x: x)
 else:
@@ -554,12 +557,14 @@ def mygradient(f, d):
     OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     """
     dx = np.diff(d)
-    uniform_spacing = (dx == dx[0]).all()
+    dx0 = dx[0]
+    dxn = dx[-1]
+    uniform_spacing = (dx == dx0).all()
     out = np.empty_like(f)
 
     # Numerical differentiation: 2nd order interior
     if uniform_spacing:
-        out[1:-1] = (f[2:] - f[:-2]) / (2.0 * dx[0])
+        out[1:-1] = (f[2:] - f[:-2]) / (2.0 * dx0)
     else:
         dx1 = dx[0:-1]
         dx2 = dx[1:]
@@ -569,9 +574,17 @@ def mygradient(f, d):
         out[1:-1] = a * f[:-2] + b * f[1:-1] + c * f[2:]
 
     # Numerical differentiation: 1st order edges
-    out[0] = (f[1] - f[0]) / dx[0]
-    out[-1] = (f[-1] - f[-2]) / dx[-1]
+    out[0] = (f[1] - f[0]) / dx0
+    out[-1] = (f[-1] - f[-2]) / dxn
 
+    return out
+
+@jit(nopython=True, nogil=True, cache=True)
+def mygradient_uniform(f):
+    out = np.empty_like(f)
+    out[1:-1] = (f[2:] - f[:-2]) / (2.0)
+    out[0] = (f[1] - f[0])
+    out[-1] = (f[-1] - f[-2])
     return out
 
 
@@ -1020,7 +1033,7 @@ def fitfun(
             dout -= laser_interference(z, *li_parms)
         drag_factor = parms[-1]
         if drag_factor:
-            z_velocity = np.gradient(z)
+            z_velocity = mygradient_uniform(z)
             dout -= hydrodynamic_drag(z_velocity, drag_factor)
         if np.any(dout):
             # update initial guess each round
