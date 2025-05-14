@@ -34,6 +34,7 @@ try:
     from numba import jit
     from numba.extending import overload
     import numba.core.errors
+
     numba.core.errors.NumbaExperimentalFeatureWarning = Warning
 except ImportError:
     jit = overload = lambda *a, **kw: (lambda x: x)
@@ -579,12 +580,13 @@ def mygradient(f, d):
 
     return out
 
+
 @jit(nopython=True, nogil=True, cache=True)
 def mygradient_uniform(f):
     out = np.empty_like(f)
-    out[1:-1] = (f[2:] - f[:-2]) / (2.0)
-    out[0] = (f[1] - f[0])
-    out[-1] = (f[-1] - f[-2])
+    out[1:-1] = (f[2:] - f[:-2]) / 2.0
+    out[0] = f[1] - f[0]
+    out[-1] = f[-1] - f[-2]
     return out
 
 
@@ -658,7 +660,7 @@ def schwarz_red(red_f, red_fc, stable, offset):
 
 
 @jit(nopython=True, nogil=True, cache=True)
-def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale):
+def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale, split=None):
     """So that schwarz can be directly jammed into delta_curve"""
     return schwarz_red(red_force, red_fc, 1.0, 0.0)
 
@@ -713,7 +715,7 @@ def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
 
 
 @jit(nopython=True, nogil=True)
-def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
+def red_extend(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     """Calculate, in reduced units, an extent Schwarz curve with long range LJ potential and snap-off physics.
 
     MUCH LESS TESTED THAN RED_RETRACT
@@ -779,7 +781,7 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
 
 
 @jit(nopython=True, nogil=True)
-def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
+def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     """Calculate, in reduced units, a retract Schwarz curve with long range LJ potential and snap-off physics.
 
     Following the broad example of Lin (2007) and Johnson (1997), we combine the unstable branch
@@ -850,8 +852,28 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
 
 
 @jit(nopython=True, nogil=True)
+def red_both(delta, *args, split):
+    return np.concatenate(
+        (
+            red_extend(delta[:split], *args),
+            red_retract(delta[split:], *args),
+        )
+    )
+
+
+@jit(nopython=True, nogil=True)
 def force_curve(
-    red_curve, delta, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
+    red_curve,
+    delta,
+    k,
+    radius,
+    tau,
+    M,
+    fc,
+    delta_shift,
+    force_shift,
+    lj_delta_scale,
+    split=None,
 ):
     """Calculate a force curve from indentation data."""
     # Catch crazy inputs early
@@ -872,7 +894,7 @@ def force_curve(
     lj_delta_scale = np.exp(lj_delta_scale) / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
-    red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale)
+    red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale, split)
 
     # Rescale to dimensioned units
     return (red_force * ref_force) + force_shift
@@ -880,7 +902,17 @@ def force_curve(
 
 @jit(nopython=True, nogil=True)
 def delta_curve(
-    red_curve, force, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
+    red_curve,
+    force,
+    k,
+    radius,
+    tau,
+    M,
+    fc,
+    delta_shift,
+    force_shift,
+    lj_delta_scale,
+    split=None,
 ):
     """Convenience function for inverse of force_curve, i.e. force->delta"""
     # Catch crazy inputs early
@@ -901,7 +933,7 @@ def delta_curve(
     lj_delta_scale = np.exp(lj_delta_scale) / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
-    red_delta = red_curve(red_force, red_fc, -red_k, -lj_delta_scale)
+    red_delta = red_curve(red_force, red_fc, -red_k, -lj_delta_scale, split)
 
     # Rescale to dimensioned units
     return (red_delta * ref_delta) + delta_shift
@@ -1000,21 +1032,14 @@ def fitfun(
     p0 = np.clip(p0, *bounds)
 
     assert fit_mode
+    split = None
     if fit_mode == FitMode.EXTEND:
         red_curve = red_extend
     elif fit_mode == FitMode.RETRACT:
         red_curve = red_retract
     elif fit_mode == FitMode.BOTH:
+        red_curve = red_both
         split = kwargs["split"]
-
-        def red_curve(delta, *args):
-            return np.concatenate(
-                (
-                    red_extend(delta[:split], *args),
-                    red_retract(delta[split:], *args),
-                )
-            )
-
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
@@ -1038,7 +1063,7 @@ def fitfun(
         if np.any(dout):
             # update initial guess each round
             d0 = root_df_sane(
-                lambda d: force_curve(red_curve, z - d, k, *fc_parms) / k - d,
+                lambda d: force_curve(red_curve, z - d, k, *fc_parms, split=split) / k - d,
                 x0=d0,
                 ftol=1e-3,
                 callback=lambda *a: cancel_poller(),
@@ -1046,7 +1071,7 @@ def fitfun(
             dout += d0
         else:
             # fast path for no major artifacts
-            dout += force_curve(red_curve, z - d, k, *fc_parms) / k
+            dout += force_curve(red_curve, z - d, k, *fc_parms, split=split) / k
         return dout
 
     try:
