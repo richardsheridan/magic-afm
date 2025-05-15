@@ -31,7 +31,7 @@ from numpy.random import uniform
 from soxr import resample
 
 try:
-    from numba import jit
+    from numbas import jit
     from numba.extending import overload
     import numba.core.errors
 
@@ -1063,7 +1063,15 @@ def fitfun(
         if np.any(dout):
             # update initial guess each round
             d0 = root_df_sane(
-                lambda d: force_curve(red_curve, z - d, k, *fc_parms, split=split) / k - d,
+                lambda d: force_curve(
+                    red_curve,
+                    z - d,
+                    k,
+                    *fc_parms,
+                    split=split,
+                )
+                / k
+                - d,
                 x0=d0,
                 ftol=1e-3,
                 callback=lambda *a: cancel_poller(),
@@ -1093,7 +1101,7 @@ def fitfun(
         parms = np.void(np.nan, dtype=PARMS_DTYPE)
         parms_err = np.void(np.nan, dtype=PARMS_DTYPE)
         sse = np.nan
-        d_fit = np.nan
+        d_fit = np.full_like(d, np.nan)
 
     return parms, parms_err, sse, d_fit
 

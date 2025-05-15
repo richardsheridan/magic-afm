@@ -1315,6 +1315,7 @@ class ForceVolumeTkDisplay:
             fit_labelframe,
             5,
             "Lennard-Jones",
+            default=2,
             from_=-6,
             to=6,
             fitfix=calculation.FitFix.LJ_SCALE,
@@ -2300,9 +2301,9 @@ def calculate_force_data(
     t_step *= 1000
     rnpts = calculation.RESAMPLE_NPTS
     if npts > rnpts:
-        split = len(zxr[0]) * rnpts // npts
         zxr_and_dxr = np.reshape((zxr, dxr), (2, -1))
-        zxr_and_dxr = calculation.resample_wrapper(zxr_and_dxr, rnpts, False)
+        zxr_and_dxr = calculation.resample_wrapper(zxr_and_dxr, rnpts, True)
+        assert zxr_and_dxr.shape[-1] == rnpts
         cancel_poller()
         zxr, dxr = zxr_and_dxr.reshape(2, 2, -1)
         t_step *= npts / rnpts
