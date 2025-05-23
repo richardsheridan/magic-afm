@@ -31,7 +31,7 @@ from numpy.random import uniform
 from soxr import resample
 
 try:
-    from numbas import jit
+    from numba import jit
     from numba.extending import overload
     import numba.core.errors
 
@@ -852,11 +852,11 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
 
 
 @jit(nopython=True, nogil=True)
-def red_both(delta, *args, split):
+def red_both(red_delta, red_fc, red_k, lj_delta_scale, split):
     return np.concatenate(
         (
-            red_extend(delta[:split], *args),
-            red_retract(delta[split:], *args),
+            red_extend(red_delta[:split], red_fc, red_k, lj_delta_scale),
+            red_retract(red_delta[split:], red_fc, red_k, lj_delta_scale),
         )
     )
 
