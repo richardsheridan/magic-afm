@@ -1250,19 +1250,6 @@ def process_force_curve(x, fit_mode, s_ratio):
 
 def warmup_jit():
     """Call jitted functions until check_jit output stabilizes"""
-    npts = 1024
-    split = npts // 2
-    delta = np.float32(
-        (np.cos(np.linspace(0, np.pi * 2, npts, endpoint=False)) - 0.90) * 25
-    )
-
-    fext = force_curve(red_extend, delta[:split], 1, 10, 1, 1, 10, 0, 0, 1)
-    fret = force_curve(red_retract, delta[split:], 1, 10, 1, 1, 10, 0, 0, 1)
-    fext = force_curve(red_extend, delta[:split], 1, 10, 0, 1, 10, 0, 0, 1)
-    fret = force_curve(red_retract, delta[split:], 1, 10, 0, 1, 10, 0, 0, 1)
-    maxforce = fret[slice(len(fret) // 25)].mean()
-    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 0, 1, 10, 0, 0, 1)
-    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, 1, 10, 0, 0, 1)
     image = np.zeros((64, 64), dtype=np.float32)
     gauss3x3(image)
     median3x1(image)

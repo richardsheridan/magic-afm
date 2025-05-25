@@ -1643,6 +1643,7 @@ class ForceVolumeController:
         img_shape = self.axesimage.get_size()
         ncurves = img_shape[0] * img_shape[1]
         chunksize = 4
+
         pause_event = trio.Event()
         pause_event.set()  # running to start with
 
@@ -1653,24 +1654,28 @@ class ForceVolumeController:
             else:
                 pause_event.set()
 
-        async with self.spinner_scope():
+        prepare_flag = True
+
+        async def preparation_spinner():
+            while prepare_flag:
+                pbar.update(1)
+                await trio.sleep(0.1)
+
+        async with self.spinner_scope(), trio.open_nursery() as pipeline_nursery:
             # assign pbar and progress_image ASAP in case of cancel
-            with (
-                trio.CancelScope() as cancel_scope,
-                tqdm_tk(
-                    total=ncurves,
-                    desc=f"Fitting {self.display.name} force curves",
-                    smoothing=0.01,
-                    # smoothing_time=1,
-                    mininterval=async_tools.LONGEST_IMPERCEPTIBLE_DELAY * 2,
-                    unit=" fits",
-                    tk_parent=self.display.tkwindow,
-                    grab=False,
-                    leave=False,
-                    cancel_callback=cancel_scope.cancel,
-                    pause_callback=swap_pause_event,
-                ) as pbar,
-            ):
+            with tqdm_tk(
+                desc=f"Preparing to fit {self.display.name} force curves",
+                smoothing=0.01,
+                # smoothing_time=1,
+                mininterval=async_tools.LONGEST_IMPERCEPTIBLE_DELAY * 2,
+                unit=" fits",
+                tk_parent=self.display.tkwindow,
+                bar_format="{desc} {bar} {elapsed}",
+                grab=False,
+                leave=False,
+                cancel_callback=pipeline_nursery.cancel_scope.cancel,
+                pause_callback=swap_pause_event,
+            ) as pbar:
                 progress_image: matplotlib.image.AxesImage | None = None
                 progress_array = np.zeros(img_shape + (4,), dtype="f4")
                 half_red = np.array((1, 0, 0, 0.5), dtype="f4")
@@ -1704,42 +1709,49 @@ class ForceVolumeController:
                     self.display.canvas.restore_region(bg)
                     return True
 
-                async with trio.open_nursery() as pipeline_nursery:
-                    force_curve_aiter = await pipeline_nursery.start(
-                        async_tools.to_sync_runner_map_unordered,
-                        trio.to_thread.run_sync,
-                        partial(
-                            calculation.process_force_curve,
-                            s_ratio=options.defl_sens
-                            / self.opened_fvol.initial_parameters.defl_sens,
-                            fit_mode=options.fit_mode,
-                        ),
-                        self.opened_fvol.iter_curves(options.trace, options.sync_dist),
-                        chunksize * 8,
-                    )
-                    # noinspection PyTypeChecker
-                    d = asdict(options)
-                    del d["disp_kind"]
-                    property_aiter = await pipeline_nursery.start(
-                        async_tools.to_sync_runner_map_unordered,
-                        trio_parallel.run_sync,
-                        partial(calculation.calc_properties_imap, **d),
-                        force_curve_aiter,
-                        chunksize,
-                    )
-                    async for rc, properties in property_aiter:
-                        if properties is None:
-                            property_map[rc] = np.nan
-                            progress_array[rc] = half_red
-                        else:
-                            property_map[rc] = properties
-                            progress_array[rc] = half_green
-                        if pbar.update():
-                            self.display.canvas.draw_send.send_nowait(blit_img_draw_fn)
-                        # This is a hot loop, we should avoid extra checkpoints
-                        if not pause_event.is_set():
-                            await pause_event.wait()
-                            pbar.unpause()
+                force_curve_aiter = await pipeline_nursery.start(
+                    async_tools.to_sync_runner_map_unordered,
+                    trio.to_thread.run_sync,
+                    partial(
+                        calculation.process_force_curve,
+                        s_ratio=options.defl_sens
+                        / self.opened_fvol.initial_parameters.defl_sens,
+                        fit_mode=options.fit_mode,
+                    ),
+                    self.opened_fvol.iter_curves(options.trace, options.sync_dist),
+                    chunksize * 8,
+                )
+                # noinspection PyTypeChecker
+                d = asdict(options)
+                del d["disp_kind"]
+                property_aiter = await pipeline_nursery.start(
+                    async_tools.to_sync_runner_map_unordered,
+                    trio_parallel.run_sync,
+                    partial(calculation.calc_properties_imap, **d),
+                    force_curve_aiter,
+                    chunksize,
+                )
+                pipeline_nursery.start_soon(preparation_spinner)
+                async for rc, properties in property_aiter:
+                    if prepare_flag:
+                        prepare_flag = False
+                        pbar.set_description_str(
+                            f"Fitting {self.display.name} force curves"
+                        )
+                        pbar.reset(total=ncurves)
+                        pbar.bar_format = None
+                    if properties is None:
+                        property_map[rc] = np.nan
+                        progress_array[rc] = half_red
+                    else:
+                        property_map[rc] = properties
+                        progress_array[rc] = half_green
+                    if pbar.update():
+                        self.display.canvas.draw_send.send_nowait(blit_img_draw_fn)
+                    # This is a hot loop, we should avoid extra checkpoints
+                    if not pause_event.is_set():
+                        await pause_event.wait()
+                        pbar.unpause()
 
         def progress_image_cleanup_draw_fn():
             if progress_image is not None:
@@ -1747,7 +1759,7 @@ class ForceVolumeController:
 
         self.display.canvas.draw_send.send_nowait(progress_image_cleanup_draw_fn)
 
-        if cancel_scope.cancelled_caught:
+        if pipeline_nursery.cancel_scope.cancelled_caught:
             return
 
         combobox_values = list(self.display.image_name_menu.cget("values"))
@@ -2752,11 +2764,8 @@ async def main_task(root):
             cancellable=True,
         )
         for _ in range(async_tools.cpu_bound_limiter.total_tokens):
-            nursery.start_soon(tprs, bool)  # start workers while compiling
-        # don't race workers to compile first
-        await trio.to_thread.run_sync(calculation.warmup_jit)
-        for _ in range(async_tools.cpu_bound_limiter.total_tokens):
-            nursery.start_soon(tprs, calculation.warmup_jit)  # only compile cache=false
+            nursery.start_soon(tprs, bool)  # start workers while choosing data
+        nursery.start_soon(trio.to_thread.run_sync, calculation.warmup_jit)
         await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 
