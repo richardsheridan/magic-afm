@@ -33,6 +33,7 @@ from soxr import resample
 try:
     from numba import jit
     from numba.extending import overload
+    from numba.types import number_domain
     import numba.core.errors
 
     numba.core.errors.NumbaExperimentalFeatureWarning = Warning
@@ -246,8 +247,6 @@ MANIPULATIONS = dict(
 
 @overload(np.atleast_1d)
 def _atleast_1d_for_scalars(x):
-    from numba.types import number_domain
-
     if x in number_domain:
         return lambda x: np.array([x])
     return None
@@ -288,7 +287,6 @@ def resample_wrapper(X, npts, fourier=True, restore_trend=True):
 
 
 # can't cache because UUID cache busting https://github.com/numba/numba/issues/6284
-@jit(nopython=True, nogil=True)
 def secant(func, args, x0, x1):
     """Secant method from scipy optimize but stripping np.isclose for speed
 
@@ -360,7 +358,6 @@ def secant(func, args, x0, x1):
 
 # can't cache because UUID cache busting https://github.com/numba/numba/issues/6284
 # noinspection PyUnboundLocalVariable
-@jit(nopython=True, nogil=True)
 def brentq(func, args, xa, xb):
     """Transliterated from SciPy Zeros/brentq.c
 
@@ -714,7 +711,6 @@ def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
 ###############################################
 
 
-@jit(nopython=True, nogil=True)
 def red_extend(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     """Calculate, in reduced units, an extent Schwarz curve with long range LJ potential and snap-off physics.
 
@@ -780,7 +776,6 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     return np.maximum(s_f, lj_f)
 
 
-@jit(nopython=True, nogil=True)
 def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     """Calculate, in reduced units, a retract Schwarz curve with long range LJ potential and snap-off physics.
 
@@ -851,7 +846,6 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     return np.minimum(s_f, lj_f)
 
 
-@jit(nopython=True, nogil=True)
 def red_both(red_delta, red_fc, red_k, lj_delta_scale, split):
     return np.concatenate(
         (
@@ -861,7 +855,6 @@ def red_both(red_delta, red_fc, red_k, lj_delta_scale, split):
     )
 
 
-@jit(nopython=True, nogil=True)
 def force_curve(
     red_curve,
     delta,
@@ -900,7 +893,6 @@ def force_curve(
     return (red_force * ref_force) + force_shift
 
 
-@jit(nopython=True, nogil=True)
 def delta_curve(
     red_curve,
     force,
@@ -986,7 +978,7 @@ def fitfun(
     cancel_poller=bool,
     p0=None,
     nan_on_error=False,
-    **kwargs
+    **kwargs,
 ):
     delta = z - d
     force = d * k
@@ -1248,7 +1240,7 @@ def process_force_curve(x, fit_mode, s_ratio):
 ###############################################
 
 
-def warmup_jit():
+def warmup_jit_main():
     """Call jitted functions until check_jit output stabilizes"""
     image = np.zeros((64, 64), dtype=np.float32)
     gauss3x3(image)
@@ -1262,3 +1254,26 @@ def check_jit():
         if hasattr(_, "get_metadata"):
             print(_)
             print(_.get_metadata().keys())
+
+
+_skip_warmup = False
+
+
+def warmup_jit_worker():
+    """Replace uncacheable functions with jitted versions on-demand"""
+    global red_extend, red_retract, red_both, force_curve, delta_curve
+    global brentq, secant
+    global _skip_warmup
+
+    if _skip_warmup:
+        return
+    opts = dict(nopython=True, nogil=True)
+    # TODO: explicit function signatures for precompiling?
+    red_extend = jit(red_extend, **opts)
+    red_retract = jit(red_retract, **opts)
+    red_both = jit(red_both, **opts)
+    force_curve = jit(force_curve, **opts)
+    delta_curve = jit(delta_curve, **opts)
+    brentq = jit(brentq, **opts)
+    secant = jit(secant, **opts)
+    _skip_warmup = True

@@ -51,6 +51,7 @@ import math
 import os
 import pathlib
 import re
+import sys
 import tkinter as tk
 import tkinter.filedialog
 import tkinter.messagebox
@@ -2739,6 +2740,22 @@ async def main_task(root):
         root.bind_all("<Control-KeyPress-q>", func=impartial(quit_callback))
         menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
 
+        if "numba" in sys.modules:
+            jit_menu = tk.Menu(menu_frame, tearoff=False)
+
+            def jit_callback(*a, **kw):
+                for _ in range(async_tools.cpu_bound_limiter.total_tokens):
+                    # start workers while choosing data
+                    nursery.start_soon(tprs, calculation.warmup_jit_worker)
+
+            jit_menu.add_command(
+                label="Spend ~2 min to accelerate property maps",
+                accelerator="Ctrl+J",
+                command=jit_callback,
+            )
+            root.bind_all("<Control-KeyPress-j>", func=impartial(quit_callback))
+            menu_frame.add_cascade(label="Jit", menu=jit_menu, underline=0)
+
         help_menu = tk.Menu(menu_frame, tearoff=False)
         help_menu.add_command(
             label="Open help", accelerator="F1", underline=5, command=help_action
@@ -2765,7 +2782,7 @@ async def main_task(root):
         )
         for _ in range(async_tools.cpu_bound_limiter.total_tokens):
             nursery.start_soon(tprs, bool)  # start workers while choosing data
-        nursery.start_soon(trio.to_thread.run_sync, calculation.warmup_jit)
+        nursery.start_soon(trio.to_thread.run_sync, calculation.warmup_jit_main)
         await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 

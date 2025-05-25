@@ -41,13 +41,6 @@ import copy
 
 import numpy
 
-try:
-    from numba import jit
-except ImportError:
-    jit = lambda *a, **kw: (lambda x: x)
-else:
-    abs = numpy.fabs
-
 # codes understood by the routine
 CFREE = 0
 CPOSITIVE = 1
@@ -587,7 +580,6 @@ def chisq_alpha_beta(
         return chisq, alpha, beta
 
 
-@jit(nopython=True, nogil=True)
 def _get_parameters(parameters, constraints):
     """
     Apply constraints to input parameters.
@@ -632,7 +624,6 @@ def _get_parameters(parameters, constraints):
     return newparam
 
 
-@jit(nopython=True, nogil=True)
 def _get_sigma_parameters(parameters, sigma0, constraints):
     """
     Internal function propagating the uncertainty on the actually fitted
