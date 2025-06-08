@@ -1150,10 +1150,10 @@ class ForceVolumeTkDisplay:
 
         image_opts_frame.grid(row=1, column=0)
 
+        fit_group_frame = ttk.Frame(self.options_frame)
+
         if initial_values.trace is not None:
-            data_select_frame = ttk.Labelframe(
-                self.options_frame, text="Select data source"
-            )
+            data_select_frame = ttk.Labelframe(fit_group_frame, text="Fit source")
             self.data_select_intvar = tk.IntVar(
                 data_select_frame, value=initial_values.trace
             )
@@ -1174,7 +1174,7 @@ class ForceVolumeTkDisplay:
                 padding=4,
             )
             disp_retrace_button.pack(side="left")
-            data_select_frame.grid(row=1, column=0)
+            data_select_frame.pack(fill="x")
 
         disp_labelframe = ttk.Labelframe(self.options_frame, text="Force curve display")
         self.disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
@@ -1237,7 +1237,7 @@ class ForceVolumeTkDisplay:
         preproc_labelframe.grid(row=0, column=1, sticky="EW")
         preproc_labelframe.grid_columnconfigure(1, weight=1)
 
-        segment_labelframe = ttk.Labelframe(self.options_frame, text="Fit segment")
+        segment_labelframe = ttk.Labelframe(fit_group_frame, text="Fit segment")
         self.fitfix_intvar = tk.IntVar(
             segment_labelframe,
             value=~calculation.FitFix(0) & ~calculation.FitFix.LJ_SCALE,
@@ -1275,8 +1275,10 @@ class ForceVolumeTkDisplay:
             variable=self.fit_intvar,
         )
         fit_both_button.grid(row=0, column=2, sticky="W")
+        segment_labelframe.pack(fill="x")
+
         # note: this was relocated so double check the row and columns
-        segment_labelframe.grid(row=2, column=0, sticky="EW")
+        fit_group_frame.grid(row=2, column=0, sticky="EW")
 
         fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
         parm_label_name = ttk.Label(fit_labelframe, text="Name")
