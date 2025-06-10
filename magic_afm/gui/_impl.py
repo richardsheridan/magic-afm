@@ -2755,7 +2755,7 @@ async def main_task(root):
                 accelerator="Ctrl+J",
                 command=jit_callback,
             )
-            root.bind_all("<Control-KeyPress-j>", func=impartial(quit_callback))
+            root.bind_all("<Control-KeyPress-j>", func=impartial(jit_callback))
             menu_frame.add_cascade(label="Jit", menu=jit_menu, underline=0)
 
         help_menu = tk.Menu(menu_frame, tearoff=False)
