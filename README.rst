@@ -277,11 +277,11 @@ creates new images for each in the "Image" menu. All calculated property maps ca
 be exported like any other image by clicking "Export calculated maps". Again, The
 current preprocessing and fit parameters will be written as JSON in the same folder.
 
-.. TODO: establish if you are in the magic ratio regime
-
 Future Plans:
 
 - Test suite and CI
+
+- More complete model outputs (e.g. expose LJ breadth parameter)
 
 - Viscoelastic model
 
