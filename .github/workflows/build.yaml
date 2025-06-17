@@ -28,7 +28,7 @@ jobs:
         if: startsWith( runner.os, 'mac')
         run: rm -rf dist/magic_gui
       - name: Upload build artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: magic_gui-${{ matrix.os }}-build
           path: dist/
