@@ -51,6 +51,7 @@ import math
 import os
 import pathlib
 import re
+import sys
 import tkinter as tk
 import tkinter.filedialog
 import tkinter.messagebox
@@ -149,12 +150,19 @@ class DispKind(enum.IntEnum):
 @frozen
 class ForceCurveOptions:
     fit_mode: calculation.FitMode
+    fit_fix: calculation.FitFix
     disp_kind: DispKind
     k: float
     defl_sens: float
     sync_dist: float | None
     radius: float
     tau: float
+    M: float
+    lj_scale: float
+    vd: float
+    li_per: float
+    li_amp: float
+    drag: float
     trace: int | None
 
 
@@ -166,9 +174,8 @@ class ForceCurveData:
     fxr: tuple[np.ndarray, np.ndarray]
     deltaxr: tuple[np.ndarray, np.ndarray]
     # everything else set only if fit
-    beta: Optional[np.ndarray] = None
-    beta_err: Optional[np.ndarray] = None
-    calc_fun: Optional[Callable] = None
+    parms: Optional[np.ndarray] = None
+    parms_err: Optional[np.ndarray] = None
     fit_mode: Optional[calculation.FitMode] = None
     f_fit: Optional[np.ndarray] = None
     d_fit: Optional[np.ndarray] = None
@@ -538,7 +545,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         toplevel = tk.Toplevel(self)
         toplevel.wm_title(self._headers_name + " headers")
         toplevel.wm_attributes("-topmost", 1)
-        toplevel.after("idle", lambda: toplevel.wm_attributes("-topmost", 0))
+        toplevel.wm_attributes("-topmost", 0)
         toplevel.columnconfigure(0, weight=1)
         toplevel.rowconfigure(0, weight=1)
         treeview = ttk.Treeview(toplevel, columns=["value"], selectmode="none")
@@ -1154,12 +1161,12 @@ class ForceVolumeTkDisplay:
         manipulate_menu.pack(fill="x")
         manipulate_labelframe.pack(fill="x")
 
-        image_opts_frame.grid(row=2, column=0, rowspan=2)
+        image_opts_frame.grid(row=1, column=0)
+
+        fit_group_frame = ttk.Frame(self.options_frame)
 
         if initial_values.trace is not None:
-            data_select_frame = ttk.Labelframe(
-                self.options_frame, text="Select data source"
-            )
+            data_select_frame = ttk.Labelframe(fit_group_frame, text="Fit source")
             self.data_select_intvar = tk.IntVar(
                 data_select_frame, value=initial_values.trace
             )
@@ -1180,7 +1187,7 @@ class ForceVolumeTkDisplay:
                 padding=4,
             )
             disp_retrace_button.pack(side="left")
-            data_select_frame.grid(row=1, column=0)
+            data_select_frame.pack(fill="x")
 
         disp_labelframe = ttk.Labelframe(self.options_frame, text="Force curve display")
         self.disp_kind_intvar = tk.IntVar(disp_labelframe, value=DispKind.zd.value)
@@ -1212,131 +1219,167 @@ class ForceVolumeTkDisplay:
         disp_labelframe.grid(row=0, column=0)
 
         preproc_labelframe = ttk.Labelframe(self.options_frame, text="Preprocessing")
-        self.defl_sens_strvar = tk.StringVar(preproc_labelframe)
-        self._add_trace(self.defl_sens_strvar, self.defl_sens_callback)
-        self.defl_sens_sbox = ttk.Spinbox(
+        self.defl_sens_strvar = self._add_parm(
             preproc_labelframe,
+            0,
+            "Deflection Sens.",
+            initial_values.defl_sens,
             from_=0,
             to=1e3,
             increment=0.1,
-            format="%0.1f",
-            width=6,
-            textvariable=self.defl_sens_strvar,
         )
-        self.defl_sens_sbox.set(initial_values.defl_sens)
-        self.defl_sens_sbox.grid(row=0, column=2, sticky="E")
-        defl_sens_label = ttk.Label(
-            preproc_labelframe, text="Deflection Sens.", justify="left"
-        )
-        defl_sens_label.grid(row=0, column=0, columnspan=2, sticky="W")
-        self.spring_const_strvar = tk.StringVar(preproc_labelframe)
-        self._add_trace(self.spring_const_strvar, self.spring_const_callback)
-        self.spring_const_sbox = ttk.Spinbox(
+        self.spring_const_strvar = self._add_parm(
             preproc_labelframe,
+            1,
+            "Spring Constant",
+            initial_values.k,
             from_=0,
             to=1e3,
             increment=0.1,
-            format="%0.1f",
-            width=6,
-            textvariable=self.spring_const_strvar,
         )
-        self.spring_const_sbox.set(initial_values.k)
-        self.spring_const_sbox.grid(row=1, column=2, sticky="E")
-        spring_const_label = ttk.Label(
-            preproc_labelframe, text="Spring Constant", justify="left"
-        )
-        spring_const_label.grid(row=1, column=0, columnspan=2, sticky="W")
         if initial_values.sync_dist is not None:
-            self.sync_dist_strvar = tk.StringVar(preproc_labelframe)
-            self._add_trace(self.sync_dist_strvar, self.sync_dist_callback)
-            self.sync_dist_sbox = ttk.Spinbox(
+            self.sync_dist_strvar = self._add_parm(
                 preproc_labelframe,
+                2,
+                "Sync Distance",
+                initial_values.sync_dist,
                 from_=-initial_values.sync_dist * 2,
                 to=initial_values.sync_dist * 2,
                 increment=0.1,
-                format="%0.2f",
-                width=6,
-                textvariable=self.sync_dist_strvar,
             )
-            self.sync_dist_sbox.set(initial_values.sync_dist)
-            self.sync_dist_sbox.grid(row=2, column=2, sticky="E")
-            sync_dist_label = ttk.Label(
-                preproc_labelframe, text="Sync Distance", justify="left"
-            )
-            sync_dist_label.grid(row=2, column=0, columnspan=2, sticky="W")
         preproc_labelframe.grid(row=0, column=1, sticky="EW")
         preproc_labelframe.grid_columnconfigure(1, weight=1)
 
-        fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
+        segment_labelframe = ttk.Labelframe(fit_group_frame, text="Fit segment")
+        self.fitfix_intvar = tk.IntVar(
+            segment_labelframe,
+            value=~calculation.FitFix(0) & ~calculation.FitFix.LJ_SCALE,
+        )
+        self.chkboxes = {}
         self.fit_intvar = tk.IntVar(
-            fit_labelframe, value=calculation.FitMode.SKIP.value
+            segment_labelframe, value=calculation.FitMode.SKIP.value
         )
         self._add_trace(self.fit_intvar, self.change_fit_kind_callback)
         fit_skip_button = ttk.Radiobutton(
-            fit_labelframe,
+            segment_labelframe,
             text="Skip",
             value=calculation.FitMode.SKIP.value,
             variable=self.fit_intvar,
         )
-        fit_skip_button.grid(row=1, column=0, sticky="W")
+        fit_skip_button.grid(row=1, column=2, sticky="W")
         fit_ext_button = ttk.Radiobutton(
-            fit_labelframe,
+            segment_labelframe,
             text="Extend",
             value=calculation.FitMode.EXTEND.value,
             variable=self.fit_intvar,
         )
         fit_ext_button.grid(row=0, column=0, sticky="W")
         fit_ret_button = ttk.Radiobutton(
-            fit_labelframe,
+            segment_labelframe,
             text="Retract",
             value=calculation.FitMode.RETRACT.value,
             variable=self.fit_intvar,
         )
-        fit_ret_button.grid(row=0, column=1, sticky="W")
-        fit_ret_button = ttk.Radiobutton(
-            fit_labelframe,
+        fit_ret_button.grid(row=1, column=0, sticky="W")
+        fit_both_button = ttk.Radiobutton(
+            segment_labelframe,
             text="Both",
             value=calculation.FitMode.BOTH.value,
             variable=self.fit_intvar,
         )
-        fit_ret_button.grid(row=1, column=1, sticky="W")
+        fit_both_button.grid(row=0, column=2, sticky="W")
+        segment_labelframe.pack(fill="x")
 
-        fit_radius_label = ttk.Label(fit_labelframe, text="Tip radius (nm)")
-        fit_radius_label.grid(row=2, column=0, columnspan=2, sticky="W")
-        self.radius_strvar = tk.StringVar(fit_labelframe)
-        self._add_trace(self.radius_strvar, self.radius_callback)
-        self.fit_radius_sbox = ttk.Spinbox(
-            fit_labelframe,
-            from_=1,
-            to=10000,
-            increment=0.1,
-            format="%0.1f",
-            width=6,
-            textvariable=self.radius_strvar,
+        # note: this was relocated so double check the row and columns
+        fit_group_frame.grid(row=2, column=0, sticky="EW")
+
+        fit_labelframe = ttk.Labelframe(self.options_frame, text="Fit parameters")
+        parm_label_name = ttk.Label(fit_labelframe, text="Name")
+        parm_label_name.grid(row=0, column=0, sticky="W")
+        parm_label_fix = ttk.Label(fit_labelframe, text="Fix?")
+        parm_label_fix.grid(row=0, column=1, sticky="EW")
+        parm_label_val = ttk.Label(fit_labelframe, text="Value")
+        parm_label_val.grid(row=0, column=2, sticky="E")
+        swz_label = ttk.Label(
+            fit_labelframe, text="Schwarz Model", relief="solid", anchor="center"
         )
-        self.fit_radius_sbox.set(20.0)
-        self.fit_radius_sbox.grid(row=2, column=2, sticky="E")
-        fit_tau_label = ttk.Label(fit_labelframe, text="DMT-JKR (0-1)", justify="left")
-        fit_tau_label.grid(row=3, column=0, columnspan=2, sticky="W")
-        self.tau_strvar = tk.StringVar(fit_labelframe)
-        self._add_trace(self.tau_strvar, self.tau_callback)
-        self.fit_tau_sbox = ttk.Spinbox(
+        swz_label.grid(row=1, column=0, columnspan=3, sticky="EW")
+        self.mod_strvar = self._add_parm(
             fit_labelframe,
-            from_=0,
+            2,
+            "log10(M (Pa))",
+            default=6.0,
+            fitfix=calculation.FitFix.RADIUS,
+        )
+        self.radius_strvar = self._add_parm(
+            fit_labelframe,
+            3,
+            "Tip radius (nm)",
+            default=20.0,
+            fitfix=calculation.FitFix.RADIUS,
+        )
+        self.tau_strvar = self._add_parm(
+            fit_labelframe,
+            4,
+            "DMT-JKR (0-1)",
             to=1,
             increment=0.05,
             format="%0.2f",
-            width=6,
-            textvariable=self.tau_strvar,
+            fitfix=calculation.FitFix.TAU,
         )
-        self.fit_tau_sbox.set(0.0)
-        self.fit_tau_sbox.grid(row=3, column=2, sticky="E")
+        self.lj_scale_strvar = self._add_parm(
+            fit_labelframe,
+            5,
+            "Lennard-Jones",
+            default=2,
+            from_=-6,
+            to=6,
+            fitfix=calculation.FitFix.LJ_SCALE,
+        )
+        art_label = ttk.Label(
+            fit_labelframe, text="Deflection Artifacts", relief="solid", anchor="center"
+        )
+        art_label.grid(row=6, column=0, columnspan=3, sticky="EW")
+        self.vd_strvar = self._add_parm(
+            fit_labelframe,
+            7,
+            "Virtual Deflection",
+            from_=-1e5,
+            to=1e5,
+            increment=0.01,
+            format="%0.3f",
+            fitfix=calculation.FitFix.VIRTUAL_DEFLECTION,
+        )
+        self.drag_strvar = self._add_parm(
+            fit_labelframe,
+            8,
+            "Hydrodyn. Drag",
+            fitfix=calculation.FitFix.HYDRODYNAMIC_DRAG,
+        )
+        self.li_per_strvar = self._add_parm(
+            fit_labelframe,
+            9,
+            "Laser Intf. Period",
+            0.0,
+            increment=10.0,
+            format="%0.0f",
+            fitfix=calculation.FitFix.LI_PERIOD,
+        )
+        self.li_amp_strvar = self._add_parm(
+            fit_labelframe,
+            10,
+            "Laser Intf. Ampl.",
+            0.0,
+            increment=0.1,
+            format="%0.1f",
+            fitfix=calculation.FitFix.LI_AMP,
+        )
+        fit_labelframe.grid(row=1, column=1, rowspan=3, sticky="EW")
 
         self.calc_props_button = ttk.Button(
-            fit_labelframe, text="Calculate Property Maps", state="disabled"
+            self.options_frame, text="Calculate Property Maps", state="disabled"
         )
-        self.calc_props_button.grid(row=4, column=0, columnspan=3)
-        fit_labelframe.grid(row=1, column=1, rowspan=3, sticky="EW")
+        self.calc_props_button.grid(row=3, column=0)
 
         self.options_frame.grid(row=1, column=0, sticky="NSEW")
 
@@ -1397,9 +1440,7 @@ class ForceVolumeTkDisplay:
         )
         self.tipwindow_label.pack(ipadx=2)
         self._opts = self.options
-        self.calc_props_button.configure(
-            command=lambda: self.calc_prop_map_send_chan.send_nowait(self.options)
-        )
+        self.calc_props_button.configure(command=self.calc_prop_map_callback)
         self._add_trace(self.colormap_strvar, self.change_cmap_callback)
         self._add_trace(self.manipulate_strvar, self.manipulate_callback)
         self._add_trace(self.image_name_strvar, self.change_image_callback)
@@ -1407,6 +1448,70 @@ class ForceVolumeTkDisplay:
 
     def _add_trace(self, tkvar, callback):
         self._traces.append((tkvar, tkvar.trace_add("write", callback)))
+
+    def _add_parm(
+        self,
+        frame,
+        row,
+        name,
+        default=0.0,
+        from_=0.0,
+        to=1e4,
+        increment=0.1,
+        format="%0.1f",
+        fitfix=calculation.FitFix(0),
+    ):
+        label = ttk.Label(frame, text=name)
+        label.grid(row=row, column=0, sticky="W")
+        label.grid_columnconfigure(0, weight=1)
+        if fitfix:
+            if fitfix & calculation.FitFix.RADIUS:
+                # special case radio button pair for modulus and radius
+                radius = 0 in self.chkboxes
+                if radius:
+                    chkvar = self.chkboxes[0][0]
+                else:
+                    # modulus must come first so radius button has nonzero value
+                    chkvar = tk.IntVar(frame, True)  # default to fix radius
+                    fitfix = 0  # don't modify val when reading checkboxes for modulus
+                chkbox = ttk.Radiobutton(frame, variable=chkvar, value=radius)
+            else:
+                chkvar = tk.IntVar(frame, bool(fitfix & calculation.FitFix.DEFAULTS))
+                chkbox = ttk.Checkbutton(frame, variable=chkvar)
+            self.chkboxes[fitfix] = chkvar, chkbox
+            chkbox.grid(row=row, column=1)
+            self._add_trace(chkvar, lambda *a: self.redraw_send_chan.send_nowait(False))
+        strvar = tk.StringVar(frame)
+        sbox = ttk.Spinbox(
+            frame,
+            from_=from_,
+            to=to,
+            increment=increment,
+            format=format,
+            width=6,
+            textvariable=strvar,
+        )
+
+        def sbox_callback(*args):
+            try:
+                float(strvar.get())
+            except ValueError:
+                sbox.configure(foreground="red2")
+            else:
+                sbox.configure(foreground="black")
+                self.redraw_send_chan.send_nowait(False)
+
+        self._add_trace(strvar, sbox_callback)
+        sbox.set(default)
+        sbox.grid(row=row, column=2, sticky="E")
+        return strvar
+
+    def _read_chkboxes(self):
+        val = 0
+        for flag, (var, box) in self.chkboxes.items():
+            if var.get():
+                val |= flag
+        return val
 
     def destroy(self):
         for tkvar, cbname in self._traces:
@@ -1419,15 +1524,24 @@ class ForceVolumeTkDisplay:
         try:
             self._opts = ForceCurveOptions(
                 fit_mode=calculation.FitMode(self.fit_intvar.get()),
+                fit_fix=calculation.FitFix(self._read_chkboxes()),
                 disp_kind=DispKind(self.disp_kind_intvar.get()),
                 k=float(self.spring_const_strvar.get()),
                 defl_sens=float(self.defl_sens_strvar.get()),
-                radius=float(self.fit_radius_sbox.get()),
-                tau=float(self.fit_tau_sbox.get()),
+                radius=float(self.radius_strvar.get()),
+                tau=float(self.tau_strvar.get()),
+                M=10 ** (float(self.mod_strvar.get()) - 9),
+                lj_scale=float(self.lj_scale_strvar.get()),
+                vd=float(self.vd_strvar.get()),
+                li_per=float(self.li_per_strvar.get()),
+                li_amp=float(self.li_amp_strvar.get()),
+                drag=float(self.drag_strvar.get()),
                 sync_dist=self.get_sync_dist_or_none(),
                 trace=self.get_trace_or_none(),
             )
         except Exception as e:
+            # Convert to warning so goofballs don't crash the app
+            # by filling fields with nonsense.
             warnings.warn(str(e))
         return self._opts
 
@@ -1479,51 +1593,6 @@ class ForceVolumeTkDisplay:
         self.manipulate_send_chan = manipulate_send_chan
         self.change_image_send_chan = change_image_send_chan
         nursery.start_soon(self.canvas.idle_draw_task)
-
-    def defl_sens_callback(self, *args):
-        try:
-            float(self.defl_sens_strvar.get())
-        except ValueError:
-            self.defl_sens_sbox.configure(foreground="red2")
-        else:
-            self.defl_sens_sbox.configure(foreground="black")
-            self.redraw_send_chan.send_nowait(False)
-
-    def spring_const_callback(self, *args):
-        try:
-            float(self.spring_const_strvar.get())
-        except ValueError:
-            self.spring_const_sbox.configure(foreground="red2")
-        else:
-            self.spring_const_sbox.configure(foreground="black")
-            self.redraw_send_chan.send_nowait(False)
-
-    def sync_dist_callback(self, *args):
-        try:
-            float(self.sync_dist_strvar.get())
-        except ValueError:
-            self.sync_dist_sbox.configure(foreground="red2")
-        else:
-            self.sync_dist_sbox.configure(foreground="black")
-            self.redraw_send_chan.send_nowait(False)
-
-    def radius_callback(self, *args):
-        try:
-            float(self.radius_strvar.get())
-        except ValueError:
-            self.fit_radius_sbox.configure(foreground="red2")
-        else:
-            self.fit_radius_sbox.configure(foreground="black")
-            self.redraw_send_chan.send_nowait(False)
-
-    def tau_callback(self, *args):
-        try:
-            float(self.tau_strvar.get())
-        except ValueError:
-            self.fit_tau_sbox.configure(foreground="red2")
-        else:
-            self.fit_tau_sbox.configure(foreground="black")
-            self.redraw_send_chan.send_nowait(False)
 
     def change_fit_kind_callback(self, *args):
         if self.fit_intvar.get():
@@ -1590,6 +1659,7 @@ class ForceVolumeController:
         img_shape = self.axesimage.get_size()
         ncurves = img_shape[0] * img_shape[1]
         chunksize = 4
+
         pause_event = trio.Event()
         pause_event.set()  # running to start with
 
@@ -1600,24 +1670,28 @@ class ForceVolumeController:
             else:
                 pause_event.set()
 
-        async with self.spinner_scope():
+        prepare_flag = True
+
+        async def preparation_spinner():
+            while prepare_flag:
+                pbar.update(1)
+                await trio.sleep(0.1)
+
+        async with self.spinner_scope(), trio.open_nursery() as pipeline_nursery:
             # assign pbar and progress_image ASAP in case of cancel
-            with (
-                trio.CancelScope() as cancel_scope,
-                tqdm_tk(
-                    total=ncurves,
-                    desc=f"Fitting {self.display.name} force curves",
-                    smoothing=0.01,
-                    # smoothing_time=1,
-                    mininterval=async_tools.LONGEST_IMPERCEPTIBLE_DELAY * 2,
-                    unit=" fits",
-                    tk_parent=self.display.tkwindow,
-                    grab=False,
-                    leave=False,
-                    cancel_callback=cancel_scope.cancel,
-                    pause_callback=swap_pause_event,
-                ) as pbar,
-            ):
+            with tqdm_tk(
+                desc=f"Preparing to fit {self.display.name} force curves",
+                smoothing=0.01,
+                # smoothing_time=1,
+                mininterval=async_tools.LONGEST_IMPERCEPTIBLE_DELAY * 2,
+                unit=" fits",
+                tk_parent=self.display.tkwindow,
+                bar_format="{desc} {bar} {elapsed}",
+                grab=False,
+                leave=False,
+                cancel_callback=pipeline_nursery.cancel_scope.cancel,
+                pause_callback=swap_pause_event,
+            ) as pbar:
                 progress_image: matplotlib.image.AxesImage | None = None
                 progress_array = np.zeros(img_shape + (4,), dtype="f4")
                 half_red = np.array((1, 0, 0, 0.5), dtype="f4")
@@ -1651,43 +1725,49 @@ class ForceVolumeController:
                     self.display.canvas.restore_region(bg)
                     return True
 
-                async with trio.open_nursery() as pipeline_nursery:
-                    force_curve_aiter = await pipeline_nursery.start(
-                        async_tools.to_sync_runner_map_unordered,
-                        trio.to_thread.run_sync,
-                        partial(
-                            calculation.process_force_curve,
-                            k=options.k,
-                            s_ratio=options.defl_sens
-                            / self.opened_fvol.initial_parameters.defl_sens,
-                            fit_mode=options.fit_mode,
-                        ),
-                        self.opened_fvol.iter_curves(options.trace, options.sync_dist),
-                        chunksize * 8,
-                    )
-                    # noinspection PyTypeChecker
-                    d = asdict(options)
-                    del d["disp_kind"]
-                    property_aiter = await pipeline_nursery.start(
-                        async_tools.to_sync_runner_map_unordered,
-                        trio_parallel.run_sync,
-                        partial(calculation.calc_properties_imap, **d),
-                        force_curve_aiter,
-                        chunksize,
-                    )
-                    async for rc, properties in property_aiter:
-                        if properties is None:
-                            property_map[rc] = np.nan
-                            progress_array[rc] = half_red
-                        else:
-                            property_map[rc] = properties
-                            progress_array[rc] = half_green
-                        if pbar.update():
-                            self.display.canvas.draw_send.send_nowait(blit_img_draw_fn)
-                        # This is a hot loop, we should avoid extra checkpoints
-                        if not pause_event.is_set():
-                            await pause_event.wait()
-                            pbar.unpause()
+                force_curve_aiter = await pipeline_nursery.start(
+                    async_tools.to_sync_runner_map_unordered,
+                    trio.to_thread.run_sync,
+                    partial(
+                        calculation.process_force_curve,
+                        s_ratio=options.defl_sens
+                        / self.opened_fvol.initial_parameters.defl_sens,
+                        fit_mode=options.fit_mode,
+                    ),
+                    self.opened_fvol.iter_curves(options.trace, options.sync_dist),
+                    chunksize * 8,
+                )
+                # noinspection PyTypeChecker
+                d = asdict(options)
+                del d["disp_kind"]
+                property_aiter = await pipeline_nursery.start(
+                    async_tools.to_sync_runner_map_unordered,
+                    trio_parallel.run_sync,
+                    partial(calculation.calc_properties_imap, **d),
+                    force_curve_aiter,
+                    chunksize,
+                )
+                pipeline_nursery.start_soon(preparation_spinner)
+                async for rc, properties in property_aiter:
+                    if prepare_flag:
+                        prepare_flag = False
+                        pbar.set_description_str(
+                            f"Fitting {self.display.name} force curves"
+                        )
+                        pbar.reset(total=ncurves)
+                        pbar.bar_format = None
+                    if properties is None:
+                        property_map[rc] = np.nan
+                        progress_array[rc] = half_red
+                    else:
+                        property_map[rc] = properties
+                        progress_array[rc] = half_green
+                    if pbar.update():
+                        self.display.canvas.draw_send.send_nowait(blit_img_draw_fn)
+                    # This is a hot loop, we should avoid extra checkpoints
+                    if not pause_event.is_set():
+                        await pause_event.wait()
+                        pbar.unpause()
 
         def progress_image_cleanup_draw_fn():
             if progress_image is not None:
@@ -1695,7 +1775,7 @@ class ForceVolumeController:
 
         self.display.canvas.draw_send.send_nowait(progress_image_cleanup_draw_fn)
 
-        if cancel_scope.cancelled_caught:
+        if pipeline_nursery.cancel_scope.cancelled_caught:
             return
 
         combobox_values = list(self.display.image_name_menu.cget("values"))
@@ -1888,26 +1968,30 @@ class ForceVolumeController:
         async with self.spinner_scope():
             with trio.CancelScope() as cancel_scope:
                 self.plot_curve_cancels_pending.add(cancel_scope)
-
-                # Calculation phase
-                # Do a few long-running jobs, likely to be canceled
-                force_curve = await trio.to_thread.run_sync(
-                    self.opened_fvol.get_curve,
-                    point.r,
-                    point.c,
-                    options.trace,
-                    options.sync_dist,
-                )
-                force_curve_data = await trio.to_thread.run_sync(
-                    calculate_force_data,
-                    *force_curve,
-                    self.opened_fvol.fvfile.t_step,
-                    options,
-                    self.opened_fvol.initial_parameters,
-                    trio.from_thread.check_cancelled,
-                )
-                del force_curve  # contained in data
-            self.plot_curve_cancels_pending.discard(cancel_scope)
+                try:
+                    # Calculation phase
+                    # Do a few long-running jobs, likely to be canceled
+                    force_curve = await trio.to_thread.run_sync(
+                        self.opened_fvol.get_curve,
+                        point.r,
+                        point.c,
+                        options.trace,
+                        options.sync_dist,
+                    )
+                    force_curve_data = await trio.to_thread.run_sync(
+                        calculate_force_data,
+                        *force_curve,
+                        self.opened_fvol.fvfile.t_step,
+                        options,
+                        self.opened_fvol.initial_parameters,
+                        trio.from_thread.check_cancelled,
+                    )
+                    del force_curve  # contained in data
+                except Exception:
+                    traceback.print_exc()
+                    return
+                finally:
+                    self.plot_curve_cancels_pending.discard(cancel_scope)
 
             if cancel_scope.cancelled_caught:
                 self.existing_points.discard(point)
@@ -2047,7 +2131,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
     assert point_data
     if len(point_data) == 1:
         data: ForceCurveData = next(iter(point_data.values()))
-        exp = np.log10(data.beta[0])
+        exp = math.log10(data.parms["M"])
         prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get(
             (-exp + 2.7) // 3, ("", 1)
         )
@@ -2064,9 +2148,13 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
         table: Table = ax.table(
             [
                 [
-                    "{:.2f}±{:.2f}".format(data.beta[0] * fac, data.beta_err[0] * fac),
-                    "{:.2e}".format(data.sens[0]),
-                    "{:.2f}±{:.2f}".format(data.beta[1], data.beta_err[1]),
+                    "{:.2f}±{:.2f}".format(
+                        float(data.parms["M"] * fac), float(data.parms_err["M"] * fac)
+                    ),
+                    "{:.2e}".format(float(data.sens)),
+                    "{:.2f}±{:.2f}".format(
+                        float(data.parms["fc"]), float(data.parms_err["fc"])
+                    ),
                     "{:.2f}".format(data.defl),
                     "{:.2f}".format(data.ind),
                     "{:.2f}".format(data.defl / data.ind),
@@ -2083,9 +2171,9 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
         m, sens, fadh, defl, ind, rat, a_c = np.transpose(
             [
                 (
-                    data.beta[0],
-                    data.sens[0],
-                    data.beta[1],
+                    float(data.parms["M"]),
+                    float(data.sens),
+                    float(data.parms["fc"]),
                     data.defl,
                     data.ind,
                     data.defl / data.ind,
@@ -2094,7 +2182,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
                 for data in point_data.values()
             ],
         )
-        exp = np.log10(np.mean(m))
+        exp = math.log10(np.mean(m))
         prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get(
             (-exp + 2.7) // 3, ("", 1)
         )
@@ -2156,25 +2244,25 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
         plot_ax.set_xlabel("Indentation depth (nm)")
         plot_ax.set_ylabel("Indentation force (nN)")
         if options.fit_mode:
-            f_fit = data.f_fit - data.beta[3]
+            f_fit = data.f_fit - data.parms["force_shift"]
             aex(
                 plot_ax.plot(
-                    data.deltaxr[0] - data.beta[2],
-                    data.fxr[0] - data.beta[3],
+                    data.deltaxr[0] - data.parms["delta_shift"],
+                    data.fxr[0] - data.parms["force_shift"],
                     label="Extend",
                 )
             )
             aex(
                 plot_ax.plot(
-                    data.deltaxr[1] - data.beta[2],
-                    data.fxr[1] - data.beta[3],
+                    data.deltaxr[1] - data.parms["delta_shift"],
+                    data.fxr[1] - data.parms["force_shift"],
                     label="Retract",
                 )
             )
             if options.fit_mode == calculation.FitMode.BOTH:
                 aex(
                     plot_ax.plot(
-                        np.concatenate(data.deltaxr) - data.beta[2],
+                        np.concatenate(data.deltaxr) - data.parms["delta_shift"],
                         f_fit,
                         "--",
                         label="Model",
@@ -2183,29 +2271,29 @@ def draw_force_curve(data: ForceCurveData, plot_ax, options: ForceCurveOptions):
             else:
                 aex(
                     plot_ax.plot(
-                        data.deltaxr[options.fit_mode - 1] - data.beta[2],
+                        data.deltaxr[options.fit_mode - 1] - data.parms["delta_shift"],
                         f_fit,
                         "--",
                         label="Model",
                     )
                 )
 
-            mopts = dict(
-                marker="X",
-                markersize=8,
-                linestyle="",
-                markeredgecolor="k",
-                markerfacecolor="k",
-            )
             aex(
                 plot_ax.plot(
                     [
-                        data.ind + data.mindelta - data.beta[2],
-                        data.mindelta - data.beta[2],
+                        data.ind + data.mindelta - data.parms["delta_shift"],
+                        data.mindelta - data.parms["delta_shift"],
                     ],
-                    [data.defl * options.k - data.beta[1], -data.beta[1]],
+                    [
+                        data.defl * options.k - data.parms["fc"],
+                        -data.parms["fc"],
+                    ],
                     label="Max/Crit",
-                    **mopts,
+                    marker="X",
+                    markersize=8,
+                    linestyle="",
+                    markeredgecolor="k",
+                    markerfacecolor="k",
                 )
             )
         else:
@@ -2241,9 +2329,9 @@ def calculate_force_data(
     t_step *= 1000
     rnpts = calculation.RESAMPLE_NPTS
     if npts > rnpts:
-        split = len(zxr[0]) * rnpts // npts
         zxr_and_dxr = np.reshape((zxr, dxr), (2, -1))
-        zxr_and_dxr = calculation.resample_wrapper(zxr_and_dxr, rnpts, False)
+        zxr_and_dxr = calculation.resample_wrapper(zxr_and_dxr, rnpts, True)
+        assert zxr_and_dxr.shape[-1] == rnpts
         cancel_poller()
         zxr, dxr = zxr_and_dxr.reshape(2, 2, -1)
         t_step *= npts / rnpts
@@ -2267,60 +2355,59 @@ def calculate_force_data(
         return ForceCurveData(zxr=zxr, dxr=dxr, txr=txr, fxr=fxr, deltaxr=deltaxr)
 
     if options.fit_mode == calculation.FitMode.EXTEND:
-        delta, f, split = deltaxr[0], fxr[0], None
+        z, d, split = zxr[0], dxr[0], None
     elif options.fit_mode == calculation.FitMode.RETRACT:
-        delta, f, split = deltaxr[1], fxr[1], None
+        z, d, split = zxr[1], dxr[1], None
     elif options.fit_mode == calculation.FitMode.BOTH:
-        delta, f, split = np.concatenate(deltaxr), np.concatenate(fxr), len(deltaxr[0])
+        z, d, split = np.concatenate(zxr), np.concatenate(dxr), len(deltaxr[0])
     else:
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
     cancel_poller()
     optionsdict = asdict(options)
-    beta, beta_err, sse, calc_fun = calculation.fitfun(
-        delta, f, **optionsdict, cancel_poller=cancel_poller, split=split
+    parms, parms_err, sse, d_fit = calculation.fitfun(
+        z,
+        d,
+        cancel_poller=cancel_poller,
+        split=split,
+        nan_on_error=False,
+        **optionsdict,
     )
-    f_fit = calc_fun(delta, *beta)
-    d_fit = f_fit / options.k
+    f_fit = d_fit * options.k
     cancel_poller()
 
     eps = 1e-3
-    delta_new, f_new, k_new = calculation.perturb_k(delta, f, eps, options.k)
+    d_new, k_new = calculation.perturb_k(d, options.k, eps)
     optionsdict.pop("k")
-    beta_perturb = calculation.fitfun(
-        delta_new,
-        f_new,
+    parms_perturb = calculation.fitfun(
+        z,
+        d_new,
         k_new,
-        **optionsdict,
         cancel_poller=cancel_poller,
         split=split,
+        p0=parms,
+        nan_on_error=False,
+        **optionsdict,
     )[0]
-    sens = (beta_perturb - beta) / beta / eps
-    if np.all(np.isfinite(beta)):
-        (
-            deflection,
-            indentation,
-            z_true_surface,
-            mindelta,
-            a_c,
-        ) = calculation.calc_def_ind_ztru_ac(f, beta, split=split, **asdict(options))
-    else:
-        deflection, indentation, z_true_surface, mindelta, a_c = (
-            np.nan,
-            np.nan,
-            np.nan,
-            np.nan,
-            np.nan,
-        )
+
+    sens = (parms_perturb["M"] - parms["M"]) / parms["M"] / eps
+    optionsdict = asdict(options)
+    optionsdict.pop("tau")
+    (
+        deflection,
+        indentation,
+        z_true_surface,
+        mindelta,
+        a_c,
+    ) = calculation.calc_def_ind_ztru_ac(d, parms, split=split, **optionsdict)
     return ForceCurveData(
         zxr=zxr,
         dxr=dxr,
         fxr=fxr,
         deltaxr=deltaxr,
         txr=txr,
-        beta=beta,
-        beta_err=beta_err,
-        calc_fun=calc_fun,
+        parms=parms,
+        parms_err=parms_err,
         fit_mode=options.fit_mode,
         f_fit=f_fit,
         d_fit=d_fit,
@@ -2668,6 +2755,22 @@ async def main_task(root):
         root.bind_all("<Control-KeyPress-q>", func=impartial(quit_callback))
         menu_frame.add_cascade(label="File", menu=file_menu, underline=0)
 
+        if "numba" in sys.modules:
+            jit_menu = tk.Menu(menu_frame, tearoff=False)
+
+            def jit_callback(*a, **kw):
+                for _ in range(async_tools.cpu_bound_limiter.total_tokens):
+                    # start workers while choosing data
+                    nursery.start_soon(tprs, calculation.warmup_jit_worker)
+
+            jit_menu.add_command(
+                label="Spend ~2 min to accelerate property maps",
+                accelerator="Ctrl+J",
+                command=jit_callback,
+            )
+            root.bind_all("<Control-KeyPress-j>", func=impartial(jit_callback))
+            menu_frame.add_cascade(label="Jit", menu=jit_menu, underline=0)
+
         help_menu = tk.Menu(menu_frame, tearoff=False)
         help_menu.add_command(
             label="Open help", accelerator="F1", underline=5, command=help_action
@@ -2693,11 +2796,8 @@ async def main_task(root):
             cancellable=True,
         )
         for _ in range(async_tools.cpu_bound_limiter.total_tokens):
-            nursery.start_soon(tprs, bool)  # start workers while compiling
-        # don't race workers to compile first
-        await trio.to_thread.run_sync(calculation.warmup_jit)
-        for _ in range(async_tools.cpu_bound_limiter.total_tokens):
-            nursery.start_soon(tprs, calculation.warmup_jit)  # only compile cache=false
+            nursery.start_soon(tprs, bool)  # start workers while choosing data
+        nursery.start_soon(trio.to_thread.run_sync, calculation.warmup_jit_main)
         await trio.sleep_forever()  # needed if nursery never starts a long running child
 
 

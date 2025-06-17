@@ -26,15 +26,24 @@ import traceback
 
 import numpy as np
 from numpy.linalg import lstsq
+from numpy.random import uniform
 
 from soxr import resample
 
 try:
     from numba import jit
+    from numba.extending import overload
+    from numba.types import number_domain
+    import numba.core.errors
+
+    numba.core.errors.NumbaExperimentalFeatureWarning = Warning
 except ImportError:
-    jit = lambda *a, **kw: (lambda x: x)
+    jit = overload = lambda *a, **kw: (lambda x: x)
 else:
     abs = np.fabs
+
+from ._vendored_lstsq import leastsq
+from ._vendored_root import root_df_sane
 
 
 ###############################################
@@ -65,6 +74,23 @@ PROPERTY_UNITS_DICT = {
 
 PROPERTY_DTYPE = np.dtype([(name, "f4") for name in PROPERTY_UNITS_DICT])
 
+PARMS_UNITS_DICT = {
+    "radius": "m",
+    "tau": None,
+    "M": "Pa",
+    "fc": "N",
+    "delta_shift": "m",
+    "force_shift": "N",
+    "lj_delta_scale": None,
+    "vd": None,
+    "li_per": "m",
+    "li_amp": "m",
+    "li_pha": "rad",
+    "drag": "s",
+}
+
+PARMS_DTYPE = np.dtype([(name, "f4") for name in PARMS_UNITS_DICT])
+
 
 @enum.unique
 class FitMode(enum.IntEnum):
@@ -72,6 +98,19 @@ class FitMode(enum.IntEnum):
     EXTEND = 1
     RETRACT = 2
     BOTH = enum.auto()
+
+
+class FitFix(enum.IntFlag, boundary=enum.STRICT):
+    RADIUS = enum.auto()
+    TAU = enum.auto()
+    LJ_SCALE = enum.auto()
+    VIRTUAL_DEFLECTION = enum.auto()
+    LI_PERIOD = enum.auto()
+    LI_AMP = enum.auto()
+    HYDRODYNAMIC_DRAG = enum.auto()
+
+
+FitFix.DEFAULTS = ~FitFix(0) & ~FitFix.LJ_SCALE
 
 
 ###############################################
@@ -206,6 +245,29 @@ MANIPULATIONS = dict(
 ###############################################
 
 
+@overload(np.atleast_1d)
+def _atleast_1d_for_scalars(x):
+    if x in number_domain:
+        return lambda x: np.array([x])
+    return None
+
+
+@overload(np.interp)
+def _interp(x, xp, fp, left=None, right=None):
+    if left is not None or right is not None:
+
+        def _interp_impl(x, xp, fp, left=None, right=None):
+            f = np.interp(x, xp, fp)
+            if left is not None:
+                f[x < xp[0]] = left
+            if right is not None:
+                f[x > xp[-1]] = right
+            return f
+
+        return _interp_impl
+    return None
+
+
 def resample_wrapper(X, npts, fourier=True, restore_trend=True):
     """Resample individual z-d curves with Fourier or linear interpolation"""
     X = np.atleast_2d(X)
@@ -225,7 +287,6 @@ def resample_wrapper(X, npts, fourier=True, restore_trend=True):
 
 
 # can't cache because UUID cache busting https://github.com/numba/numba/issues/6284
-@jit(nopython=True, nogil=True)
 def secant(func, args, x0, x1):
     """Secant method from scipy optimize but stripping np.isclose for speed
 
@@ -297,7 +358,6 @@ def secant(func, args, x0, x1):
 
 # can't cache because UUID cache busting https://github.com/numba/numba/issues/6284
 # noinspection PyUnboundLocalVariable
-@jit(nopython=True, nogil=True)
 def brentq(func, args, xa, xb):
     """Transliterated from SciPy Zeros/brentq.c
 
@@ -348,7 +408,7 @@ def brentq(func, args, xa, xb):
         return xcur
 
     if fpre * fcur > 0:
-        return None
+        return np.nan
 
     for i in range(maxiter):
         if fpre * fcur < 0:
@@ -495,12 +555,14 @@ def mygradient(f, d):
     OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     """
     dx = np.diff(d)
-    uniform_spacing = (dx == dx[0]).all()
+    dx0 = dx[0]
+    dxn = dx[-1]
+    uniform_spacing = (dx == dx0).all()
     out = np.empty_like(f)
 
     # Numerical differentiation: 2nd order interior
     if uniform_spacing:
-        out[1:-1] = (f[2:] - f[:-2]) / (2.0 * dx[0])
+        out[1:-1] = (f[2:] - f[:-2]) / (2.0 * dx0)
     else:
         dx1 = dx[0:-1]
         dx2 = dx[1:]
@@ -510,13 +572,19 @@ def mygradient(f, d):
         out[1:-1] = a * f[:-2] + b * f[1:-1] + c * f[2:]
 
     # Numerical differentiation: 1st order edges
-    out[0] = (f[1] - f[0]) / dx[0]
-    out[-1] = (f[-1] - f[-2]) / dx[-1]
+    out[0] = (f[1] - f[0]) / dx0
+    out[-1] = (f[-1] - f[-2]) / dxn
 
     return out
 
 
-from ._vendored_lstsq import leastsq
+@jit(nopython=True, nogil=True, cache=True)
+def mygradient_uniform(f):
+    out = np.empty_like(f)
+    out[1:-1] = (f[2:] - f[:-2]) / 2.0
+    out[0] = f[1] - f[0]
+    out[-1] = f[-1] - f[-2]
+    return out
 
 
 def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
@@ -528,11 +596,29 @@ def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
     else:
         constraints = []
         for lo, hi in bounds.T.tolist():
-            if lo == 0.0 and hi == np.inf:
-                constraints.append((1, None, None))
+            if lo == -np.inf and hi == np.inf:
+                constraints.append((0.0, 0.0, 0.0))
+            elif lo == 0.0 and hi == np.inf:
+                constraints.append((1.0, 0.0, 0.0))
+            elif lo == hi:
+                constraints.append((3.0, 0.0, 0.0))
             else:
-                constraints.append((2, lo, hi))
+                constraints.append((2.0, lo, hi))
     return leastsq(function, xdata, ydata, p0, sigma, constraints, full_output=True)
+
+
+###############################################
+################# Artifacts ###################
+###############################################
+
+
+def laser_interference(z, period, amp, phase):
+    theta = z / period * 2 * np.pi
+    return amp * np.sin(theta + phase)
+
+
+def hydrodynamic_drag(z_velocity, drag_factor):
+    return -z_velocity * drag_factor
 
 
 ###############################################
@@ -571,7 +657,7 @@ def schwarz_red(red_f, red_fc, stable, offset):
 
 
 @jit(nopython=True, nogil=True, cache=True)
-def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale):
+def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale, split=None):
     """So that schwarz can be directly jammed into delta_curve"""
     return schwarz_red(red_force, red_fc, 1.0, 0.0)
 
@@ -625,7 +711,7 @@ def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
 ###############################################
 
 
-def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
+def red_extend(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     """Calculate, in reduced units, an extent Schwarz curve with long range LJ potential and snap-off physics.
 
     MUCH LESS TESTED THAN RED_RETRACT
@@ -659,12 +745,8 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
         red_d_min,
         lj_limit_factor * lj_delta_scale + lj_delta_offset,
     )
-    lj_end_pos = brentq(
-        lj_gradient,
-        args,
-        *bracket,
-    )
-    if lj_end_pos is None:
+    lj_end_pos = brentq(lj_gradient, args, *bracket)
+    if np.isnan(lj_end_pos):
         # If root finding fails, put the end pos somewhere quasi-reasonable
         if lj_gradient(red_d_min, *args) <= 0:
             lj_end_pos = red_d_min
@@ -682,7 +764,7 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
     args = red_fc, 1.0, red_d_max
-    red_f_max = secant(schwarz_red, args, x0=0.0, x1=red_fc)
+    red_f_max = secant(schwarz_red, args, 0.0, red_fc)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
@@ -694,7 +776,7 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale):
     return np.maximum(s_f, lj_f)
 
 
-def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
+def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     """Calculate, in reduced units, a retract Schwarz curve with long range LJ potential and snap-off physics.
 
     Following the broad example of Lin (2007) and Johnson (1997), we combine the unstable branch
@@ -719,6 +801,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     lj_delta_offset = red_deltac - lj_delta_scale
     lj_f = lj_force(red_delta, lj_delta_scale, red_fc, lj_delta_offset, 0.0)
     lj_f = np.atleast_1d(lj_f)  # Later parts can choke on scalars
+    red_delta = np.atleast_1d(red_delta)
 
     # make points definitely lose in minimum function if in the contact/stable branch
     lj_f[red_delta >= red_deltac] = np.inf
@@ -727,7 +810,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
     args = red_fc, 1.0, red_d_max
-    red_f_max = secant(schwarz_red, args, x0=red_fc, x1=0.0)
+    red_f_max = secant(schwarz_red, args, red_fc, 0.0)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
@@ -735,26 +818,25 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     d = schwarz_red(f, red_fc, 1.0, 0.0)
 
     # Use this endpoint in DMT case or if there is a problem with the slope finding
-    s_end_pos = 0
-    s_end_force = -2
+    s_end_pos = 0.0
+    s_end_force = -2.0
 
     if not_DMT:
         # Find slope == red_k between vertical and horizontal parts of unstable branch
-        f0 = mylinspace((7 * red_fc + 8) / 3, red_fc, 100, endpoint=False)
+        f0 = mylinspace((7.0 * red_fc + 8.0) / 3.0, red_fc, 100, False)
         d0 = schwarz_red(f0, red_fc, -1.0, 0.0)
         df0dd0 = mygradient(f0, d0)
 
         s_end_pos = brentq(interp_with_offset, (d0, df0dd0, red_k), d0[0], d0[-1])
-        if s_end_pos is not None:
+        if np.isnan(s_end_pos):
+            s_end_pos = 0.0
+        else:
             # found a good end point
             s_end_force = np.interp(s_end_pos, d0, f0)
             f = np.concatenate((f0, f))
             d = np.concatenate((d0, d))
-        else:
-            s_end_pos = 0
-
-    s_f = np.interp(red_delta, d, f, left=np.inf, right=0)
-    s_f = np.atleast_1d(s_f).squeeze()  # don't choke on weird array shapes or scalars
+    s_f = np.interp(red_delta, d, f, left=np.inf, right=0.0)
+    s_f = np.atleast_1d(s_f).ravel()  # don't choke on weird array shapes or scalars
 
     # overwrite portion after end position with tangent line
     s_f[red_delta <= s_end_pos] = (
@@ -764,8 +846,27 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale):
     return np.minimum(s_f, lj_f)
 
 
+def red_both(red_delta, red_fc, red_k, lj_delta_scale, split):
+    return np.concatenate(
+        (
+            red_extend(red_delta[:split], red_fc, red_k, lj_delta_scale),
+            red_retract(red_delta[split:], red_fc, red_k, lj_delta_scale),
+        )
+    )
+
+
 def force_curve(
-    red_curve, delta, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
+    red_curve,
+    delta,
+    k,
+    radius,
+    tau,
+    M,
+    fc,
+    delta_shift,
+    force_shift,
+    lj_delta_scale,
+    split=None,
 ):
     """Calculate a force curve from indentation data."""
     # Catch crazy inputs early
@@ -786,14 +887,24 @@ def force_curve(
     lj_delta_scale = np.exp(lj_delta_scale) / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
-    red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale)
+    red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale, split)
 
     # Rescale to dimensioned units
     return (red_force * ref_force) + force_shift
 
 
 def delta_curve(
-    red_curve, force, k, radius, tau, M, fc, delta_shift, force_shift, lj_delta_scale
+    red_curve,
+    force,
+    k,
+    radius,
+    tau,
+    M,
+    fc,
+    delta_shift,
+    force_shift,
+    lj_delta_scale,
+    split=None,
 ):
     """Convenience function for inverse of force_curve, i.e. force->delta"""
     # Catch crazy inputs early
@@ -814,7 +925,7 @@ def delta_curve(
     lj_delta_scale = np.exp(lj_delta_scale) / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
-    red_delta = red_curve(red_force, red_fc, -red_k, -lj_delta_scale)
+    red_delta = red_curve(red_force, red_fc, -red_k, -lj_delta_scale, split)
 
     # Rescale to dimensioned units
     return (red_delta * ref_delta) + delta_shift
@@ -842,7 +953,7 @@ def rapid_forcecurve_estimate(delta, force, radius):
     if not np.isfinite(M_guess):
         M_guess = 1.0
 
-    return M_guess, fc_guess, deltamin, fzero, 1.0
+    return M_guess, fc_guess, deltamin, fzero
 
 
 ###############################################
@@ -851,78 +962,147 @@ def rapid_forcecurve_estimate(delta, force, radius):
 
 
 def fitfun(
-    delta, force, k, radius, tau, fit_mode, cancel_poller=bool, p0=None, **kwargs
+    z,
+    d,
+    k,
+    radius,
+    tau,
+    M,
+    vd,
+    lj_scale,
+    drag,
+    li_per,
+    li_amp,
+    fit_mode,
+    fit_fix,
+    cancel_poller=bool,
+    p0=None,
+    nan_on_error=False,
+    **kwargs,
 ):
-    if p0 is None:
-        p0 = rapid_forcecurve_estimate(delta, force, radius)
+    delta = z - d
+    force = d * k
+    d0 = d
+    lg = laser_guesses = li_per, li_amp, 0.0
+    noli = not li_per or (not li_amp and fit_fix & FitFix.LI_AMP)
 
-    bounds = np.transpose(
-        (
-            (0.0, np.inf),  # M
-            (0.0, np.inf),  # fc
-            # (0, 1),           # tau
-            (np.min(delta), np.max(delta)),  # delta_shift
-            (np.min(force), np.max(force)),  # force_shift
-            (-6.0, 6.0),  # lj_delta_scale
+    if p0 is None:
+        M_guess, fc_guess, deltamin, fzero = rapid_forcecurve_estimate(
+            delta, force, radius
         )
+        p0 = (
+            radius,
+            tau,
+            M_guess,
+            fc_guess,
+            deltamin,
+            fzero,
+            lj_scale,
+            vd,
+            *laser_guesses,
+            drag,
+        )
+    elif isinstance(p0, np.ndarray):
+        if p0.dtype == PARMS_DTYPE:
+            p0 = p0.item()
+
+    bounds = (
+        (radius,) * 2 if fit_fix & FitFix.RADIUS else (0.0, np.inf),
+        (tau,) * 2 if fit_fix & FitFix.TAU else (0.0, 1.0),
+        (M,) * 2 if not (fit_fix & FitFix.RADIUS) else (0.0, np.inf),
+        (0.0, np.inf),  # fc
+        (np.min(delta), np.max(delta)),  # delta_shift
+        (np.min(force), np.max(force)),  # force_shift
+        (lj_scale,) * 2 if fit_fix & FitFix.LJ_SCALE else (-6.0, 6.0),
+        (vd,) * 2 if fit_fix & FitFix.VIRTUAL_DEFLECTION else (-np.inf, np.inf),
+        ((lg[0],) * 2 if noli or fit_fix & FitFix.LI_PERIOD else (0.0, np.inf)),
+        ((lg[1],) * 2 if noli or fit_fix & FitFix.LI_AMP else (-np.inf, np.inf)),
+        ((lg[2],) * 2 if noli else (-np.inf, np.inf)),
+        (drag,) * 2 if fit_fix & FitFix.HYDRODYNAMIC_DRAG else (0.0, np.inf),
     )
+    bounds = np.transpose(bounds)
     p0 = np.clip(p0, *bounds)
 
     assert fit_mode
+    split = None
     if fit_mode == FitMode.EXTEND:
         red_curve = red_extend
     elif fit_mode == FitMode.RETRACT:
         red_curve = red_retract
     elif fit_mode == FitMode.BOTH:
+        red_curve = red_both
         split = kwargs["split"]
-
-        def red_curve(delta, *args):
-            return np.concatenate(
-                (
-                    red_extend(delta[:split], *args),
-                    red_retract(delta[split:], *args),
-                )
-            )
-
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
-    def partial_force_curve(delta, M, fc, delta_shift, force_shift, lj_delta_scale):
+    def partial_force_curve(z, *parms):
+        nonlocal d0
         cancel_poller()
-        return force_curve(
-            red_curve,
-            delta,
-            k,
-            radius,
-            tau,
-            M,
-            fc,
-            delta_shift,
-            force_shift,
-            lj_delta_scale,
-        )
+        dout = np.zeros_like(d)
+        fc_parms = parms[:7]
+        vd = parms[7]
+        if vd:
+            deltamin, fmin = fc_parms[4:6]
+            zmin = deltamin + fmin / k
+            dout -= (z - zmin) * vd
+        li_parms = parms[8 : 8 + 3]
+        if not noli:
+            dout -= laser_interference(z, *li_parms)
+        drag_factor = parms[-1]
+        if drag_factor:
+            z_velocity = mygradient_uniform(z)
+            dout -= hydrodynamic_drag(z_velocity, drag_factor)
+        if np.any(dout):
+            # update initial guess each round
+            d0 = root_df_sane(
+                lambda d: force_curve(
+                    red_curve,
+                    z - d,
+                    k,
+                    *fc_parms,
+                    split=split,
+                )
+                / k
+                - d,
+                x0=d0,
+                ftol=1e-3,
+                callback=lambda *a: cancel_poller(),
+            )
+            dout += d0
+        else:
+            # fast path for no major artifacts
+            dout += force_curve(red_curve, z - d, k, *fc_parms, split=split) / k
+        return dout
 
     try:
         beta, cov, infodict, *_ = curve_fit(
-            partial_force_curve, delta, force, p0=p0, bounds=bounds
+            partial_force_curve, z, d, p0=p0, bounds=bounds
         )
-        sse = infodict["chisq"]
         beta_err = infodict["uncertainties"]
+        sse = infodict["chisq"]
+        d_fit = infodict["fvec"]
+
+        # pack up params, ensuring all fields are filled in order
+        parms = beta.astype("f4").view(dtype=PARMS_DTYPE)
+        parms_err = beta_err.astype("f4").view(dtype=PARMS_DTYPE)
     except Exception:
+        if not nan_on_error:
+            raise
         traceback.print_exc()
         print(p0)
-        beta = np.full_like(p0, np.nan)
-        beta_err = beta
+        parms = np.void(np.nan, dtype=PARMS_DTYPE)
+        parms_err = np.void(np.nan, dtype=PARMS_DTYPE)
         sse = np.nan
+        d_fit = np.full_like(d, np.nan)
 
-    return beta, beta_err, sse, partial_force_curve
+    return parms, parms_err, sse, d_fit
 
 
-def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
+def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
     """Calculate deflection, indentation, z_true_surface given deflection data and parameters."""
-    M, fc, delta_shift, force_shift, lj_delta_scale, *_ = beta
 
     assert fit_mode
+    force = d * k
     n_pts_max = len(force) // 25
     if fit_mode == FitMode.EXTEND:
         maxforce = force[-n_pts_max:].mean()
@@ -938,89 +1118,89 @@ def calc_def_ind_ztru_ac(force, beta, radius, k, tau, fit_mode, **kwargs):
         schwarz_wrap,
         maxforce,
         k,
-        radius,
-        tau,
-        M,
-        fc,
-        delta_shift,
-        force_shift,
-        lj_delta_scale,
+        params["radius"],
+        params["tau"],
+        params["M"],
+        params["fc"],
+        params["delta_shift"],
+        params["force_shift"],
+        params["lj_delta_scale"],
     )
     mindelta = delta_curve(
         schwarz_wrap,
-        force_shift - fc,
+        params["force_shift"] - params["fc"],
         k,
-        radius,
-        tau,
-        M,
-        fc,
-        delta_shift,
-        force_shift,
-        lj_delta_scale,
+        params["radius"],
+        params["tau"],
+        params["M"],
+        params["fc"],
+        params["delta_shift"],
+        params["force_shift"],
+        params["lj_delta_scale"],
     )
     # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
     zeroindforce = float(
         force_curve(
             red_retract,
-            delta_shift,
+            params["delta_shift"].squeeze(),
             k,
-            radius,
-            tau,
-            M,
-            fc,
-            delta_shift,
-            force_shift,
-            lj_delta_scale,
+            params["radius"].squeeze(),
+            params["tau"].squeeze(),
+            params["M"].squeeze(),
+            params["fc"].squeeze(),
+            params["delta_shift"].squeeze(),
+            params["force_shift"].squeeze(),
+            params["lj_delta_scale"].squeeze(),
         )
     )
 
-    maxforce -= force_shift
-    red_fc = (tau - 4) / 2
-    ref_force = -fc / red_fc
+    maxforce -= params["force_shift"]
+    red_fc = (params["tau"] - 4) / 2
+    ref_force = -params["fc"] / red_fc
     df = abs(maxforce / ref_force - red_fc)
     red_contact_radius = ((3 * red_fc + 6) ** (1 / 2) + df ** (1 / 2)) ** (2 / 3)
-    contact_radius = red_contact_radius * (M / ref_force / radius) ** (-1 / 3)
+    contact_radius = red_contact_radius * (
+        params["M"] / ref_force / params["radius"]
+    ) ** (-1 / 3)
 
-    deflection = (maxforce + fc) / k
+    deflection = (maxforce + params["fc"]) / k
     indentation = maxdelta - mindelta
-    z_true_surface = delta_shift + zeroindforce / k
-    return deflection, indentation, z_true_surface, mindelta, contact_radius
+    z_true_surface = params["delta_shift"] + zeroindforce / k
+    return tuple(
+        map(float, (deflection, indentation, z_true_surface, mindelta, contact_radius))
+    )
 
 
-def perturb_k(delta, f, epsilon, k):
+def perturb_k(d, k, epsilon=1e-3):
     k_new = (1 + epsilon) * k
-    f_new = f * ((1 + epsilon) ** 0.5)
-    delta_new = delta + (f - f_new / (1 + epsilon)) / k
-    return delta_new, f_new, k_new
+    d_new = d * ((1 + epsilon) ** -0.5)
+    return d_new, k_new
 
 
-def calc_properties_imap(delta_f_rc, **kwargs):
-    delta, force, split, rc = delta_f_rc
+def calc_properties_imap(z_d_s_rc, **kwargs):
+    z, d, split, rc = z_d_s_rc
     kwargs["split"] = split
-    beta, beta_err, sse, partial_force_curve = fitfun(delta, force, **kwargs)
-    if np.any(np.isnan(beta)):
+    parms, parms_err, sse, _ = fitfun(z, d, nan_on_error=True, **kwargs)
+    if np.any(np.isnan(parms.item())):
         return rc, None
-    ind_mod = beta[0]
-    adh_force = beta[1]
-    ind_mod_err = beta_err[0]
-    adh_force_err = beta_err[1]
     (deflection, indentation, z_true_surface, mindelta, a_c) = calc_def_ind_ztru_ac(
-        force, beta, **kwargs
+        d, parms, **kwargs
     )
     k = kwargs.pop("k")
     eps = 1e-3
-    beta_perturb, *_ = fitfun(*perturb_k(delta, force, eps, k), p0=beta, **kwargs)
-    if np.any(np.isnan(beta_perturb)):
+    params_perturb, *_ = fitfun(
+        z, *perturb_k(d, k, eps), p0=parms, nan_on_error=True, **kwargs
+    )
+    if np.any(np.isnan(params_perturb.item())):
         return rc, None
-    ind_mod_perturb = beta_perturb[0]
-    ind_mod_sens_k = (ind_mod_perturb - ind_mod) / ind_mod / eps
+    ind_mod_sens_k = (params_perturb["M"] - parms["M"]) / parms["M"] / eps
 
     # pack up properties, ensuring all fields are filled in order
     properties = np.void(np.nan, dtype=PROPERTY_DTYPE)
-    properties["IndentationModulus"] = ind_mod * 1e9
-    properties["AdhesionForce"] = adh_force / 1e9
-    properties["IndentationModulusErr"] = ind_mod_err * 1e9
-    properties["AdhesionForceErr"] = adh_force_err / 1e9
+    properties["IndentationModulus"] = parms["M"] * 1e9
+    properties["AdhesionForce"] = parms["fc"] / 1e9
+    properties["IndentationModulusErr"] = parms_err["M"] * 1e9
+    properties["AdhesionForceErr"] = parms_err["fc"] / 1e9
     properties["Deflection"] = deflection / 1e9
     properties["Indentation"] = indentation / 1e9
     properties["ContactRadius"] = a_c / 1e9
@@ -1034,7 +1214,7 @@ def calc_properties_imap(delta_f_rc, **kwargs):
     return rc, properties
 
 
-def process_force_curve(x, fit_mode, k, s_ratio):
+def process_force_curve(x, fit_mode, s_ratio):
     rc, (zxr_and_dxr) = x
     npts = sum(map(len, zxr_and_dxr[0]))
     if npts > RESAMPLE_NPTS:
@@ -1052,9 +1232,7 @@ def process_force_curve(x, fit_mode, k, s_ratio):
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
     d *= s_ratio
-    delta = z - d
-    f = d * k
-    return delta, f, split, rc
+    return z, d, split, rc
 
 
 ###############################################
@@ -1062,21 +1240,8 @@ def process_force_curve(x, fit_mode, k, s_ratio):
 ###############################################
 
 
-def warmup_jit():
+def warmup_jit_main():
     """Call jitted functions until check_jit output stabilizes"""
-    npts = 1024
-    split = npts // 2
-    delta = np.float32(
-        (np.cos(np.linspace(0, np.pi * 2, npts, endpoint=False)) - 0.90) * 25
-    )
-
-    fext = force_curve(red_extend, delta[:split], 1, 10, 1, 1, 10, 0, 0, 1)
-    fret = force_curve(red_retract, delta[split:], 1, 10, 1, 1, 10, 0, 0, 1)
-    fext = force_curve(red_extend, delta[:split], 1, 10, 0, 1, 10, 0, 0, 1)
-    fret = force_curve(red_retract, delta[split:], 1, 10, 0, 1, 10, 0, 0, 1)
-    maxforce = fret[slice(len(fret) // 25)].mean()
-    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 0, 1, 10, 0, 0, 1)
-    maxdelta = delta_curve(schwarz_wrap, maxforce, 1, 10, 1, 1, 10, 0, 0, 1)
     image = np.zeros((64, 64), dtype=np.float32)
     gauss3x3(image)
     median3x1(image)
@@ -1089,3 +1254,26 @@ def check_jit():
         if hasattr(_, "get_metadata"):
             print(_)
             print(_.get_metadata().keys())
+
+
+_skip_warmup = False
+
+
+def warmup_jit_worker():
+    """Replace uncacheable functions with jitted versions on-demand"""
+    global red_extend, red_retract, red_both, force_curve, delta_curve
+    global brentq, secant
+    global _skip_warmup
+
+    if _skip_warmup:
+        return
+    opts = dict(nopython=True, nogil=True)
+    # TODO: explicit function signatures for precompiling?
+    red_extend = jit(red_extend, **opts)
+    red_retract = jit(red_retract, **opts)
+    red_both = jit(red_both, **opts)
+    force_curve = jit(force_curve, **opts)
+    delta_curve = jit(delta_curve, **opts)
+    brentq = jit(brentq, **opts)
+    secant = jit(secant, **opts)
+    _skip_warmup = True
