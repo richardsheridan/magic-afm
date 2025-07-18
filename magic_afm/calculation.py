@@ -410,10 +410,13 @@ def brentq(func, args, xa, xb):
     if fpre * fcur > 0:
         return np.nan
 
+    # always true on first iteration
+    # make sure all locals are bound early
+    xblk = xpre
+    fblk = fpre
+    spre = scur = xcur - xpre
     for i in range(maxiter):
         if fpre * fcur < 0:
-            # always true on first iteration
-            # don't worry about potential NameErrors
             xblk = xpre
             fblk = fpre
             spre = scur = xcur - xpre
