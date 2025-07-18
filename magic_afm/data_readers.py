@@ -1462,7 +1462,7 @@ class NanoscopeFile:
     def parse(cls, data: Buffer):
         # Check for magic string indicating nanoscope
         magic = b"\\*Force file list\r\n"
-        start = data[: len(magic)]
+        start = bytes(memoryview(data)[: len(magic)])
         if not start == magic:
             raise ValueError("Not a nanoscope file.", start)
         # End of header is demarcated by a SUB byte (26 = 0x1A)
