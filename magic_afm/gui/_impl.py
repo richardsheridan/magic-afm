@@ -932,12 +932,12 @@ class tqdm_tk(tqdm_std):
         self._tk_n_var.set(self.n)
         d = self.format_dict
         # remove {bar}
-        default_format = ('{desc}\n'
-                          '{percentage:3.0f}%|<bar/>|{n_fmt}/{total_fmt}\n'
-                          '{elapsed}<{remaining}, {rate_fmt}{postfix}')
-        d["bar_format"] = (d["bar_format"] or default_format).replace(
-            "{bar}", "<bar/>"
+        default_format = (
+            "{desc}\n"
+            "{percentage:3.0f}%|<bar/>|{n_fmt}/{total_fmt}\n"
+            "{elapsed}<{remaining}, {rate_fmt}{postfix}"
         )
+        d["bar_format"] = (d["bar_format"] or default_format).replace("{bar}", "<bar/>")
         for msg, text_var in zip(
             re.split(r"\|?<bar/>\|?", self.format_meter(**d), maxsplit=1),
             (self._tk_top_text_var, self._tk_bot_text_var),
@@ -1103,8 +1103,7 @@ class ForceVolumeTkDisplay:
             # Need to pre-load something into these labels for change_image_callback
             self.plot_ax.set_xlabel(" ")
             self.plot_ax.set_ylabel(" ")
-            self.plot_ax.set_ylim([-1000, 1000])
-            self.plot_ax.set_xlim([-1000, 1000])
+            self.plot_ax.set_autoscale_on(True)
             # technically needs a draw but later resize will take care of it
             return True
 
@@ -1957,9 +1956,6 @@ class ForceVolumeController:
     ):
         self.existing_points.add(point)  # should be before 1st checkpoint
 
-        # XXX: only needed on first plot. Maybe later make optional?
-        self.display.plot_ax.set_autoscale_on(True)
-
         if clear_previous:
             for cancel_scope in self.plot_curve_cancels_pending:
                 cancel_scope.cancel()
@@ -2125,6 +2121,15 @@ class ForceVolumeController:
             # This causes the initial plotting of figures after next checkpoint
             display.reset_image_name_menu(self.opened_fvol.image_names)
             display.image_name_strvar.set(self.opened_fvol.initial_image_name)
+            if isinstance(self.opened_fvol.fvfile, DemoStub):
+                r, c = 0, 0
+            else:
+                r, c = await trio.to_thread.run_sync(
+                    next, iter(self.opened_fvol.fvfile.volumes[0].iter_indices())
+                )
+            await self.plot_curve_response(
+                ImagePoint(r, c, 0.0, 0.0), self.display.options, False
+            )
 
 
 def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
