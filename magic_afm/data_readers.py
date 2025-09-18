@@ -1134,12 +1134,17 @@ class ARDFFile:
     scansize: tuple[float, float]
     trace: int | None
 
-    @classmethod
-    def parse(cls, data: Buffer):
+    @staticmethod
+    def check_type(data: Buffer):
         file_header = ARDFHeader.unpack(data, 0)
         if file_header.size != 16 or file_header.name != b"ARDF":
             raise ValueError("Not an ARDF file.", file_header)
         file_header.validate()
+        return file_header
+
+    @classmethod
+    def parse(cls, data: Buffer):
+        file_header = cls.check_type(data)
         ftoc_header = ARDFHeader.unpack(data, offset=file_header.size)
         if ftoc_header.name != b"FTOC":
             raise ValueError("Malformed ARDF file table of contents.", ftoc_header)
@@ -1458,13 +1463,17 @@ class NanoscopeFile:
     scansize: tuple[float, float]
     sync_dist: float | None = None
 
-    @classmethod
-    def parse(cls, data: Buffer):
+    @staticmethod
+    def check_type(data: Buffer):
         # Check for magic string indicating nanoscope
         magic = b"\\*Force file list\r\n"
         start = bytes(memoryview(data)[: len(magic)])
         if not start == magic:
             raise ValueError("Not a nanoscope file.", start)
+
+    @classmethod
+    def parse(cls, data: Buffer):
+        cls.check_type(data)
         # End of header is demarcated by a SUB byte (26 = 0x1A)
         # Longest header so far was 80 kB,
         # stop there to avoid searching gigabytes before fail

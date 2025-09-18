@@ -17,9 +17,14 @@ Homepage = "https://github.com/richardsheridan/magic-afm"
 
 [project.optional-dependencies]
 build = ["pyinstaller", "build", "twine"]
+cli = [
+    "imageio",
+    "click",
+    "psutil",
+    "tqdm>=4.56.0",
+]
 gui = [
     "imageio",
-    "pillow>=9",
     "psutil",
     "matplotlib>=3.8.0",
     "trio>=0.20.0",
@@ -63,5 +68,5 @@ build = { cmd = ["pyinstaller", "-y", "magic_gui_win.spec"], depends-on = ["make
 [tool.pixi.environments]
 default = { solve-group = "default" }
 #gui = { features = ["gui", "numba"], solve-group = "default" }
-build = { features = ["build", "gui", "numba", "h5py"], solve-group = "default" }
+build = { features = ["build", "cli", "gui", "numba", "h5py"], solve-group = "default" }
 notebook = { features = ["notebook", "numba", "h5py"], solve-group = "default" }
