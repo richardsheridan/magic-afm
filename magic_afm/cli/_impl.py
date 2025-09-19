@@ -14,11 +14,6 @@ class TraceChoice(enum.IntEnum):
     ALL = -1
 
 
-readable_file = click.Path(
-    exists=False, dir_okay=False, readable=True, path_type=pathlib.Path
-)
-
-
 def abs_cb(c, p, v):
     return abs(v)
 
@@ -85,7 +80,17 @@ def suffix(c, p, filenames):
     type=click.Path(file_okay=False, dir_okay=True, path_type=pathlib.Path),
 )
 @click.argument(
-    "filenames", nargs=-1, type=readable_file, required=True, callback=suffix
+    "filenames",
+    nargs=-1,
+    type=click.Path(
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        path_type=pathlib.Path,
+    ),
+    required=True,
+    callback=suffix,
 )
 def main(
     fit_mode,
@@ -122,7 +127,7 @@ def main(
         output_path.mkdir(parents=True, exist_ok=True)
     else:
         for filename in filenames:
-            (filename / output_path).mkdir(parents=True, exist_ok=True)
+            (filename.parent / output_path).mkdir(parents=True, exist_ok=True)
 
     click.echo(
         (
