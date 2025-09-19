@@ -110,8 +110,7 @@ class FitFix(enum.IntFlag, boundary=enum.STRICT):
     LI_AMP = enum.auto()
     DRAG = enum.auto()
 
-
-FitFix.DEFAULTS = ~FitFix(0) & ~FitFix.LJ_SCALE
+    DEFAULTS = RADIUS | TAU | VD | LI_PER | LI_AMP | DRAG
 
 
 ###############################################

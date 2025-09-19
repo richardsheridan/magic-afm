@@ -139,6 +139,8 @@ def main(
 
     # override default and file flags with selections from command line
     for m in FitFix.__members__:
+        if m == "DEFAULTS":
+            continue
         this_flag = locals()["fix_" + m.lower()]
         if this_flag is not None:
             fit_fix &= ~FitFix[m]
