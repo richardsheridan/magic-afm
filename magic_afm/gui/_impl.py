@@ -1347,13 +1347,13 @@ class ForceVolumeTkDisplay:
             to=1e5,
             increment=0.01,
             format="%0.3f",
-            fitfix=calculation.FitFix.VIRTUAL_DEFLECTION,
+            fitfix=calculation.FitFix.VD,
         )
         self.drag_strvar = self._add_parm(
             fit_labelframe,
             8,
             "Hydrodyn. Drag",
-            fitfix=calculation.FitFix.HYDRODYNAMIC_DRAG,
+            fitfix=calculation.FitFix.DRAG,
         )
         self.li_per_strvar = self._add_parm(
             fit_labelframe,
@@ -1362,7 +1362,7 @@ class ForceVolumeTkDisplay:
             0.0,
             increment=10.0,
             format="%0.0f",
-            fitfix=calculation.FitFix.LI_PERIOD,
+            fitfix=calculation.FitFix.LI_PER,
         )
         self.li_amp_strvar = self._add_parm(
             fit_labelframe,

@@ -100,14 +100,15 @@ class FitMode(enum.IntEnum):
     BOTH = enum.auto()
 
 
+# XXX DO NOT REORDER FOR BACKCOMPAT
 class FitFix(enum.IntFlag, boundary=enum.STRICT):
     RADIUS = enum.auto()
     TAU = enum.auto()
     LJ_SCALE = enum.auto()
-    VIRTUAL_DEFLECTION = enum.auto()
-    LI_PERIOD = enum.auto()
+    VD = enum.auto()
+    LI_PER = enum.auto()
     LI_AMP = enum.auto()
-    HYDRODYNAMIC_DRAG = enum.auto()
+    DRAG = enum.auto()
 
 
 FitFix.DEFAULTS = ~FitFix(0) & ~FitFix.LJ_SCALE
@@ -1017,11 +1018,11 @@ def fitfun(
         (np.min(delta), np.max(delta)),  # delta_shift
         (np.min(force), np.max(force)),  # force_shift
         (lj_scale,) * 2 if fit_fix & FitFix.LJ_SCALE else (-6.0, 6.0),
-        (vd,) * 2 if fit_fix & FitFix.VIRTUAL_DEFLECTION else (-np.inf, np.inf),
-        ((lg[0],) * 2 if noli or fit_fix & FitFix.LI_PERIOD else (0.0, np.inf)),
+        (vd,) * 2 if fit_fix & FitFix.VD else (-np.inf, np.inf),
+        ((lg[0],) * 2 if noli or fit_fix & FitFix.LI_PER else (0.0, np.inf)),
         ((lg[1],) * 2 if noli or fit_fix & FitFix.LI_AMP else (-np.inf, np.inf)),
         ((lg[2],) * 2 if noli else (-np.inf, np.inf)),
-        (drag,) * 2 if fit_fix & FitFix.HYDRODYNAMIC_DRAG else (0.0, np.inf),
+        (drag,) * 2 if fit_fix & FitFix.DRAG else (0.0, np.inf),
     )
     bounds = np.transpose(bounds)
     p0 = np.clip(p0, *bounds)

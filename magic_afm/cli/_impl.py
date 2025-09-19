@@ -3,8 +3,9 @@ import pathlib
 
 import click
 
+
 from ..data_readers import SUFFIX_FVFILE_MAP
-from ..calculation import FitMode
+from ..calculation import FitMode, FitFix
 
 
 class TraceChoice(enum.IntEnum):
@@ -60,19 +61,19 @@ def suffix(c, p, filenames):
 @click.option("--k", type=float)
 @click.option("--defl-sens", type=float)
 @click.option("--sync-dist", type=float)
-@click.option("+radius/-radius", "radius_flag", default=False)
+@click.option("-fix-radius/-fit-radius", default=None)
 @click.option("--radius", type=float, default=20.0, callback=abs_cb)
-@click.option("+tau/-tau", "tau_flag", default=False)
+@click.option("-fix-tau/-fit-tau", default=None)
 @click.option("--tau", type=float, default=0.0, callback=clip(0.0, 1.0))
-@click.option("+lj-scale/-lj-scale", "lj_scale_flag", default=True)
+@click.option("-fix-lj-scale/-fit-lj-scale", default=None)
 @click.option("--lj-scale", type=float, default=2.0, callback=clip(-6.0, 6.0))
-@click.option("+vd/-vd", "vd_flag", default=False)
+@click.option("-fix-vd/-fit-vd", default=None)
 @click.option("--vd", type=float, default=0.0)
-@click.option("+li_per/-li_per", "li_per_flag", default=False)
-@click.option("--li_per", type=float, default=0.0, callback=abs_cb)
-@click.option("+li_amp/-li_amp", "li_amp_flag", default=False)
-@click.option("--li_amp", type=float, default=0.0, callback=abs_cb)
-@click.option("+drag/-drag", "drag_flag", default=False)
+@click.option("-fix-li-per/-fit-li-per", default=None)
+@click.option("--li-per", type=float, default=0.0, callback=abs_cb)
+@click.option("-fix-li-amp/-fit-li-amp", default=None)
+@click.option("--li-amp", type=float, default=0.0, callback=abs_cb)
+@click.option("-fix-drag/-fit-drag", default=None)
 @click.option("--drag", type=float, default=0.0, callback=abs_cb)
 @click.option("--options-json", type=click.File("rb"), callback=readjson)
 @click.option(
@@ -100,19 +101,19 @@ def main(
     sync_dist,
     trace,
     radius,
-    radius_flag,
+    fix_radius,
     tau,
-    tau_flag,
+    fix_tau,
     lj_scale,
-    lj_scale_flag,
+    fix_lj_scale,
     vd,
-    vd_flag,
+    fix_vd,
     li_per,
-    li_per_flag,
+    fix_li_per,
     li_amp,
-    li_amp_flag,
+    fix_li_amp,
     drag,
-    drag_flag,
+    fix_drag,
     options_json,
     filenames,
 ):
@@ -129,6 +130,21 @@ def main(
         for filename in filenames:
             (filename.parent / output_path).mkdir(parents=True, exist_ok=True)
 
+    # convert flags to fitfix
+    fit_fix = FitFix.DEFAULTS
+
+    # override default flags with configuration file
+    if options_json and "fit_fix" in options_json:
+        fit_fix = options_json["fit_fix"]
+
+    # override default and file flags with selections from command line
+    for m in FitFix.__members__:
+        this_flag = locals()["fix_" + m.lower()]
+        if this_flag is not None:
+            fit_fix &= ~FitFix[m]
+            if this_flag:
+                fit_fix |= FitFix[m]
+
     click.echo(
         (
             fit_mode,
@@ -138,19 +154,19 @@ def main(
             sync_dist,
             trace,
             radius,
-            radius_flag,
+            fix_radius,
             tau,
-            tau_flag,
+            fix_tau,
             lj_scale,
-            lj_scale_flag,
+            fix_lj_scale,
             vd,
-            vd_flag,
+            fix_vd,
             li_per,
-            li_per_flag,
+            fix_li_per,
             li_amp,
-            li_amp_flag,
+            fix_li_amp,
             drag,
-            drag_flag,
+            fix_drag,
             options_json,
             filenames,
         )
