@@ -1,9 +1,18 @@
+import enum
 import pathlib
 
 import click
 
 from ..data_readers import SUFFIX_FVFILE_MAP
 from ..calculation import FitMode
+
+
+class TraceChoice(enum.IntEnum):
+    TRACE = 0
+    RETRACE = 1
+    BOTH = 2
+    ALL = -1
+
 
 readable_file = click.Path(
     exists=False, dir_okay=False, readable=True, path_type=pathlib.Path
@@ -43,15 +52,19 @@ def suffix(c, p, filenames):
 
 
 @click.command()
-@click.option("--fit-mode", type=click.Choice(FitMode, case_sensitive=False))
 @click.option(
-    "--output-path",
-    type=click.Path(file_okay=False, dir_okay=True, path_type=pathlib.Path),
+    "--fit-mode",
+    type=click.Choice(FitMode, case_sensitive=False),
+    default=FitMode.RETRACT,
+)
+@click.option(
+    "--trace",
+    type=click.Choice(TraceChoice, case_sensitive=False),
+    default=TraceChoice.TRACE,
 )
 @click.option("--k", type=float)
 @click.option("--defl-sens", type=float)
 @click.option("--sync-dist", type=float)
-@click.option("--retrace/--trace", "trace", is_flag=True)
 @click.option("+radius/-radius", "radius_flag", default=False)
 @click.option("--radius", type=float, default=20.0, callback=abs_cb)
 @click.option("+tau/-tau", "tau_flag", default=False)
@@ -67,6 +80,10 @@ def suffix(c, p, filenames):
 @click.option("+drag/-drag", "drag_flag", default=False)
 @click.option("--drag", type=float, default=0.0, callback=abs_cb)
 @click.option("--options-json", type=click.File("rb"), callback=readjson)
+@click.option(
+    "--output-path",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=pathlib.Path),
+)
 @click.argument(
     "filenames", nargs=-1, type=readable_file, required=True, callback=suffix
 )
