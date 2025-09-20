@@ -104,6 +104,9 @@ class FVFile(Protocol):
     t_step: float
     scansize: tuple[float, float]
 
+    @staticmethod
+    def check_type(data: Buffer): ...
+
     @classmethod
     def parse(cls, data: Buffer) -> "FVFile": ...
 

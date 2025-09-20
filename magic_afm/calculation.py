@@ -981,6 +981,7 @@ def fitfun(
     cancel_poller=bool,
     p0=None,
     nan_on_error=False,
+    verbose_nans=False,
     **kwargs,
 ):
     delta = z - d
@@ -1091,8 +1092,10 @@ def fitfun(
     except Exception:
         if not nan_on_error:
             raise
-        traceback.print_exc()
-        print(p0)
+        if verbose_nans:
+            # TODO: detect CLI and alert cleverly
+            traceback.print_exc()
+            print(p0)
         parms = np.void(np.nan, dtype=PARMS_DTYPE)
         parms_err = np.void(np.nan, dtype=PARMS_DTYPE)
         sse = np.nan

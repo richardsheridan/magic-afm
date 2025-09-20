@@ -1,16 +1,20 @@
 import enum
 import pathlib
 
+from concurrent.futures import ProcessPoolExecutor
+
 import click
+from attr import evolve
+from tqdm import tqdm
 
 
-from ..data_readers import SUFFIX_FVFILE_MAP
-from ..calculation import FitMode, FitFix
+from ..data_readers import SUFFIX_FVFILE_MAP, FVFile
+from ..calculation import FitMode, FitFix, process_force_curve, calc_properties_imap
 
 
 class TraceChoice(enum.IntEnum):
-    TRACE = 0
-    RETRACE = 1
+    RETRACE = 0
+    TRACE = 1
     BOTH = 2
     ALL = -1
 
@@ -47,6 +51,10 @@ def suffix(c, p, filenames):
     return filenames
 
 
+# TODO: nice workers
+ppe = ProcessPoolExecutor()
+
+
 @click.command()
 @click.option(
     "--fit-mode",
@@ -63,6 +71,7 @@ def suffix(c, p, filenames):
 @click.option("--sync-dist", type=float)
 @click.option("-fix-radius/-fit-radius", default=None)
 @click.option("--radius", type=float, default=20.0, callback=abs_cb)
+@click.option("--M", "M", type=float, default=1e9, callback=abs_cb)
 @click.option("-fix-tau/-fit-tau", default=None)
 @click.option("--tau", type=float, default=0.0, callback=clip(0.0, 1.0))
 @click.option("-fix-lj-scale/-fit-lj-scale", default=None)
@@ -102,6 +111,7 @@ def main(
     trace,
     radius,
     fix_radius,
+    M,
     tau,
     fix_tau,
     lj_scale,
@@ -115,20 +125,20 @@ def main(
     drag,
     fix_drag,
     options_json,
-    filenames,
+    filenames: list[pathlib.Path],
 ):
     """test docstring
 
     more docstring"""
 
-    # prepare output folders early
-    if output_path is None:
-        pass
-    elif output_path.is_absolute():
-        output_path.mkdir(parents=True, exist_ok=True)
-    else:
-        for filename in filenames:
-            (filename.parent / output_path).mkdir(parents=True, exist_ok=True)
+    # # prepare output folders early
+    # if output_path is None:
+    #     pass
+    # elif output_path.is_absolute():
+    #     output_path.mkdir(parents=True, exist_ok=True)
+    # else:
+    #     for filename in filenames:
+    #         (filename.parent / output_path).mkdir(parents=True, exist_ok=True)
 
     # convert flags to fitfix
     fit_fix = FitFix.DEFAULTS
@@ -147,29 +157,64 @@ def main(
             if this_flag:
                 fit_fix |= FitFix[m]
 
-    click.echo(
-        (
-            fit_mode,
-            output_path,
-            k,
-            defl_sens,
-            sync_dist,
-            trace,
-            radius,
-            fix_radius,
-            tau,
-            fix_tau,
-            lj_scale,
-            fix_lj_scale,
-            vd,
-            fix_vd,
-            li_per,
-            fix_li_per,
-            li_amp,
-            fix_li_amp,
-            drag,
-            fix_drag,
-            options_json,
-            filenames,
-        )
-    )
+    for filename in tqdm(
+        filenames,
+        smoothing=0,
+        miniters=1,
+        leave=True,
+        position=1,
+        desc="Files completed",
+        unit="file",
+    ):
+
+        with tqdm(
+            desc=f"Preparing to fit {filename.name} force curves",
+            smoothing=0.01,
+            # smoothing_time=1,
+            unit=" fits",
+            bar_format="{desc} {bar} {elapsed}",
+            leave=True,
+            position=0,
+        ) as pbar:
+            prepare_flag = True
+
+            fvfile_cls, opener = SUFFIX_FVFILE_MAP[filename.suffix.lower()]
+            with opener(filename) as open_thing:
+                fvfile: FVFile = fvfile_cls.parse(open_thing)
+                k = fvfile.k if k is None else k
+                v = fvfile.volumes[not trace]
+                if sync_dist != getattr(fvfile, "sync_dist", None):
+                    v = evolve(v, sync_dist=sync_dist)
+                rows, cols = fvfile.volumes[0].shape
+                ncurves = rows * cols
+                concurrent_submissions = []
+                # TODO: Parallel
+                for rc_zd in v.iter_curves():
+                    if prepare_flag:
+                        prepare_flag = False
+                        pbar.set_description_str(
+                            f"Fitting {filename.name} force curves"
+                        )
+                        pbar.reset(total=ncurves)
+                        pbar.bar_format = None
+                    z_d_s_rc = process_force_curve(
+                        rc_zd,
+                        fit_mode,
+                        1.0 if defl_sens is None else defl_sens / fvfile.defl_sens,
+                    )
+                    calc_properties_imap(
+                        z_d_s_rc,
+                        k=k,
+                        radius=radius,
+                        M=M,
+                        tau=tau,
+                        lj_scale=lj_scale,
+                        vd=vd,
+                        li_per=li_per,
+                        li_amp=li_amp,
+                        drag=drag,
+                        fit_fix=fit_fix,
+                        fit_mode=fit_mode,
+                    )
+                    pbar.update()
+                    # TODO: output
