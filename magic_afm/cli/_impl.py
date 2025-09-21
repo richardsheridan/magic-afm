@@ -39,6 +39,8 @@ def pass_none(f):
             return None
         return f(c, p, v)
 
+    return pass_none_inner
+
 
 @pass_none
 def abs_cb(c, p, v):
