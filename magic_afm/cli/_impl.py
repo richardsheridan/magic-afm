@@ -1,8 +1,9 @@
 import enum
 import json
+import os
 import pathlib
 
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, Future, wait
 from functools import partial
 
 import click
@@ -81,8 +82,6 @@ EXPORTER_MAP = {
     "npy": np.save,
     "npz": np.savez_compressed,
 }
-# TODO: nice workers
-ppe = ProcessPoolExecutor()
 
 
 def threaded_opener(filenames):
@@ -259,6 +258,10 @@ def main(
             fit_mode=fit_mode,
         )
 
+    # TODO: nice workers
+    max_workers = os.process_cpu_count() or 1
+    ppe = ProcessPoolExecutor(max_workers)
+
     for fvfile, filename in tqdm(
         threaded_opener(filenames),
         total=len(filenames),
@@ -286,22 +289,28 @@ def main(
             rows, cols = fvfile.volumes[0].shape
             ncurves = rows * cols
             property_map = np.empty((rows, cols), dtype=PROPERTY_DTYPE)
-            concurrent_submissions = []
+            concurrent_submissions = set()
             nan_count = 0
-            # TODO: Parallel
+            # TODO: Chunky
             for rc_zd in v.iter_curves():
                 if prepare_flag:
                     prepare_flag = False
                     pbar.set_description_str(f"Fitting {filename.name} force curves")
                     pbar.reset(total=ncurves)
                     pbar.bar_format = None
-                if fit_mode != FitMode.SKIP:
-                    z_d_s_rc = process_force_curve(
-                        rc_zd,
-                        fit_mode,
-                        (1.0 if defl_sens is None else defl_sens / fvfile.defl_sens),
-                    )
-                    rc, properties = calc_properties_imap(
+
+                if fit_mode == FitMode.SKIP:
+                    pbar.update()
+                    continue
+
+                z_d_s_rc = process_force_curve(
+                    rc_zd,
+                    fit_mode,
+                    (1.0 if defl_sens is None else defl_sens / fvfile.defl_sens),
+                )
+                concurrent_submissions.add(
+                    ppe.submit(
+                        calc_properties_imap,
                         z_d_s_rc,
                         k=k,
                         radius=radius,
@@ -315,13 +324,21 @@ def main(
                         fit_fix=fit_fix,
                         fit_mode=fit_mode,
                     )
+                )
+                if len(concurrent_submissions) < max_workers:
+                    continue
+                done, concurrent_submissions = wait(
+                    concurrent_submissions, return_when="FIRST_COMPLETED"
+                )
+                for fut in done:
+                    rc, properties = fut.result()
                     if properties is None:
                         property_map[rc] = np.nan
                         nan_count += 1
                     else:
                         property_map[rc] = properties
-                if pbar.update():
-                    pbar.set_postfix(bad_fits=nan_count)
+                    if pbar.update() and properties is None:
+                        pbar.set_postfix(bad_fits=nan_count)
 
             if fit_mode == FitMode.SKIP:
                 continue
