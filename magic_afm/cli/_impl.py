@@ -4,6 +4,7 @@ import pathlib
 from concurrent.futures import ProcessPoolExecutor
 
 import click
+import numpy as np
 from attr import evolve
 from tqdm import tqdm
 
@@ -130,6 +131,9 @@ def main(
     """test docstring
 
     more docstring"""
+
+    # XXX: make ignoring numpy errors optional?
+    np.seterr(all="ignore")
 
     # # prepare output folders early
     # if output_path is None:
