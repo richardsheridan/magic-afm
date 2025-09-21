@@ -8,6 +8,7 @@ from functools import partial
 from itertools import islice
 
 import click
+import cloup
 import imageio
 import numpy as np
 from attr import evolve
@@ -121,27 +122,37 @@ def threaded_opener(filenames):
         yield fvfile, prev_filename
 
 
-@click.command()
-@click.option("--fit-mode", type=click.Choice(FitMode, case_sensitive=False))
-@click.option("--trace", type=click.Choice(TraceChoice, case_sensitive=False))
-@click.option("--k", type=float)
-@click.option("--defl-sens", type=float)
-@click.option("--sync-dist", type=float)
-@click.option("-fix-radius/-fit-radius", default=None)
-@click.option("--radius", type=float, callback=abs_cb)
-@click.option("--M", "M", type=float, callback=abs_cb)
-@click.option("-fix-tau/-fit-tau", default=None)
-@click.option("--tau", type=float, callback=clip(0.0, 1.0))
-@click.option("-fix-lj-scale/-fit-lj-scale", default=None)
-@click.option("--lj-scale", type=float, callback=clip(-6.0, 6.0))
-@click.option("-fix-vd/-fit-vd", default=None)
-@click.option("--vd", type=float)
-@click.option("-fix-li-per/-fit-li-per", default=None)
-@click.option("--li-per", type=float, callback=abs_cb)
-@click.option("-fix-li-amp/-fit-li-amp", default=None)
-@click.option("--li-amp", type=float, callback=abs_cb)
-@click.option("-fix-drag/-fit-drag", default=None)
-@click.option("--drag", type=float, callback=abs_cb)
+@cloup.command(epilog="See https://github.com/richardsheridan/magic-afm for details.")
+@cloup.option_group(
+    "Mode selection",
+    click.option("--fit-mode", type=click.Choice(FitMode, case_sensitive=False)),
+    click.option("--trace", type=click.Choice(TraceChoice, case_sensitive=False)),
+)
+@cloup.option_group(
+    "Data parameters",
+    click.option("--k", type=float),
+    click.option("--defl-sens", type=float),
+    click.option("--sync-dist", type=float),
+)
+@cloup.option_group(
+    "Fit parameters",
+    click.option("-fix-radius/-fit-radius", default=None),
+    click.option("--radius", type=float, callback=abs_cb),
+    # click.option("-fix-M/-fit-M", default=None), # TODO: implement with constraint
+    click.option("--M", "M", type=float, callback=abs_cb),
+    click.option("-fix-tau/-fit-tau", default=None),
+    click.option("--tau", type=float, callback=clip(0.0, 1.0)),
+    click.option("-fix-lj-scale/-fit-lj-scale", default=None),
+    click.option("--lj-scale", type=float, callback=clip(-6.0, 6.0)),
+    click.option("-fix-vd/-fit-vd", default=None),
+    click.option("--vd", type=float),
+    click.option("-fix-li-per/-fit-li-per", default=None),
+    click.option("--li-per", type=float, callback=abs_cb),
+    click.option("-fix-li-amp/-fit-li-amp", default=None),
+    click.option("--li-amp", type=float, callback=abs_cb),
+    click.option("-fix-drag/-fit-drag", default=None),
+    click.option("--drag", type=float, callback=abs_cb),
+)
 @click.option("--options-json", type=click.File("rb"), callback=readjson)
 @click.option(
     "--output-path",
@@ -187,9 +198,24 @@ def main(
     output_type,
     filenames: list[pathlib.Path],
 ):
-    """test docstring
+    """Fit all force curves in FILENAMES with the MagicAFM LJ/SCHWARZ model.
 
-    more docstring"""
+    By default, the fits will use the retract curve and sane fit initializations
+    and constraints, and output the results in npy format to the same directory
+    as the input file.
+
+    These can be overridden by specifying an options-json, which can itself be
+    overridden by fix/fit switches and initial value options at the command line.
+    Note that M (modulus) and radius are covariate so their fit/fix flag is linked.
+
+    If output-path is "absolute" (i.e. starts with "C:\\" or "/"), all results
+    will be written to the same directory, and identically-named files will clobber
+    each other.
+
+    If output-path is "relative", then a directory will be created in the same
+    directory as the input file, and identically-named files in the same directory
+    will clobber each other.
+    """
 
     # XXX: make ignoring numpy errors optional?
     np.seterr(all="ignore")

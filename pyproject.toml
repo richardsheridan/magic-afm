@@ -20,6 +20,7 @@ build = ["pyinstaller", "build", "twine"]
 cli = [
     "imageio",
     "click",
+    "cloup",
     "psutil",
     "tqdm>=4.56.0",
 ]
