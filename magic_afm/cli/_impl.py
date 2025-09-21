@@ -1,7 +1,7 @@
 import enum
 import pathlib
 
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 import click
 import numpy as np
@@ -54,6 +54,33 @@ def suffix(c, p, filenames):
 
 # TODO: nice workers
 ppe = ProcessPoolExecutor()
+
+
+def threaded_opener(filenames):
+    """Yield the opened fvfiles and names while opening the next in a background thread.
+
+    This generator goes out of its way to avoid opening more than 2 files at a time."""
+    first = True
+    tpe = ThreadPoolExecutor()
+    fvfile: FVFile
+    for filename in filenames:
+        if first:
+            fvfile_cls, opener = SUFFIX_FVFILE_MAP[filename.suffix.lower()]
+            fut = tpe.submit(opener, filename)
+            prev_filename = filename
+            first = False
+            continue
+
+        with fut.result() as open_thing:
+            fvfile = fvfile_cls.parse(open_thing)
+            fvfile_cls, opener = SUFFIX_FVFILE_MAP[filename.suffix.lower()]
+            fut = tpe.submit(opener, filename)
+            yield fvfile, prev_filename
+            prev_filename = filename
+
+    with fut.result() as open_thing:
+        fvfile = fvfile_cls.parse(open_thing)
+        yield fvfile, prev_filename
 
 
 @click.command()
@@ -161,8 +188,9 @@ def main(
             if this_flag:
                 fit_fix |= FitFix[m]
 
-    for filename in tqdm(
-        filenames,
+    for fvfile, filename in tqdm(
+        threaded_opener(filenames),
+        total=len(filenames),
         smoothing=0,
         miniters=1,
         leave=True,
@@ -170,7 +198,6 @@ def main(
         desc="Files completed",
         unit="file",
     ):
-
         with tqdm(
             desc=f"Preparing to fit {filename.name} force curves",
             smoothing=0.01,
@@ -181,30 +208,25 @@ def main(
             position=0,
         ) as pbar:
             prepare_flag = True
-
-            fvfile_cls, opener = SUFFIX_FVFILE_MAP[filename.suffix.lower()]
-            with opener(filename) as open_thing:
-                fvfile: FVFile = fvfile_cls.parse(open_thing)
-                k = fvfile.k if k is None else k
-                v = fvfile.volumes[not trace]
-                if sync_dist != getattr(fvfile, "sync_dist", None):
-                    v = evolve(v, sync_dist=sync_dist)
-                rows, cols = fvfile.volumes[0].shape
-                ncurves = rows * cols
-                concurrent_submissions = []
-                # TODO: Parallel
-                for rc_zd in v.iter_curves():
-                    if prepare_flag:
-                        prepare_flag = False
-                        pbar.set_description_str(
-                            f"Fitting {filename.name} force curves"
-                        )
-                        pbar.reset(total=ncurves)
-                        pbar.bar_format = None
+            k = fvfile.k if k is None else k
+            v = fvfile.volumes[not trace]
+            if sync_dist != getattr(fvfile, "sync_dist", None):
+                v = evolve(v, sync_dist=sync_dist)
+            rows, cols = fvfile.volumes[0].shape
+            ncurves = rows * cols
+            concurrent_submissions = []
+            # TODO: Parallel
+            for rc_zd in v.iter_curves():
+                if prepare_flag:
+                    prepare_flag = False
+                    pbar.set_description_str(f"Fitting {filename.name} force curves")
+                    pbar.reset(total=ncurves)
+                    pbar.bar_format = None
+                if fit_mode != FitMode.SKIP:
                     z_d_s_rc = process_force_curve(
                         rc_zd,
                         fit_mode,
-                        1.0 if defl_sens is None else defl_sens / fvfile.defl_sens,
+                        (1.0 if defl_sens is None else defl_sens / fvfile.defl_sens),
                     )
                     calc_properties_imap(
                         z_d_s_rc,
@@ -220,5 +242,5 @@ def main(
                         fit_fix=fit_fix,
                         fit_mode=fit_mode,
                     )
-                    pbar.update()
                     # TODO: output
+                pbar.update()
