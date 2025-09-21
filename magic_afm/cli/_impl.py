@@ -5,6 +5,7 @@ import pathlib
 
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, Future, wait
 from functools import partial
+from itertools import islice
 
 import click
 import imageio
@@ -70,6 +71,15 @@ def suffix(c, p, filenames):
     if unknown:
         raise ValueError(f"Unknown filetypes for {unknown}")
     return filenames
+
+
+def _chunk_producer(fn, job_items, chunksize):
+    while x := tuple(islice(job_items, chunksize)):
+        yield fn, x
+
+
+def _chunk_consumer(chunk):
+    return tuple(map(*chunk))
 
 
 # must take two positional arguments, fname and array
@@ -291,8 +301,27 @@ def main(
             property_map = np.empty((rows, cols), dtype=PROPERTY_DTYPE)
             concurrent_submissions = set()
             nan_count = 0
-            # TODO: Chunky
-            for rc_zd in v.iter_curves():
+            procfun = partial(
+                process_force_curve,
+                fit_mode=fit_mode,
+                s_ratio=(1.0 if defl_sens is None else defl_sens / fvfile.defl_sens),
+            )
+            calcfun = partial(
+                calc_properties_imap,
+                k=k,
+                radius=radius,
+                M=M,
+                tau=tau,
+                lj_scale=lj_scale,
+                vd=vd,
+                li_per=li_per,
+                li_amp=li_amp,
+                drag=drag,
+                fit_fix=fit_fix,
+                fit_mode=fit_mode,
+            )
+            chunksize = 8
+            for rc_zd_chunk in _chunk_producer(procfun, v.iter_curves(), chunksize):
                 if prepare_flag:
                     prepare_flag = False
                     pbar.set_description_str(f"Fitting {filename.name} force curves")
@@ -303,26 +332,11 @@ def main(
                     pbar.update()
                     continue
 
-                z_d_s_rc = process_force_curve(
-                    rc_zd,
-                    fit_mode,
-                    (1.0 if defl_sens is None else defl_sens / fvfile.defl_sens),
-                )
+                z_d_s_rc_chunk = _chunk_consumer(rc_zd_chunk)
                 concurrent_submissions.add(
                     ppe.submit(
-                        calc_properties_imap,
-                        z_d_s_rc,
-                        k=k,
-                        radius=radius,
-                        M=M,
-                        tau=tau,
-                        lj_scale=lj_scale,
-                        vd=vd,
-                        li_per=li_per,
-                        li_amp=li_amp,
-                        drag=drag,
-                        fit_fix=fit_fix,
-                        fit_mode=fit_mode,
+                        _chunk_consumer,
+                        (calcfun, z_d_s_rc_chunk),
                     )
                 )
                 if len(concurrent_submissions) < max_workers:
@@ -331,14 +345,27 @@ def main(
                     concurrent_submissions, return_when="FIRST_COMPLETED"
                 )
                 for fut in done:
-                    rc, properties = fut.result()
-                    if properties is None:
-                        property_map[rc] = np.nan
-                        nan_count += 1
-                    else:
-                        property_map[rc] = properties
-                    if pbar.update() and properties is None:
-                        pbar.set_postfix(bad_fits=nan_count)
+                    for rc, properties in fut.result():
+                        if properties is None:
+                            property_map[rc] = np.nan
+                            nan_count += 1
+                        else:
+                            property_map[rc] = properties
+                        if pbar.update() and properties is None:
+                            pbar.set_postfix(bad_fits=nan_count)
+            while concurrent_submissions:
+                done, concurrent_submissions = wait(
+                    concurrent_submissions, return_when="FIRST_COMPLETED"
+                )
+                for fut in done:
+                    for rc, properties in fut.result():
+                        if properties is None:
+                            property_map[rc] = np.nan
+                            nan_count += 1
+                        else:
+                            property_map[rc] = properties
+                        if pbar.update() and properties is None:
+                            pbar.set_postfix(bad_fits=nan_count)
 
             if fit_mode == FitMode.SKIP:
                 continue
