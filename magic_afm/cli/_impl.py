@@ -1,9 +1,12 @@
 import enum
+import json
 import pathlib
 
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from functools import partial
 
 import click
+import imageio
 import numpy as np
 from attr import evolve
 from tqdm import tqdm
@@ -23,8 +26,8 @@ from ..calculation import (
 class TraceChoice(enum.IntEnum):
     RETRACE = 0
     TRACE = 1
-    BOTH = 2
-    ALL = -1
+    # BOTH = 2
+    # ALL = -1
 
 
 def pass_none(f):
@@ -68,6 +71,16 @@ def suffix(c, p, filenames):
     return filenames
 
 
+# must take two positional arguments, fname and array
+EXPORTER_MAP = {
+    "txt": partial(np.savetxt, fmt="%.8g"),
+    "asc": partial(np.savetxt, fmt="%.8g"),
+    "tsv": partial(np.savetxt, fmt="%.8g", delimiter="\t"),
+    "csv": partial(np.savetxt, fmt="%.8g", delimiter=","),
+    "tif": imageio.imwrite,
+    "npy": np.save,
+    "npz": np.savez_compressed,
+}
 # TODO: nice workers
 ppe = ProcessPoolExecutor()
 
@@ -125,6 +138,7 @@ def threaded_opener(filenames):
     "--output-path",
     type=click.Path(file_okay=False, dir_okay=True, path_type=pathlib.Path),
 )
+@click.option("--output-type", type=click.Choice(EXPORTER_MAP), default="npy")
 @click.argument(
     "filenames",
     nargs=-1,
@@ -140,7 +154,6 @@ def threaded_opener(filenames):
 )
 def main(
     fit_mode,
-    output_path,
     k,
     defl_sens,
     sync_dist,
@@ -161,6 +174,8 @@ def main(
     drag,
     fix_drag,
     options_json,
+    output_path,
+    output_type,
     filenames: list[pathlib.Path],
 ):
     """test docstring
@@ -170,14 +185,7 @@ def main(
     # XXX: make ignoring numpy errors optional?
     np.seterr(all="ignore")
 
-    # # prepare output folders early
-    # if output_path is None:
-    #     pass
-    # elif output_path.is_absolute():
-    #     output_path.mkdir(parents=True, exist_ok=True)
-    # else:
-    #     for filename in filenames:
-    #         (filename.parent / output_path).mkdir(parents=True, exist_ok=True)
+    exporter = EXPORTER_MAP[output_type]
 
     # convert flags to fitfix
     fit_fix = FitFix.DEFAULTS
@@ -199,7 +207,8 @@ def main(
         drag = options_json["drag"] if drag is None else drag
         fit_mode = options_json["fit_mode"] if fit_mode is None else fit_mode
     else:
-        trace = TraceChoice.TRACE if trace is None else trace
+        # handle trace locally
+        # trace = TraceChoice.TRACE if trace is None else trace
         radius = 20.0 if radius is None else radius
         M = 1e9 if M is None else M
         tau = 0.0 if tau is None else tau
@@ -219,6 +228,17 @@ def main(
             fit_fix &= ~FitFix[m]
             if this_flag:
                 fit_fix |= FitFix[m]
+
+    # prepare output folders early
+    if fit_mode == FitMode.SKIP:
+        pass
+    elif output_path is None:
+        pass
+    elif output_path.is_absolute():
+        output_path.mkdir(parents=True, exist_ok=True)
+    else:
+        for filename in filenames:
+            (filename.parent / output_path).mkdir(parents=True, exist_ok=True)
 
     # if needed, create options_json dict
     if not options_json:
@@ -260,12 +280,14 @@ def main(
         ) as pbar:
             prepare_flag = True
             k = fvfile.k if k is None else k
-            v = fvfile.volumes[not trace]
+            v = fvfile.volumes[not (trace is None or trace)]
             if sync_dist != getattr(fvfile, "sync_dist", None):
                 v = evolve(v, sync_dist=sync_dist)
             rows, cols = fvfile.volumes[0].shape
             ncurves = rows * cols
+            property_map = np.empty((rows, cols), dtype=PROPERTY_DTYPE)
             concurrent_submissions = []
+            nan_count = 0
             # TODO: Parallel
             for rc_zd in v.iter_curves():
                 if prepare_flag:
@@ -279,7 +301,7 @@ def main(
                         fit_mode,
                         (1.0 if defl_sens is None else defl_sens / fvfile.defl_sens),
                     )
-                    calc_properties_imap(
+                    rc, properties = calc_properties_imap(
                         z_d_s_rc,
                         k=k,
                         radius=radius,
@@ -293,5 +315,44 @@ def main(
                         fit_fix=fit_fix,
                         fit_mode=fit_mode,
                     )
-                    # TODO: output
-                pbar.update()
+                    if properties is None:
+                        property_map[rc] = np.nan
+                        nan_count += 1
+                    else:
+                        property_map[rc] = properties
+                if pbar.update():
+                    pbar.set_postfix(bad_fits=nan_count)
+
+            if fit_mode == FitMode.SKIP:
+                continue
+
+            # Actually write out results to external world
+            if trace == 0:
+                tracestr = "Retrace"
+            elif trace == 1:
+                tracestr = "Trace"
+            else:
+                tracestr = ""
+            if fit_mode == FitMode.EXTEND:
+                extret = "Ext"
+            elif fit_mode == FitMode.RETRACT:
+                extret = "Ret"
+            else:
+                extret = "Both"
+
+            if output_path is None:
+                parent_path = filename.parent
+            elif output_path.is_absolute():
+                parent_path = output_path
+            else:
+                parent_path = filename.parent / output_path
+
+            with (
+                parent_path / (filename.stem + "_options" + extret + tracestr + ".json")
+            ).open("wb") as fp:
+                json.dump(options_json, fp)
+            for name in PROPERTY_UNITS_DICT:
+                export_path = parent_path / (
+                    filename.stem + "_" + extret + name + tracestr + "." + output_type
+                )
+                exporter(export_path, property_map[name].squeeze()[::-1])
