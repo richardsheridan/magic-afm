@@ -4,8 +4,8 @@ import os
 import pathlib
 
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, Future, wait
-from functools import partial
-from itertools import islice
+from functools import partial, wraps
+from itertools import islice, count
 
 import click
 import cloup
@@ -34,6 +34,7 @@ class TraceChoice(enum.IntEnum):
 
 
 def pass_none(f):
+    @wraps(f)
     def pass_none_inner(c, p, v):
         if v is None:
             return None
@@ -83,6 +84,24 @@ def _chunk_producer(fn, job_items, chunksize):
 
 def _chunk_consumer(chunk):
     return tuple(map(*chunk))
+
+
+def wait_and_process(concurrent_submissions, property_map, nan_counter, pbar):
+    done, concurrent_submissions = wait(
+        concurrent_submissions, return_when="FIRST_COMPLETED"
+    )
+    for fut in done:
+        for rc, properties in fut.result():
+            if properties is None:
+                property_map[rc] = np.nan
+                nan_count = next(nan_counter)
+            else:
+                property_map[rc] = properties
+                nan_count = None
+            if pbar.update() and nan_count is not None:
+                pbar.set_postfix(bad_fits=nan_count)
+
+    return concurrent_submissions
 
 
 # must take two positional arguments, fname and array
@@ -324,11 +343,11 @@ def main(
             v = fvfile.volumes[not (trace is None or trace)]
             if sync_dist != getattr(fvfile, "sync_dist", None):
                 v = evolve(v, sync_dist=sync_dist)
-            rows, cols = fvfile.volumes[0].shape
+            rows, cols = v.shape
             ncurves = rows * cols
             property_map = np.empty((rows, cols), dtype=PROPERTY_DTYPE)
             concurrent_submissions = set()
-            nan_count = 0
+            nan_counter = count(1)
             procfun = partial(
                 process_force_curve,
                 fit_mode=fit_mode,
@@ -367,33 +386,18 @@ def main(
                         (calcfun, z_d_s_rc_chunk),
                     )
                 )
+
                 if len(concurrent_submissions) < max_workers:
                     continue
-                done, concurrent_submissions = wait(
-                    concurrent_submissions, return_when="FIRST_COMPLETED"
+
+                concurrent_submissions = wait_and_process(
+                    concurrent_submissions, property_map, nan_counter, pbar
                 )
-                for fut in done:
-                    for rc, properties in fut.result():
-                        if properties is None:
-                            property_map[rc] = np.nan
-                            nan_count += 1
-                        else:
-                            property_map[rc] = properties
-                        if pbar.update() and properties is None:
-                            pbar.set_postfix(bad_fits=nan_count)
+
             while concurrent_submissions:
-                done, concurrent_submissions = wait(
-                    concurrent_submissions, return_when="FIRST_COMPLETED"
+                concurrent_submissions = wait_and_process(
+                    concurrent_submissions, property_map, nan_counter, pbar
                 )
-                for fut in done:
-                    for rc, properties in fut.result():
-                        if properties is None:
-                            property_map[rc] = np.nan
-                            nan_count += 1
-                        else:
-                            property_map[rc] = properties
-                        if pbar.update() and properties is None:
-                            pbar.set_postfix(bad_fits=nan_count)
 
             if fit_mode == FitMode.SKIP:
                 continue
