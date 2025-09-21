@@ -10,7 +10,14 @@ from tqdm import tqdm
 
 
 from ..data_readers import SUFFIX_FVFILE_MAP, FVFile
-from ..calculation import FitMode, FitFix, process_force_curve, calc_properties_imap
+from ..calculation import (
+    FitMode,
+    FitFix,
+    process_force_curve,
+    calc_properties_imap,
+    PROPERTY_UNITS_DICT,
+    PROPERTY_DTYPE,
+)
 
 
 class TraceChoice(enum.IntEnum):
@@ -20,6 +27,14 @@ class TraceChoice(enum.IntEnum):
     ALL = -1
 
 
+def pass_none(f):
+    def pass_none_inner(c, p, v):
+        if v is None:
+            return None
+        return f(c, p, v)
+
+
+@pass_none
 def abs_cb(c, p, v):
     return abs(v)
 
@@ -34,6 +49,7 @@ def readjson(c, p, options_json):
 
 
 def clip(lo, hi):
+    @pass_none
     def clip_inner(c, p, v):
         return min(max(v, lo), hi)
 
@@ -84,34 +100,26 @@ def threaded_opener(filenames):
 
 
 @click.command()
-@click.option(
-    "--fit-mode",
-    type=click.Choice(FitMode, case_sensitive=False),
-    default=FitMode.RETRACT,
-)
-@click.option(
-    "--trace",
-    type=click.Choice(TraceChoice, case_sensitive=False),
-    default=TraceChoice.TRACE,
-)
+@click.option("--fit-mode", type=click.Choice(FitMode, case_sensitive=False))
+@click.option("--trace", type=click.Choice(TraceChoice, case_sensitive=False))
 @click.option("--k", type=float)
 @click.option("--defl-sens", type=float)
 @click.option("--sync-dist", type=float)
 @click.option("-fix-radius/-fit-radius", default=None)
-@click.option("--radius", type=float, default=20.0, callback=abs_cb)
-@click.option("--M", "M", type=float, default=1e9, callback=abs_cb)
+@click.option("--radius", type=float, callback=abs_cb)
+@click.option("--M", "M", type=float, callback=abs_cb)
 @click.option("-fix-tau/-fit-tau", default=None)
-@click.option("--tau", type=float, default=0.0, callback=clip(0.0, 1.0))
+@click.option("--tau", type=float, callback=clip(0.0, 1.0))
 @click.option("-fix-lj-scale/-fit-lj-scale", default=None)
-@click.option("--lj-scale", type=float, default=2.0, callback=clip(-6.0, 6.0))
+@click.option("--lj-scale", type=float, callback=clip(-6.0, 6.0))
 @click.option("-fix-vd/-fit-vd", default=None)
-@click.option("--vd", type=float, default=0.0)
+@click.option("--vd", type=float)
 @click.option("-fix-li-per/-fit-li-per", default=None)
-@click.option("--li-per", type=float, default=0.0, callback=abs_cb)
+@click.option("--li-per", type=float, callback=abs_cb)
 @click.option("-fix-li-amp/-fit-li-amp", default=None)
-@click.option("--li-amp", type=float, default=0.0, callback=abs_cb)
+@click.option("--li-amp", type=float, callback=abs_cb)
 @click.option("-fix-drag/-fit-drag", default=None)
-@click.option("--drag", type=float, default=0.0, callback=abs_cb)
+@click.option("--drag", type=float, callback=abs_cb)
 @click.option("--options-json", type=click.File("rb"), callback=readjson)
 @click.option(
     "--output-path",
@@ -174,9 +182,33 @@ def main(
     # convert flags to fitfix
     fit_fix = FitFix.DEFAULTS
 
-    # override default flags with configuration file
-    if options_json and "fit_fix" in options_json:
+    # override use configuration file for defaults if given, else default defaults
+    if options_json:
         fit_fix = options_json["fit_fix"]
+        k = options_json["k"] if k is None else k
+        defl_sens = options_json["defl_sens"] if defl_sens is None else defl_sens
+        sync_dist = options_json["sync_dist"] if sync_dist is None else sync_dist
+        trace = options_json["trace"] if trace is None else trace
+        radius = options_json["radius"] if radius is None else radius
+        M = options_json["M"] if M is None else M
+        tau = options_json["tau"] if tau is None else tau
+        lj_scale = options_json["lj_scale"] if lj_scale is None else lj_scale
+        vd = options_json["vd"] if vd is None else vd
+        li_per = options_json["li_per"] if li_per is None else li_per
+        li_amp = options_json["li_amp"] if li_amp is None else li_amp
+        drag = options_json["drag"] if drag is None else drag
+        fit_mode = options_json["fit_mode"] if fit_mode is None else fit_mode
+    else:
+        trace = TraceChoice.TRACE if trace is None else trace
+        radius = 20.0 if radius is None else radius
+        M = 1e9 if M is None else M
+        tau = 0.0 if tau is None else tau
+        lj_scale = 2.0 if lj_scale is None else lj_scale
+        vd = 0.0 if vd is None else vd
+        li_per = 0.0 if li_per is None else li_per
+        li_amp = 0.0 if li_amp is None else li_amp
+        drag = 0.0 if drag is None else drag
+        fit_mode = FitMode.RETRACT if fit_mode is None else fit_mode
 
     # override default and file flags with selections from command line
     for m in FitFix.__members__:
@@ -187,6 +219,25 @@ def main(
             fit_fix &= ~FitFix[m]
             if this_flag:
                 fit_fix |= FitFix[m]
+
+    # if needed, create options_json dict
+    if not options_json:
+        options_json = dict(
+            k=k,
+            defl_sens=defl_sens,
+            sync_dist=sync_dist,
+            trace=trace,
+            radius=radius,
+            M=M,
+            tau=tau,
+            lj_scale=lj_scale,
+            vd=vd,
+            li_per=li_per,
+            li_amp=li_amp,
+            drag=drag,
+            fit_fix=fit_fix,
+            fit_mode=fit_mode,
+        )
 
     for fvfile, filename in tqdm(
         threaded_opener(filenames),
