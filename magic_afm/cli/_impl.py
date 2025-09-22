@@ -239,9 +239,6 @@ def main(
     will clobber each other.
     """
 
-    # XXX: make ignoring numpy errors optional?
-    np.seterr(all="ignore")
-
     exporter = EXPORTER_MAP[output_type]
 
     # convert flags to fitfix

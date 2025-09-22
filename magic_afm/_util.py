@@ -13,7 +13,9 @@ def nice_workers():
         )
     else:
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    from numpy import seterr
 
+    seterr(all="ignore")
     try:
         NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
     except AttributeError:

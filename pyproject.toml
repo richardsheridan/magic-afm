@@ -12,6 +12,11 @@ dependencies = [
     "soxr",
 ]
 
+[project.scripts]
+magic_afm_cli = "magic_afm.cli._impl:main"
+[project.gui-scripts]
+magic_afm_gui = "magic_afm.gui._impl:main"
+
 [project.urls]
 Homepage = "https://github.com/richardsheridan/magic-afm"
 
@@ -64,7 +69,7 @@ notebook = { cmd = ["python", "-m", "notebook", "magic fitting workflow.ipynb"] 
 
 [tool.pixi.feature.build.tasks]
 make-version = { cmd = ["python", "magic_afm/_make_version.py"] }
-build = { cmd = ["pyinstaller", "-y", "magic_gui_win.spec"], depends-on = ["make-version"] }
+build = { cmd = ["pyinstaller", "-y", "magic_afm_win.spec"], depends-on = ["make-version"] }
 
 [tool.pixi.environments]
 default = { solve-group = "default" }
