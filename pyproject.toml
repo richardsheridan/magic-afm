@@ -61,6 +61,9 @@ pixi-pycharm = "*"
 [tool.pixi.feature.gui.tasks]
 gui = { cmd = ["python", "-m", "magic_afm.gui"] }
 
+[tool.pixi.feature.cli.tasks]
+cli = { cmd = ["python", "-m", "magic_afm.cli"] }
+
 #[tool.pixi.feature.gui.pypi-dependencies]
 #magic-afm = { path = ".", editable = true }
 
