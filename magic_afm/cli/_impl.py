@@ -3,7 +3,7 @@ import json
 import os
 import pathlib
 
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, Future, wait
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, wait
 from functools import partial, wraps
 from itertools import islice, count
 
@@ -181,6 +181,8 @@ def threaded_opener(filenames):
     type=click.Path(file_okay=False, dir_okay=True, path_type=pathlib.Path),
 )
 @click.option("--output-type", type=click.Choice(EXPORTER_MAP), default="npy")
+@click.option("--verbose", is_flag=True)
+@click.option("--disable-progress", is_flag=True)
 @click.argument(
     "filenames",
     nargs=-1,
@@ -218,6 +220,8 @@ def main(
     options_json,
     output_path,
     output_type,
+    verbose,
+    disable_progress,
     filenames: list[pathlib.Path],
 ):
     """Fit all force curves in FILENAMES with the MagicAFM LJ/SCHWARZ model.
@@ -285,14 +289,22 @@ def main(
 
     # prepare output folders early
     if fit_mode == FitMode.SKIP:
-        pass
+        if verbose:
+            click.echo("Skipping creating output folders")
     elif output_path is None:
         pass
     elif output_path.is_absolute():
+        if verbose:
+            click.echo("Creating " + str(output_path))
         output_path.mkdir(parents=True, exist_ok=True)
     else:
+        to_create = set()
         for filename in filenames:
-            (filename.parent / output_path).mkdir(parents=True, exist_ok=True)
+            to_create.add(filename.parent / output_path)
+        for filename in to_create:
+            if verbose:
+                click.echo("Creating " + str(filename))
+            filename.mkdir(parents=True, exist_ok=True)
 
     # if needed, create options_json dict
     if not options_json:
@@ -325,6 +337,7 @@ def main(
         position=1,
         desc="Files completed",
         unit="file",
+        disable=disable_progress,
     ):
         with tqdm(
             desc=f"Preparing to fit {filename.name} force curves",
@@ -334,6 +347,7 @@ def main(
             bar_format="{desc} {bar} {elapsed}",
             leave=True,
             position=0,
+            disable=disable_progress,
         ) as pbar:
             prepare_flag = True
             k = fvfile.k if k is None else k
@@ -373,7 +387,7 @@ def main(
                     pbar.bar_format = None
 
                 if fit_mode == FitMode.SKIP:
-                    pbar.update()
+                    pbar.update(len(rc_zd_chunk[1]))
                     continue
 
                 z_d_s_rc_chunk = _chunk_consumer(rc_zd_chunk)
@@ -396,36 +410,44 @@ def main(
                     concurrent_submissions, property_map, nan_counter, pbar
                 )
 
-            if fit_mode == FitMode.SKIP:
-                continue
+        if fit_mode == FitMode.SKIP:
+            if verbose:
+                click.echo("Skipping writing options_json and property maps")
+            continue
 
-            # Actually write out results to external world
-            if trace == 0:
-                tracestr = "Retrace"
-            elif trace == 1:
-                tracestr = "Trace"
-            else:
-                tracestr = ""
-            if fit_mode == FitMode.EXTEND:
-                extret = "Ext"
-            elif fit_mode == FitMode.RETRACT:
-                extret = "Ret"
-            else:
-                extret = "Both"
+        # Actually write out results to external world
+        if trace == 0:
+            tracestr = "Retrace"
+        elif trace == 1:
+            tracestr = "Trace"
+        else:
+            tracestr = ""
+        if fit_mode == FitMode.EXTEND:
+            extret = "Ext"
+        elif fit_mode == FitMode.RETRACT:
+            extret = "Ret"
+        else:
+            extret = "Both"
 
-            if output_path is None:
-                parent_path = filename.parent
-            elif output_path.is_absolute():
-                parent_path = output_path
-            else:
-                parent_path = filename.parent / output_path
+        if output_path is None:
+            parent_path = filename.parent
+        elif output_path.is_absolute():
+            parent_path = output_path
+        else:
+            parent_path = filename.parent / output_path
 
-            with (
-                parent_path / (filename.stem + "_options" + extret + tracestr + ".json")
-            ).open("wb") as fp:
-                json.dump(options_json, fp)
-            for name in PROPERTY_UNITS_DICT:
-                export_path = parent_path / (
-                    filename.stem + "_" + extret + name + tracestr + "." + output_type
-                )
-                exporter(export_path, property_map[name].squeeze()[::-1])
+        options_json_path = parent_path / (
+            filename.stem + "_options" + extret + tracestr + ".json"
+        )
+        if verbose:
+            click.echo("Writing " + str(options_json_path))
+        with options_json_path.open("w") as fp:
+            json.dump(options_json, fp)
+
+        for name in PROPERTY_UNITS_DICT:
+            export_path = parent_path / (
+                filename.stem + "_" + extret + name + tracestr + "." + output_type
+            )
+            if verbose:
+                click.echo("Writing " + str(export_path))
+            exporter(export_path, property_map[name].squeeze()[::-1])
