@@ -5,7 +5,7 @@ gui_a = Analysis(
     ['magic_afm\\gui\\__main__.py'],
     pathex=[],
     binaries=[],
-    datas=[('README.rst','.')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
