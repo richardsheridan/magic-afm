@@ -95,7 +95,7 @@ from matplotlib.transforms import Bbox, BboxTransform
 from tqdm.std import tqdm as tqdm_std
 
 from magic_afm import async_tools, calculation, data_readers
-from magic_afm.gui.__main__ import nice_workers
+from magic_afm._util import nice_workers
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)

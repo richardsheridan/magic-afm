@@ -15,8 +15,8 @@ from attr import evolve
 from tqdm import tqdm
 
 
-from ..data_readers import SUFFIX_FVFILE_MAP, FVFile
-from ..calculation import (
+from magic_afm.data_readers import SUFFIX_FVFILE_MAP, FVFile
+from magic_afm.calculation import (
     FitMode,
     FitFix,
     process_force_curve,
@@ -24,6 +24,7 @@ from ..calculation import (
     PROPERTY_UNITS_DICT,
     PROPERTY_DTYPE,
 )
+from magic_afm._util import nice_workers
 
 
 class TraceChoice(enum.IntEnum):
@@ -315,9 +316,8 @@ def main(
             fit_mode=fit_mode,
         )
 
-    # TODO: nice workers
     max_workers = os.process_cpu_count() or 1
-    ppe = ProcessPoolExecutor(max_workers)
+    ppe = ProcessPoolExecutor(max_workers, initializer=nice_workers)
 
     for fvfile, filename in tqdm(
         threaded_opener(filenames),
