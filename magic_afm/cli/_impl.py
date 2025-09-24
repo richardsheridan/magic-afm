@@ -183,6 +183,7 @@ def threaded_opener(filenames):
 @click.option("--output-type", type=click.Choice(EXPORTER_MAP), default="npy")
 @click.option("--verbose", is_flag=True)
 @click.option("--disable-progress", is_flag=True)
+@click.option("--stop-on-error", is_flag=True)
 @click.argument(
     "filenames",
     nargs=-1,
@@ -222,6 +223,7 @@ def main(
     output_type,
     verbose,
     disable_progress,
+    stop_on_error,
     filenames: list[pathlib.Path],
 ):
     """Fit all force curves in FILENAMES with the MagicAFM LJ/SCHWARZ model.
@@ -339,76 +341,88 @@ def main(
         unit="file",
         disable=disable_progress,
     ):
-        with tqdm(
-            desc=f"Preparing to fit {filename.name} force curves",
-            smoothing=0.01,
-            # smoothing_time=1,
-            unit=" fits",
-            bar_format="{desc} {bar} {elapsed}",
-            leave=True,
-            position=0,
-            disable=disable_progress,
-        ) as pbar:
-            prepare_flag = True
-            k = fvfile.k if k is None else k
-            v = fvfile.volumes[not (trace is None or trace)]
-            if sync_dist != getattr(fvfile, "sync_dist", None):
-                v = evolve(v, sync_dist=sync_dist)
-            rows, cols = v.shape
-            ncurves = rows * cols
-            property_map = np.empty((rows, cols), dtype=PROPERTY_DTYPE)
-            concurrent_submissions = set()
-            nan_counter = count(1)
-            procfun = partial(
-                process_force_curve,
-                fit_mode=fit_mode,
-                s_ratio=(1.0 if defl_sens is None else defl_sens / fvfile.defl_sens),
-            )
-            calcfun = partial(
-                calc_properties_imap,
-                k=k,
-                radius=radius,
-                M=M,
-                tau=tau,
-                lj_scale=lj_scale,
-                vd=vd,
-                li_per=li_per,
-                li_amp=li_amp,
-                drag=drag,
-                fit_fix=fit_fix,
-                fit_mode=fit_mode,
-            )
-            chunksize = 8
-            for rc_zd_chunk in _chunk_producer(procfun, v.iter_curves(), chunksize):
-                if prepare_flag:
-                    prepare_flag = False
-                    pbar.set_description_str(f"Fitting {filename.name} force curves")
-                    pbar.reset(total=ncurves)
-                    pbar.bar_format = None
+        try:
+            with tqdm(
+                desc=f"Preparing to fit {filename.name} force curves",
+                smoothing=0.01,
+                # smoothing_time=1,
+                unit=" fits",
+                bar_format="{desc} {bar} {elapsed}",
+                leave=True,
+                position=0,
+                disable=disable_progress,
+            ) as pbar:
+                prepare_flag = True
+                k = fvfile.k if k is None else k
+                v = fvfile.volumes[not (trace is None or trace)]
+                if sync_dist != getattr(fvfile, "sync_dist", None):
+                    v = evolve(v, sync_dist=sync_dist)
+                rows, cols = v.shape
+                ncurves = rows * cols
+                property_map = np.empty((rows, cols), dtype=PROPERTY_DTYPE)
+                concurrent_submissions = set()
+                nan_counter = count(1)
+                procfun = partial(
+                    process_force_curve,
+                    fit_mode=fit_mode,
+                    s_ratio=(
+                        1.0 if defl_sens is None else defl_sens / fvfile.defl_sens
+                    ),
+                )
+                calcfun = partial(
+                    calc_properties_imap,
+                    k=k,
+                    radius=radius,
+                    M=M,
+                    tau=tau,
+                    lj_scale=lj_scale,
+                    vd=vd,
+                    li_per=li_per,
+                    li_amp=li_amp,
+                    drag=drag,
+                    fit_fix=fit_fix,
+                    fit_mode=fit_mode,
+                )
+                chunksize = 8
+                for rc_zd_chunk in _chunk_producer(procfun, v.iter_curves(), chunksize):
+                    if prepare_flag:
+                        prepare_flag = False
+                        pbar.set_description_str(
+                            f"Fitting {filename.name} force curves"
+                        )
+                        pbar.reset(total=ncurves)
+                        pbar.bar_format = None
 
-                if fit_mode == FitMode.SKIP:
-                    pbar.update(len(rc_zd_chunk[1]))
-                    continue
+                    if fit_mode == FitMode.SKIP:
+                        pbar.update(len(rc_zd_chunk[1]))
+                        continue
 
-                z_d_s_rc_chunk = _chunk_consumer(rc_zd_chunk)
-                concurrent_submissions.add(
-                    ppe.submit(
-                        _chunk_consumer,
-                        (calcfun, z_d_s_rc_chunk),
+                    z_d_s_rc_chunk = _chunk_consumer(rc_zd_chunk)
+                    concurrent_submissions.add(
+                        ppe.submit(
+                            _chunk_consumer,
+                            (calcfun, z_d_s_rc_chunk),
+                        )
                     )
-                )
 
-                if len(concurrent_submissions) < max_workers:
-                    continue
+                    if len(concurrent_submissions) < max_workers:
+                        continue
 
-                concurrent_submissions = wait_and_process(
-                    concurrent_submissions, property_map, nan_counter, pbar
-                )
+                    concurrent_submissions = wait_and_process(
+                        concurrent_submissions, property_map, nan_counter, pbar
+                    )
 
-            while concurrent_submissions:
-                concurrent_submissions = wait_and_process(
-                    concurrent_submissions, property_map, nan_counter, pbar
-                )
+                while concurrent_submissions:
+                    concurrent_submissions = wait_and_process(
+                        concurrent_submissions, property_map, nan_counter, pbar
+                    )
+        except Exception as e:
+            message = f"Unhandled error processing {str(filename)}."
+            if stop_on_error:
+                raise RuntimeError(message) from e
+            else:
+                click.echo(message + " Continuing...")
+                continue
 
         if fit_mode == FitMode.SKIP:
             if verbose:
