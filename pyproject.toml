@@ -49,7 +49,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.pixi.project]
 channels = ["conda-forge"]
-platforms = ["win-64"]
+platforms = ["win-64", "linux-64"]
 
 [tool.pixi.pypi-options]
 no-build = true
