@@ -2,6 +2,7 @@ import enum
 import json
 import os
 import pathlib
+import time
 
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, wait
 from functools import partial, wraps
@@ -32,6 +33,18 @@ class TraceChoice(enum.IntEnum):
     TRACE = 1
     # BOTH = 2
     # ALL = -1
+
+
+# must take two positional arguments, fname and array
+EXPORTER_MAP = {
+    "txt": partial(np.savetxt, fmt="%.8g"),
+    "asc": partial(np.savetxt, fmt="%.8g"),
+    "tsv": partial(np.savetxt, fmt="%.8g", delimiter="\t"),
+    "csv": partial(np.savetxt, fmt="%.8g", delimiter=","),
+    "tif": imageio.imwrite,
+    "npy": np.save,
+    "npz": np.savez_compressed,
+}
 
 
 def pass_none(f):
@@ -78,43 +91,12 @@ def suffix(c, p, filenames):
     return filenames
 
 
-def _chunk_producer(fn, job_items, chunksize):
-    while x := tuple(islice(job_items, chunksize)):
-        yield fn, x
-
-
-def _chunk_consumer(chunk):
-    return tuple(map(*chunk))
-
-
-def wait_and_process(concurrent_submissions, property_map, nan_counter, pbar):
-    done, concurrent_submissions = wait(
-        concurrent_submissions, return_when="FIRST_COMPLETED"
-    )
-    for fut in done:
-        for rc, properties in fut.result():
-            if properties is None:
-                property_map[rc] = np.nan
-                nan_count = next(nan_counter)
-            else:
-                property_map[rc] = properties
-                nan_count = None
-            if pbar.update() and nan_count is not None:
-                pbar.set_postfix(bad_fits=nan_count)
-
-    return concurrent_submissions
-
-
-# must take two positional arguments, fname and array
-EXPORTER_MAP = {
-    "txt": partial(np.savetxt, fmt="%.8g"),
-    "asc": partial(np.savetxt, fmt="%.8g"),
-    "tsv": partial(np.savetxt, fmt="%.8g", delimiter="\t"),
-    "csv": partial(np.savetxt, fmt="%.8g", delimiter=","),
-    "tif": imageio.imwrite,
-    "npy": np.save,
-    "npz": np.savez_compressed,
-}
+def tcc(submission_time, fn, chunk):
+    "timing chunk consumer"
+    t0 = time.perf_counter_ns()
+    chunk_result = tuple(map(fn, chunk))
+    dt = time.perf_counter_ns() - t0
+    return submission_time, dt, chunk_result
 
 
 def threaded_opener(filenames):
@@ -330,6 +312,34 @@ def main(
     max_workers = os.process_cpu_count() or 1
     ppe = ProcessPoolExecutor(max_workers, initializer=nice_workers)
 
+    def acp(job_items):
+        "adaptive chunk producer"
+        while x := tuple(islice(job_items, chunksize)):
+            yield x
+
+    def wait_and_process():
+        nonlocal chunksize
+
+        done, not_done = wait(concurrent_submissions, return_when="FIRST_COMPLETED")
+        concurrent_submissions.difference_update(done)
+
+        for fut in done:
+            submission_time, calc_dt, chunk_result = fut.result()
+            job_dt = time.perf_counter_ns() - submission_time
+            rate = len(chunk_result) / calc_dt
+            ideal_calc_dt = min(0.99 * job_dt, 1e9)
+            chunksize = int(round(0.8 * chunksize + 0.2 * rate * ideal_calc_dt)) + 1
+
+            for rc, properties in chunk_result:
+                if properties is None:
+                    property_map[rc] = np.nan
+                    nan_count = next(nan_counter)
+                else:
+                    property_map[rc] = properties
+                    nan_count = None
+                if pbar.update() and nan_count is not None:
+                    pbar.set_postfix(bad_fits=nan_count)
+
     for fvfile, filename in tqdm(
         threaded_opener(filenames),
         total=len(filenames),
@@ -352,6 +362,7 @@ def main(
                 position=0,
                 disable=disable_progress,
             ) as pbar:
+                chunksize = 1
                 prepare_flag = True
                 k = fvfile.k if k is None else k
                 v = fvfile.volumes[not (trace is None or trace)]
@@ -383,8 +394,8 @@ def main(
                     fit_fix=fit_fix,
                     fit_mode=fit_mode,
                 )
-                chunksize = 8
-                for rc_zd_chunk in _chunk_producer(procfun, v.iter_curves(), chunksize):
+
+                for rc_zd_chunk in acp(v.iter_curves()):
                     if prepare_flag:
                         prepare_flag = False
                         pbar.set_description_str(
@@ -394,28 +405,24 @@ def main(
                         pbar.bar_format = None
 
                     if fit_mode == FitMode.SKIP:
-                        pbar.update(len(rc_zd_chunk[1]))
+                        pbar.update(len(rc_zd_chunk))
                         continue
 
-                    z_d_s_rc_chunk = _chunk_consumer(rc_zd_chunk)
+                    *_, z_d_s_rc_chunk = tcc(0, procfun, rc_zd_chunk)
                     concurrent_submissions.add(
                         ppe.submit(
-                            _chunk_consumer,
-                            (calcfun, z_d_s_rc_chunk),
+                            tcc,
+                            time.perf_counter_ns(),
+                            calcfun,
+                            z_d_s_rc_chunk,
                         )
                     )
 
-                    if len(concurrent_submissions) < max_workers:
-                        continue
-
-                    concurrent_submissions = wait_and_process(
-                        concurrent_submissions, property_map, nan_counter, pbar
-                    )
+                    if len(concurrent_submissions) >= max_workers:
+                        wait_and_process()
 
                 while concurrent_submissions:
-                    concurrent_submissions = wait_and_process(
-                        concurrent_submissions, property_map, nan_counter, pbar
-                    )
+                    wait_and_process()
         except Exception as e:
             message = f"Unhandled error processing {str(filename)}."
             if stop_on_error:
