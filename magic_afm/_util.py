@@ -13,11 +13,20 @@ def nice_workers():
         )
     else:
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
-    from numpy import seterr
 
-    seterr(all="ignore")
     try:
         NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
     except AttributeError:
         NICE = 3
     psutil.Process().nice(NICE)
+
+
+def cli_init(jit):
+    nice_workers()
+    if jit:
+        from .calculation import warmup_jit_worker
+
+        warmup_jit_worker()
+    from numpy import seterr
+
+    seterr(all="ignore")

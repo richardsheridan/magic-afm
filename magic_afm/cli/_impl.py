@@ -25,7 +25,7 @@ from magic_afm.calculation import (
     PROPERTY_UNITS_DICT,
     PROPERTY_DTYPE,
 )
-from magic_afm._util import nice_workers
+from magic_afm._util import cli_init
 
 
 class TraceChoice(enum.IntEnum):
@@ -166,6 +166,7 @@ def threaded_opener(filenames):
 @click.option("--verbose", is_flag=True)
 @click.option("--disable-progress", is_flag=True)
 @click.option("--stop-on-error", is_flag=True)
+@click.option("--jit", is_flag=True)
 @click.argument(
     "filenames",
     nargs=-1,
@@ -206,6 +207,7 @@ def main(
     verbose,
     disable_progress,
     stop_on_error,
+    jit,
     filenames: list[pathlib.Path],
 ):
     """Fit all force curves in FILENAMES with the MagicAFM LJ/SCHWARZ model.
@@ -310,7 +312,7 @@ def main(
         )
 
     max_workers = os.process_cpu_count() or 1
-    ppe = ProcessPoolExecutor(max_workers, initializer=nice_workers)
+    ppe = ProcessPoolExecutor(max_workers, initializer=partial(cli_init, jit))
 
     def acp(job_items):
         "adaptive chunk producer"
