@@ -314,7 +314,7 @@ def main(
 
     def acp(job_items):
         "adaptive chunk producer"
-        while x := tuple(islice(job_items, chunksize)):
+        while x := tuple(islice(job_items, round(chunksize) or 1)):
             yield x
 
     def wait_and_process():
@@ -326,9 +326,9 @@ def main(
         for fut in done:
             submission_time, calc_dt, chunk_result = fut.result()
             job_dt = time.perf_counter_ns() - submission_time
-            rate = len(chunk_result) / calc_dt
+            rate = chunksize / calc_dt  # len(chunk_result) never converges
             ideal_calc_dt = min(0.99 * job_dt, 1e9)
-            chunksize = int(round(0.8 * chunksize + 0.2 * rate * ideal_calc_dt)) + 1
+            chunksize = 0.9 * chunksize + 0.1 * rate * ideal_calc_dt
 
             for rc, properties in chunk_result:
                 if properties is None:
