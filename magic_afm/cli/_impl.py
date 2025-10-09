@@ -46,6 +46,25 @@ EXPORTER_MAP = {
     "npz": np.savez_compressed,
 }
 
+OPTIONS_JSON_SCHEMA = dict(
+    k=float,
+    defl_sens=float,
+    sync_dist=float,
+    trace=TraceChoice.__getitem__,
+    radius=float,
+    M=float,
+    tau=float,
+    lj_scale=float,
+    vd=float,
+    li_per=float,
+    li_amp=float,
+    drag=float,
+    fit_fix=FitFix,
+    fit_mode=FitMode.__getitem__,
+)
+
+NULLABLE_FIELDS = {"k", "defl_sens", "sync_dist", "trace"}
+
 
 def pass_none(f):
     @wraps(f)
@@ -68,6 +87,11 @@ def readjson(c, p, options_json):
 
         with options_json:
             options_json = json.load(options_json)
+        for k, value in list(options_json.items()):
+            if k in NULLABLE_FIELDS and value is None:
+                continue
+            validator = OPTIONS_JSON_SCHEMA[k]
+            options_json[k] = validator(value)
     return options_json
 
 
@@ -129,7 +153,11 @@ def threaded_opener(filenames):
 @cloup.command(epilog="See https://github.com/richardsheridan/magic-afm for details.")
 @cloup.option_group(
     "Mode selection",
-    click.option("--fit-mode", type=click.Choice(FitMode, case_sensitive=False)),
+    click.option(
+        "--fit-mode",
+        type=click.Choice(FitMode, case_sensitive=False),
+        default=FitMode.RETRACT,
+    ),
     click.option("--trace", type=click.Choice(TraceChoice, case_sensitive=False)),
 )
 @cloup.option_group(
@@ -140,22 +168,22 @@ def threaded_opener(filenames):
 )
 @cloup.option_group(
     "Fit parameters",
-    click.option("-fix-radius/-fit-radius", default=None),
-    click.option("--radius", type=float, callback=abs_cb),
-    # click.option("-fix-M/-fit-M", default=None), # TODO: implement with constraint
-    click.option("--M", "M", type=float, callback=abs_cb),
-    click.option("-fix-tau/-fit-tau", default=None),
-    click.option("--tau", type=float, callback=clip(0.0, 1.0)),
-    click.option("-fix-lj-scale/-fit-lj-scale", default=None),
-    click.option("--lj-scale", type=float, callback=clip(-6.0, 6.0)),
-    click.option("-fix-vd/-fit-vd", default=None),
-    click.option("--vd", type=float),
-    click.option("-fix-li-per/-fit-li-per", default=None),
-    click.option("--li-per", type=float, callback=abs_cb),
-    click.option("-fix-li-amp/-fit-li-amp", default=None),
-    click.option("--li-amp", type=float, callback=abs_cb),
-    click.option("-fix-drag/-fit-drag", default=None),
-    click.option("--drag", type=float, callback=abs_cb),
+    click.option("-fix-radius/-fit-radius"),
+    click.option("--radius", type=float, callback=abs_cb, default=20.0),
+    # click.option("-fix-M/-fit-M"), # TODO: implement with constraint
+    click.option("--M", "M", type=float, callback=abs_cb, default=1e9),
+    click.option("-fix-tau/-fit-tau"),
+    click.option("--tau", type=float, callback=clip(0.0, 1.0), default=0.0),
+    click.option("-fix-lj-scale/-fit-lj-scale"),
+    click.option("--lj-scale", type=float, callback=clip(-6.0, 6.0), default=2.0),
+    click.option("-fix-vd/-fit-vd"),
+    click.option("--vd", type=float, default=0.0),
+    click.option("-fix-li-per/-fit-li-per"),
+    click.option("--li-per", type=float, callback=abs_cb, default=0.0),
+    click.option("-fix-li-amp/-fit-li-amp"),
+    click.option("--li-amp", type=float, callback=abs_cb, default=0.0),
+    click.option("-fix-drag/-fit-drag"),
+    click.option("--drag", type=float, callback=abs_cb, default=0.0),
 )
 @click.option("--options-json", type=click.File("rb"), callback=readjson)
 @click.option(
@@ -181,26 +209,6 @@ def threaded_opener(filenames):
     callback=suffix,
 )
 def main(
-    fit_mode,
-    k,
-    defl_sens,
-    sync_dist,
-    trace,
-    radius,
-    fix_radius,
-    M,
-    tau,
-    fix_tau,
-    lj_scale,
-    fix_lj_scale,
-    vd,
-    fix_vd,
-    li_per,
-    fix_li_per,
-    li_amp,
-    fix_li_amp,
-    drag,
-    fix_drag,
     options_json,
     output_path,
     output_type,
@@ -209,6 +217,7 @@ def main(
     stop_on_error,
     jit,
     filenames: list[pathlib.Path],
+    **calculation_options,
 ):
     """Fit all force curves in FILENAMES with the MagicAFM LJ/SCHWARZ model.
 
@@ -228,53 +237,45 @@ def main(
     directory as the input file, and identically-named files in the same directory
     will clobber each other.
     """
+    # short name
+    # TODO: validate against (nonexistent) single source of truth in calculation module
+    co = calculation_options
 
-    exporter = EXPORTER_MAP[output_type]
+    def is_default(
+        commandline_option_key,
+        _get_source=click.get_current_context().get_parameter_source,
+        _default_sources=(
+            click.core.ParameterSource.DEFAULT,
+            click.core.ParameterSource.DEFAULT_MAP,
+        ),
+    ):
+        return _get_source(commandline_option_key) in _default_sources
 
-    # convert flags to fitfix
-    fit_fix = FitFix.DEFAULTS
+    # get flag defaults from single source of truth, not click decorators
+    co["fit_fix"] = FitFix.DEFAULTS
 
-    # override use configuration file for defaults if given, else default defaults
+    # override use configuration file for defaults if given, but give command line
+    # selections priority over the json file.
     if options_json:
-        fit_fix = options_json["fit_fix"]
-        k = options_json["k"] if k is None else k
-        defl_sens = options_json["defl_sens"] if defl_sens is None else defl_sens
-        sync_dist = options_json["sync_dist"] if sync_dist is None else sync_dist
-        trace = options_json["trace"] if trace is None else trace
-        radius = options_json["radius"] if radius is None else radius
-        M = options_json["M"] if M is None else M
-        tau = options_json["tau"] if tau is None else tau
-        lj_scale = options_json["lj_scale"] if lj_scale is None else lj_scale
-        vd = options_json["vd"] if vd is None else vd
-        li_per = options_json["li_per"] if li_per is None else li_per
-        li_amp = options_json["li_amp"] if li_amp is None else li_amp
-        drag = options_json["drag"] if drag is None else drag
-        fit_mode = options_json["fit_mode"] if fit_mode is None else fit_mode
-    else:
-        # handle trace locally
-        # trace = TraceChoice.TRACE if trace is None else trace
-        radius = 20.0 if radius is None else radius
-        M = 1e9 if M is None else M
-        tau = 0.0 if tau is None else tau
-        lj_scale = 2.0 if lj_scale is None else lj_scale
-        vd = 0.0 if vd is None else vd
-        li_per = 0.0 if li_per is None else li_per
-        li_amp = 0.0 if li_amp is None else li_amp
-        drag = 0.0 if drag is None else drag
-        fit_mode = FitMode.RETRACT if fit_mode is None else fit_mode
+        for k, v in options_json.items():
+            if k == "fit_fix" or is_default(k):
+                co[k] = v
 
-    # override default and file flags with selections from command line
+    # override fit_fix with flags from command line
     for m in FitFix.__members__:
         if m == "DEFAULTS":
             continue
-        this_flag = locals()["fix_" + m.lower()]
-        if this_flag is not None:
-            fit_fix &= ~FitFix[m]
-            if this_flag:
-                fit_fix |= FitFix[m]
+        this_flag = "fix_" + m.lower()
+        # the "defaults" of the click decorators are totally ignored
+        if not is_default(this_flag):
+            # first unconditionally clear the flag
+            co["fit_fix"] &= ~FitFix[m]
+            # then conditionally set the flag
+            if co[this_flag]:
+                co["fit_fix"] |= FitFix[m]
 
     # prepare output folders early
-    if fit_mode == FitMode.SKIP:
+    if co["fit_mode"] == FitMode.SKIP:
         if verbose:
             click.echo("Skipping creating output folders")
     elif output_path is None:
@@ -291,25 +292,6 @@ def main(
             if verbose:
                 click.echo("Creating " + str(filename))
             filename.mkdir(parents=True, exist_ok=True)
-
-    # if needed, create options_json dict
-    if not options_json:
-        options_json = dict(
-            k=k,
-            defl_sens=defl_sens,
-            sync_dist=sync_dist,
-            trace=trace,
-            radius=radius,
-            M=M,
-            tau=tau,
-            lj_scale=lj_scale,
-            vd=vd,
-            li_per=li_per,
-            li_amp=li_amp,
-            drag=drag,
-            fit_fix=fit_fix,
-            fit_mode=fit_mode,
-        )
 
     max_workers = os.process_cpu_count() or 1
     ppe = ProcessPoolExecutor(max_workers, initializer=partial(cli_init, jit))
@@ -366,36 +348,28 @@ def main(
             ) as pbar:
                 chunksize = 1
                 prepare_flag = True
-                k = fvfile.k if k is None else k
-                v = fvfile.volumes[not (trace is None or trace)]
+
+                k = co["k"] or fvfile.k
+                defl_sens = co["defl_sens"] or fvfile.defl_sens
+                sync_dist = co["sync_dist"] or getattr(fvfile, "sync_dist", None)
+                trace = co["trace"] is None or co["trace"]
+
+                v = fvfile.volumes[not trace]
                 if sync_dist != getattr(fvfile, "sync_dist", None):
-                    v = evolve(v, sync_dist=sync_dist)
+                    v = evolve(v, sync_dist=co["sync_dist"])
+
                 rows, cols = v.shape
                 ncurves = rows * cols
                 property_map = np.empty((rows, cols), dtype=PROPERTY_DTYPE)
                 concurrent_submissions = set()
                 nan_counter = count(1)
+
                 procfun = partial(
                     process_force_curve,
-                    fit_mode=fit_mode,
-                    s_ratio=(
-                        1.0 if defl_sens is None else defl_sens / fvfile.defl_sens
-                    ),
+                    fit_mode=co["fit_mode"],
+                    s_ratio=defl_sens / fvfile.defl_sens,
                 )
-                calcfun = partial(
-                    calc_properties_imap,
-                    k=k,
-                    radius=radius,
-                    M=M,
-                    tau=tau,
-                    lj_scale=lj_scale,
-                    vd=vd,
-                    li_per=li_per,
-                    li_amp=li_amp,
-                    drag=drag,
-                    fit_fix=fit_fix,
-                    fit_mode=fit_mode,
-                )
+                calcfun = partial(calc_properties_imap, **{**co, "k": k})
 
                 for rc_zd_chunk in acp(v.iter_curves()):
                     if prepare_flag:
@@ -406,7 +380,7 @@ def main(
                         pbar.reset(total=ncurves)
                         pbar.bar_format = None
 
-                    if fit_mode == FitMode.SKIP:
+                    if co["fit_mode"] == FitMode.SKIP:
                         pbar.update(len(rc_zd_chunk))
                         continue
 
@@ -433,21 +407,23 @@ def main(
                 click.echo(message + " Continuing...", err=True)
                 continue
 
-        if fit_mode == FitMode.SKIP:
+        if co["fit_mode"] == FitMode.SKIP:
             if verbose:
                 click.echo("Skipping writing options_json and property maps")
             continue
 
         # Actually write out results to external world
-        if trace == 0:
+        if is_default("trace"):
+            tracestr = ""
+        elif trace == 0:
             tracestr = "Retrace"
         elif trace == 1:
             tracestr = "Trace"
         else:
-            tracestr = ""
-        if fit_mode == FitMode.EXTEND:
+            tracestr = str(trace)
+        if co["fit_mode"] == FitMode.EXTEND:
             extret = "Ext"
-        elif fit_mode == FitMode.RETRACT:
+        elif co["fit_mode"] == FitMode.RETRACT:
             extret = "Ret"
         else:
             extret = "Both"
@@ -462,10 +438,19 @@ def main(
         options_json_path = parent_path / (
             filename.stem + "_options" + extret + tracestr + ".json"
         )
+
+        # recreate options_json dict with selections
+        new_json = {k: co[k] for k in OPTIONS_JSON_SCHEMA}
+        # convert enums to names
+        # TODO: convert via single source of truth
+        new_json["fit_mode"] = FitMode(new_json["fit_mode"]).name
+        if new_json["trace"] is not None:
+            new_json["trace"] = TraceChoice(co["trace"]).name
+
         if verbose:
             click.echo("Writing " + str(options_json_path))
         with options_json_path.open("w") as fp:
-            json.dump(options_json, fp)
+            json.dump(new_json, fp)
 
         for name in PROPERTY_UNITS_DICT:
             export_path = parent_path / (
@@ -473,4 +458,4 @@ def main(
             )
             if verbose:
                 click.echo("Writing " + str(export_path))
-            exporter(export_path, property_map[name].squeeze()[::-1])
+            EXPORTER_MAP[output_type](export_path, property_map[name].squeeze()[::-1])

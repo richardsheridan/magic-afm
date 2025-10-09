@@ -146,7 +146,7 @@ class DispKind(enum.IntEnum):
     # noinspection NonAsciiCharacters
     δf = enum.auto()
 
-
+# TODO: single source of truth for calculation module, split dispkind out of it
 @frozen
 class ForceCurveOptions:
     fit_mode: calculation.FitMode
