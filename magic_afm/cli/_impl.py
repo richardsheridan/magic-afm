@@ -2,6 +2,7 @@ import enum
 import json
 import os
 import pathlib
+import sys
 import time
 
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, wait
@@ -64,6 +65,11 @@ OPTIONS_JSON_SCHEMA = dict(
 )
 
 NULLABLE_FIELDS = {"k", "defl_sens", "sync_dist", "trace"}
+
+
+def echo(message=None, file=None, nl=True, err=False, color=None):
+    with tqdm.external_write_mode(file=sys.stderr if err else sys.stdout):
+        click.echo(message, file, nl, err, color)
 
 
 def abs_cb(c, p, v):
@@ -266,12 +272,12 @@ def main(
     # prepare output folders early
     if co["fit_mode"] == FitMode.SKIP:
         if verbose:
-            click.echo("Skipping creating output folders")
+            echo("Skipping creating output folders")
     elif output_path is None:
         pass
     elif output_path.is_absolute():
         if verbose:
-            click.echo("Creating " + str(output_path))
+            echo("Creating " + str(output_path))
         output_path.mkdir(parents=True, exist_ok=True)
     else:
         to_create = set()
@@ -279,7 +285,7 @@ def main(
             to_create.add(filename.parent / output_path)
         for filename in to_create:
             if verbose:
-                click.echo("Creating " + str(filename))
+                echo("Creating " + str(filename))
             filename.mkdir(parents=True, exist_ok=True)
 
     max_workers = os.process_cpu_count() or 1
@@ -319,7 +325,7 @@ def main(
         smoothing=0,
         miniters=1,
         leave=True,
-        position=1,
+        position=0,
         desc="Files completed",
         unit="file",
         disable=disable_progress,
@@ -332,7 +338,7 @@ def main(
                 unit=" fits",
                 bar_format="{desc} {bar} {elapsed}",
                 leave=True,
-                position=0,
+                position=1,
                 disable=disable_progress,
             ) as pbar:
                 chunksize = 1
@@ -393,12 +399,12 @@ def main(
             if stop_on_error:
                 raise RuntimeError(message) from e
             else:
-                click.echo(message + " Continuing...", err=True)
+                echo(message + " Continuing...", err=True)
                 continue
 
         if co["fit_mode"] == FitMode.SKIP:
             if verbose:
-                click.echo("Skipping writing options_json and property maps")
+                echo("Skipping writing options_json and property maps")
             continue
 
         # Actually write out results to external world
@@ -437,7 +443,7 @@ def main(
             new_json["trace"] = TraceChoice(co["trace"]).name
 
         if verbose:
-            click.echo("Writing " + str(options_json_path))
+            echo("Writing " + str(options_json_path))
         with options_json_path.open("w") as fp:
             json.dump(new_json, fp)
 
@@ -446,5 +452,5 @@ def main(
                 filename.stem + "_" + extret + name + tracestr + "." + output_type
             )
             if verbose:
-                click.echo("Writing " + str(export_path))
+                echo("Writing " + str(export_path))
             EXPORTER_MAP[output_type](export_path, property_map[name].squeeze()[::-1])
