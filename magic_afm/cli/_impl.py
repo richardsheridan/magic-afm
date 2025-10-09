@@ -430,7 +430,7 @@ def main(
             if stop_on_error:
                 raise RuntimeError(message) from e
             else:
-                click.echo(message + " Continuing...")
+                click.echo(message + " Continuing...", err=True)
                 continue
 
         if fit_mode == FitMode.SKIP:
