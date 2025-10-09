@@ -66,17 +66,6 @@ OPTIONS_JSON_SCHEMA = dict(
 NULLABLE_FIELDS = {"k", "defl_sens", "sync_dist", "trace"}
 
 
-def pass_none(f):
-    @wraps(f)
-    def pass_none_inner(c, p, v):
-        if v is None:
-            return None
-        return f(c, p, v)
-
-    return pass_none_inner
-
-
-@pass_none
 def abs_cb(c, p, v):
     return abs(v)
 
@@ -96,7 +85,7 @@ def readjson(c, p, options_json):
 
 
 def clip(lo, hi):
-    @pass_none
+
     def clip_inner(c, p, v):
         return min(max(v, lo), hi)
 
