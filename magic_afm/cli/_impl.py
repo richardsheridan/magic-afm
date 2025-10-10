@@ -103,8 +103,7 @@ def suffix(c, p, filenames):
     for filename in filenames:
         lower_suffix = filename.suffix.lower()
         if lower_suffix not in SUFFIX_FVFILE_MAP:
-            if not lower_suffix[1:].isdigit():  # maybe nanoscope
-                unknown.append(filename.name)
+            unknown.append(filename.name)
     if unknown:
         raise ValueError(f"Unknown filetypes for {unknown}")
     return filenames
