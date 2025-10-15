@@ -5,6 +5,7 @@ import pathlib
 import sys
 import time
 
+from multiprocessing import get_context
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, wait
 from functools import partial, wraps
 from itertools import islice, count
@@ -288,7 +289,9 @@ def main(
             filename.mkdir(parents=True, exist_ok=True)
 
     max_workers = os.process_cpu_count() or 1
-    ppe = ProcessPoolExecutor(max_workers, initializer=partial(cli_init, jit))
+    ppe = ProcessPoolExecutor(
+        max_workers, initializer=partial(cli_init, jit), mp_context=get_context("spawn")
+    )
 
     def acp(job_items):
         "adaptive chunk producer"
