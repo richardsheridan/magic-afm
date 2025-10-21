@@ -1,12 +1,11 @@
 import enum
 import json
-import os
 import pathlib
 import sys
 
 from multiprocessing import get_context
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, wait
-from functools import partial, wraps
+from functools import partial
 from itertools import islice, count
 
 import click
@@ -26,7 +25,7 @@ from magic_afm.calculation import (
     PROPERTY_UNITS_DICT,
     PROPERTY_DTYPE,
 )
-from magic_afm._util import cli_init
+from magic_afm._util import cli_init, MAX_WORKERS
 
 
 class TraceChoice(enum.IntEnum):
@@ -318,9 +317,11 @@ def main(
                 echo("Creating " + str(filename))
             filename.mkdir(parents=True, exist_ok=True)
 
-    max_workers = os.process_cpu_count() or 1
     ppe = ProcessPoolExecutor(
-        max_workers, initializer=partial(cli_init, jit), mp_context=get_context("spawn")
+        # respect undocumented platform limit
+        MAX_WORKERS if sys.platform != "win32" else min(MAX_WORKERS, 63 - 2),
+        initializer=partial(cli_init, jit),
+        mp_context=get_context("spawn"),
     )
 
     for fvfile, filename in tqdm(
@@ -390,7 +391,7 @@ def main(
                         )
                     )
 
-                    if len(concurrent_submissions) < max_workers:
+                    if len(concurrent_submissions) < MAX_WORKERS:
                         continue
 
                     concurrent_submissions = wait_and_process(

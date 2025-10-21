@@ -1,7 +1,11 @@
+import psutil
+import sys
+
+MAX_WORKERS = psutil.cpu_count(logical=False) or 1
+
+
 def nice_workers():
     import os
-    import psutil
-    import sys
 
     if "numpy" in sys.modules:
         import warnings
