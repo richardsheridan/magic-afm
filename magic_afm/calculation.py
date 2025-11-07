@@ -1180,7 +1180,7 @@ def perturb_k(d, k, epsilon=1e-3):
     return d_new, k_new
 
 
-def calc_properties_imap(z_d_s_rc, **kwargs):
+def calc_properties_imap(z_d_s_rc, k_sens=True, **kwargs):
     z, d, split, rc = z_d_s_rc
     kwargs["split"] = split
     parms, parms_err, sse, _ = fitfun(z, d, nan_on_error=True, **kwargs)
@@ -1189,14 +1189,17 @@ def calc_properties_imap(z_d_s_rc, **kwargs):
     (deflection, indentation, z_true_surface, mindelta, a_c) = calc_def_ind_ztru_ac(
         d, parms, **kwargs
     )
-    k = kwargs.pop("k")
-    eps = 1e-3
-    params_perturb, *_ = fitfun(
-        z, *perturb_k(d, k, eps), p0=parms, nan_on_error=True, **kwargs
-    )
-    if np.any(np.isnan(params_perturb.item())):
-        return rc, None, None, None
-    ind_mod_sens_k = (params_perturb["M"] - parms["M"]) / parms["M"] / eps
+    if k_sens:
+        k = kwargs.pop("k")
+        eps = 1e-3
+        params_perturb, *_ = fitfun(
+            z, *perturb_k(d, k, eps), p0=parms, nan_on_error=True, **kwargs
+        )
+        if np.any(np.isnan(params_perturb.item())):
+            return rc, None, None, None
+        ind_mod_sens_k = (params_perturb["M"] - parms["M"]) / parms["M"] / eps
+    else:
+        ind_mod_sens_k = 0.
 
     # pack up properties, ensuring all fields are filled in order
     properties = np.void(np.nan, dtype=PROPERTY_DTYPE)

@@ -154,6 +154,7 @@ class ForceCurveOptions:
     fit_fix: calculation.FitFix
     disp_kind: DispKind
     k: float
+    k_sens: bool
     defl_sens: float
     sync_dist: float | None
     radius: float
@@ -1290,6 +1291,12 @@ class ForceVolumeTkDisplay:
         fit_both_button.grid(row=0, column=2, sticky="W")
         segment_labelframe.pack(fill="x")
 
+        self.calc_k_sens_intvar = tk.IntVar(fit_group_frame, value=True)
+        calc_k_sens_ckbox = ttk.Checkbutton(
+            fit_group_frame, text="Estimate k sens.", variable=self.calc_k_sens_intvar
+        )
+        calc_k_sens_ckbox.pack(fill="x")
+
         # note: this was relocated so double check the row and columns
         fit_group_frame.grid(row=2, column=0, sticky="EW")
 
@@ -1527,6 +1534,7 @@ class ForceVolumeTkDisplay:
                 fit_fix=calculation.FitFix(self._read_chkboxes()),
                 disp_kind=DispKind(self.disp_kind_intvar.get()),
                 k=float(self.spring_const_strvar.get()),
+                k_sens=bool(self.calc_k_sens_intvar.get()),
                 defl_sens=float(self.defl_sens_strvar.get()),
                 radius=float(self.radius_strvar.get()),
                 tau=float(self.tau_strvar.get()),
@@ -1818,7 +1826,7 @@ class ForceVolumeController:
                     and d["fit_fix"] & FitFix[name.upper()]
                 ):
                     continue
-                # ugly special case for M and li_pha
+                # ugly special cases for M, etc.
                 if name == "M":
                     if not d["fit_fix"] & FitFix["RADIUS"]:
                         continue
@@ -1830,6 +1838,8 @@ class ForceVolumeController:
                 if name == "fc":
                     name2 = "AdhesionForce"
                     units_factor = 1e-9
+                if name == "SensIndMod_k" and not options.k_sens:
+                    continue
                 newname = "Calc" + extret + name2 + err_str + trace
                 self.opened_fvol.add_image(
                     image_name=newname,

@@ -227,6 +227,7 @@ def threaded_opener(filenames):
 @click.option("--disable-progress", is_flag=True)
 @click.option("--stop-on-error", is_flag=True)
 @click.option("--jit", is_flag=True)
+@click.option("--k-sens", is_flag=False)
 @click.argument(
     "filenames",
     nargs=-1,
@@ -488,18 +489,20 @@ def main(
                     and co["fit_fix"] & FitFix[name.upper()]
                 ):
                     continue
-                # ugly special case for M and li_pha
+                # ugly special case for M, etc.
                 if name == "M":
                     if not co["fit_fix"] & FitFix["RADIUS"]:
                         continue
                     name = "IndentationModulus"
                     units_factor = 1e9
                 if name == "li_pha":
-                    if  co["fit_fix"] & FitFix["LI_AMP"]:
+                    if co["fit_fix"] & FitFix["LI_AMP"]:
                         continue
                 if name == "fc":
                     name = "AdhesionForce"
                     units_factor = 1e-9
+                if name == "SensIndMod_k" and not co['k_sens']:
+                    continue
                 export_path = parent_path / (
                     filename.stem
                     + "_"
