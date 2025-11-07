@@ -1,12 +1,23 @@
+import os
 import psutil
 import sys
 
-MAX_WORKERS = psutil.cpu_count(logical=False) or 1
+
+def get_int_env_var(var_name):
+    """
+    Retrieves an integer environment variable, returning None on missing values and conversion errors.
+    """
+
+    try:
+        return int(os.environ[var_name])
+    except (ValueError, KeyError):
+        return None
+
+
+MAX_WORKERS = get_int_env_var("MAFM_MAX_CPUS") or psutil.cpu_count(logical=False) or 1
 
 
 def nice_workers():
-    import os
-
     if "numpy" in sys.modules:
         import warnings
 
