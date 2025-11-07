@@ -60,10 +60,6 @@ gkern = np.array([0.25, 0.5, 0.25], dtype=np.float32)
 
 
 PROPERTY_UNITS_DICT = {
-    "IndentationModulus": "Pa",
-    "AdhesionForce": "N",
-    "IndentationModulusErr": "Pa",
-    "AdhesionForceErr": "N",
     "Deflection": "m",
     "Indentation": "m",
     "ContactRadius": "m",
@@ -82,7 +78,7 @@ PARMS_UNITS_DICT = {
     "fc": "N",
     "delta_shift": "m",
     "force_shift": "N",
-    "lj_delta_scale": None,
+    "lj_scale": None,
     "vd": None,
     "li_per": "m",
     "li_amp": "m",
@@ -1131,7 +1127,7 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
         params["fc"],
         params["delta_shift"],
         params["force_shift"],
-        params["lj_delta_scale"],
+        params["lj_scale"],
     )
     mindelta = delta_curve(
         schwarz_wrap,
@@ -1143,7 +1139,7 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
         params["fc"],
         params["delta_shift"],
         params["force_shift"],
-        params["lj_delta_scale"],
+        params["lj_scale"],
     )
     # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
     zeroindforce = float(
@@ -1157,7 +1153,7 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
             params["fc"].squeeze(),
             params["delta_shift"].squeeze(),
             params["force_shift"].squeeze(),
-            params["lj_delta_scale"].squeeze(),
+            params["lj_scale"].squeeze(),
         )
     )
 
@@ -1189,7 +1185,7 @@ def calc_properties_imap(z_d_s_rc, **kwargs):
     kwargs["split"] = split
     parms, parms_err, sse, _ = fitfun(z, d, nan_on_error=True, **kwargs)
     if np.any(np.isnan(parms.item())):
-        return rc, None
+        return rc, None, None, None
     (deflection, indentation, z_true_surface, mindelta, a_c) = calc_def_ind_ztru_ac(
         d, parms, **kwargs
     )
@@ -1199,26 +1195,22 @@ def calc_properties_imap(z_d_s_rc, **kwargs):
         z, *perturb_k(d, k, eps), p0=parms, nan_on_error=True, **kwargs
     )
     if np.any(np.isnan(params_perturb.item())):
-        return rc, None
+        return rc, None, None, None
     ind_mod_sens_k = (params_perturb["M"] - parms["M"]) / parms["M"] / eps
 
     # pack up properties, ensuring all fields are filled in order
     properties = np.void(np.nan, dtype=PROPERTY_DTYPE)
-    properties["IndentationModulus"] = parms["M"] * 1e9
-    properties["AdhesionForce"] = parms["fc"] / 1e9
-    properties["IndentationModulusErr"] = parms_err["M"] * 1e9
-    properties["AdhesionForceErr"] = parms_err["fc"] / 1e9
-    properties["Deflection"] = deflection / 1e9
-    properties["Indentation"] = indentation / 1e9
-    properties["ContactRadius"] = a_c / 1e9
-    properties["TrueHeight"] = -z_true_surface / 1e9
+    properties["Deflection"] = deflection
+    properties["Indentation"] = indentation
+    properties["ContactRadius"] = a_c
+    properties["TrueHeight"] = -z_true_surface
     properties["IndentationRatio"] = deflection / indentation
     properties["SensIndMod_k"] = ind_mod_sens_k
     properties["SumSquaredError"] = sse
     # .item() coerces structured dtype to tuple
     assert not np.any(np.isnan(properties.item()))
 
-    return rc, properties
+    return rc, properties, parms, parms_err
 
 
 def process_force_curve(x, fit_mode, s_ratio):

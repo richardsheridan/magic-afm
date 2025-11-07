@@ -6,7 +6,7 @@ import sys
 from multiprocessing import get_context
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, wait
 from functools import partial
-from itertools import islice, count
+from itertools import islice, count, chain
 
 import click
 import cloup
@@ -24,6 +24,8 @@ from magic_afm.calculation import (
     calc_properties_imap,
     PROPERTY_UNITS_DICT,
     PROPERTY_DTYPE,
+    PARMS_UNITS_DICT,
+    PARMS_DTYPE,
 )
 from magic_afm._util import cli_init, MAX_WORKERS
 
@@ -117,17 +119,23 @@ def _chunk_consumer(chunk):
     return tuple(map(*chunk))
 
 
-def wait_and_process(concurrent_submissions, property_map, nan_counter, pbar):
+def wait_and_process(
+    concurrent_submissions, property_map, parms_map, parms_err_map, nan_counter, pbar
+):
     done, concurrent_submissions = wait(
         concurrent_submissions, return_when="FIRST_COMPLETED"
     )
     for fut in done:
-        for rc, properties in fut.result():
+        for rc, properties, parms, parms_err in fut.result():
             if properties is None:
                 property_map[rc] = np.nan
+                parms_map[rc] = np.nan
+                parms_err_map[rc] = np.nan
                 nan_count = next(nan_counter)
             else:
                 property_map[rc] = properties
+                parms_map[rc] = parms
+                parms_err_map[rc] = parms_err
                 nan_count = None
             if pbar.update() and nan_count is not None:
                 pbar.set_postfix(bad_fits=nan_count)
@@ -358,8 +366,10 @@ def main(
                 if sync_dist != getattr(fvfile, "sync_dist", None):
                     v = evolve(v, sync_dist=sync_dist)
 
-                rows, cols = v.shape
-                property_map = np.empty((rows, cols), dtype=PROPERTY_DTYPE)
+                imshape = v.shape
+                property_map = np.empty(imshape, dtype=PROPERTY_DTYPE)
+                parms_map = np.empty(imshape, dtype=PARMS_DTYPE)
+                parms_err_map = np.empty(imshape, dtype=PARMS_DTYPE)
                 concurrent_submissions = set()
                 nan_counter = count(1)
 
@@ -376,7 +386,7 @@ def main(
                         pbar.set_description_str(
                             f"Fitting {filename.name} force curves"
                         )
-                        pbar.reset(total=rows * cols)
+                        pbar.reset(total=imshape[0] * imshape[1])
                         pbar.bar_format = None
 
                     if co["fit_mode"] == FitMode.SKIP:
@@ -395,12 +405,22 @@ def main(
                         continue
 
                     concurrent_submissions = wait_and_process(
-                        concurrent_submissions, property_map, nan_counter, pbar
+                        concurrent_submissions,
+                        property_map,
+                        parms_map,
+                        parms_err_map,
+                        nan_counter,
+                        pbar,
                     )
 
                 while concurrent_submissions:
                     concurrent_submissions = wait_and_process(
-                        concurrent_submissions, property_map, nan_counter, pbar
+                        concurrent_submissions,
+                        property_map,
+                        parms_map,
+                        parms_err_map,
+                        nan_counter,
+                        pbar,
                     )
         except Exception as e:
             message = f"Unhandled error processing {str(filename)}."
@@ -455,10 +475,43 @@ def main(
         with options_json_path.open("w") as fp:
             json.dump(new_json, fp)
 
-        for name in PROPERTY_UNITS_DICT:
-            export_path = parent_path / (
-                filename.stem + "_" + extret + name + tracestr + "." + output_type
-            )
-            if verbose:
-                echo("Writing " + str(export_path))
-            EXPORTER_MAP[output_type](export_path, property_map[name].squeeze()[::-1])
+        for names, map_, err_str in zip(
+            [PROPERTY_UNITS_DICT, PARMS_UNITS_DICT, PARMS_UNITS_DICT],
+            [property_map, parms_map, parms_err_map],
+            ["", "", "Err"],
+        ):
+            for name in names:
+                units_factor = 1  # would be great to use UNITS_DICT somehow
+                # skip writing fittable params that are fixed
+                if (
+                    name.upper() in FitFix.__members__
+                    and co["fit_fix"] & FitFix[name.upper()]
+                ):
+                    continue
+                # ugly special case for M and li_pha
+                if name == "M":
+                    if not co["fit_fix"] & FitFix["RADIUS"]:
+                        continue
+                    name = "IndentationModulus"
+                    units_factor = 1e9
+                if name == "li_pha":
+                    if  co["fit_fix"] & FitFix["LI_AMP"]:
+                        continue
+                if name == "fc":
+                    name = "AdhesionForce"
+                    units_factor = 1e-9
+                export_path = parent_path / (
+                    filename.stem
+                    + "_"
+                    + extret
+                    + name
+                    + err_str
+                    + tracestr
+                    + "."
+                    + output_type
+                )
+                if verbose:
+                    echo("Writing " + str(export_path))
+                EXPORTER_MAP[output_type](
+                    export_path, units_factor * map_[name].squeeze()[::-1]
+                )
