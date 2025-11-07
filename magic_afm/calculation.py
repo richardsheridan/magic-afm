@@ -44,6 +44,7 @@ else:
 
 from ._vendored_lstsq import leastsq
 from ._vendored_root import root_df_sane
+from ._util import get_int_env_var
 
 
 ###############################################
@@ -53,7 +54,7 @@ from ._vendored_root import root_df_sane
 
 EPS = float(np.finfo(np.float64).eps)
 RT_EPS = float(np.sqrt(EPS))
-RESAMPLE_NPTS = 512
+RESAMPLE_NPTS = get_int_env_var("MAFM_RESAMPLE_NPTS") or 512
 
 gkern = np.array([0.25, 0.5, 0.25], dtype=np.float32)
 
