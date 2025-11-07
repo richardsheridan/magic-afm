@@ -342,7 +342,7 @@ def leastsq(
         for idx, value in enumerate(flag_special):
             if value in [CFIXED, CIGNORED]:
                 cov = numpy.insert(numpy.insert(cov, idx, 0, axis=1), idx, 0, axis=0)
-                cov[idx, idx] = fittedpar[idx] * fittedpar[idx]
+                cov[idx, idx] = 0.  # fittedpar[idx] * fittedpar[idx]
 
     if not full_output:
         return fittedpar, cov
@@ -662,7 +662,7 @@ def _get_sigma_parameters(parameters, sigma0, constraints):
             else:
                 sigma_par[i] = parameters[i]
         elif abs(constraints[i][0]) == CFIXED:
-            sigma_par[i] = parameters[i]
+            sigma_par[i] = 0.  # parameters[i]
     for i in range(len(constraints)):
         if constraints[i][0] == CFACTOR:
             sigma_par[i] = constraints[i][2] * sigma_par[int(constraints[i][1])]
