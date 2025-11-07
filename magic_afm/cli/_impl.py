@@ -316,6 +316,7 @@ def main(
             if verbose:
                 echo("Creating " + str(filename))
             filename.mkdir(parents=True, exist_ok=True)
+        del to_create
 
     ppe = ProcessPoolExecutor(
         # respect undocumented platform limit
@@ -355,10 +356,9 @@ def main(
 
                 v = fvfile.volumes[not trace]
                 if sync_dist != getattr(fvfile, "sync_dist", None):
-                    v = evolve(v, sync_dist=co["sync_dist"])
+                    v = evolve(v, sync_dist=sync_dist)
 
                 rows, cols = v.shape
-                ncurves = rows * cols
                 property_map = np.empty((rows, cols), dtype=PROPERTY_DTYPE)
                 concurrent_submissions = set()
                 nan_counter = count(1)
@@ -376,7 +376,7 @@ def main(
                         pbar.set_description_str(
                             f"Fitting {filename.name} force curves"
                         )
-                        pbar.reset(total=ncurves)
+                        pbar.reset(total=rows * cols)
                         pbar.bar_format = None
 
                     if co["fit_mode"] == FitMode.SKIP:
