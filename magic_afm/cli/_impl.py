@@ -483,6 +483,7 @@ def main(
         ):
             for name in names:
                 units_factor = 1  # would be great to use UNITS_DICT somehow
+                name2 = name
                 # skip writing fittable params that are fixed
                 if (
                     name.upper() in FitFix.__members__
@@ -493,21 +494,21 @@ def main(
                 if name == "M":
                     if not co["fit_fix"] & FitFix["RADIUS"]:
                         continue
-                    name = "IndentationModulus"
+                    name2 = "IndentationModulus"
                     units_factor = 1e9
                 if name == "li_pha":
                     if co["fit_fix"] & FitFix["LI_AMP"]:
                         continue
                 if name == "fc":
-                    name = "AdhesionForce"
+                    name2 = "AdhesionForce"
                     units_factor = 1e-9
-                if name == "SensIndMod_k" and not co['k_sens']:
+                if name == "SensIndMod_k" and not co["k_sens"]:
                     continue
                 export_path = parent_path / (
                     filename.stem
                     + "_"
                     + extret
-                    + name
+                    + name2
                     + err_str
                     + tracestr
                     + "."
