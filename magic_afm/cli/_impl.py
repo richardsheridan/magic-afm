@@ -6,7 +6,7 @@ import sys
 from multiprocessing import get_context
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, wait
 from functools import partial
-from itertools import islice, count, chain
+from itertools import islice, count
 
 import click
 import cloup
@@ -141,18 +141,6 @@ def wait_and_process(
                 pbar.set_postfix(bad_fits=nan_count)
 
     return concurrent_submissions
-
-
-# must take two positional arguments, fname and array
-EXPORTER_MAP = {
-    "txt": partial(np.savetxt, fmt="%.8g"),
-    "asc": partial(np.savetxt, fmt="%.8g"),
-    "tsv": partial(np.savetxt, fmt="%.8g", delimiter="\t"),
-    "csv": partial(np.savetxt, fmt="%.8g", delimiter=","),
-    "tif": imageio.imwrite,
-    "npy": np.save,
-    "npz": np.savez_compressed,
-}
 
 
 def threaded_opener(filenames):
