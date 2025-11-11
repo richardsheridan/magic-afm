@@ -346,6 +346,7 @@ def main(
             ) as pbar:
                 prepare_flag = True
 
+                # per file defaults overridden here
                 k = co["k"] or fvfile.k
                 defl_sens = co["defl_sens"] or fvfile.defl_sens
                 sync_dist = co["sync_dist"] or getattr(fvfile, "sync_dist", None)
@@ -453,6 +454,10 @@ def main(
 
         # recreate options_json dict with selections
         new_json = {k: co[k] for k in OPTIONS_JSON_SCHEMA}
+        # save per-file defaults/cli overrides
+        new_json["k"] = k
+        new_json["defl_sens"] = defl_sens
+        new_json["sync_dist"] = sync_dist
         # convert enums to names
         # TODO: convert via single source of truth
         new_json["fit_mode"] = FitMode(new_json["fit_mode"]).name
