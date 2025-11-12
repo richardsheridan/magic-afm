@@ -170,7 +170,7 @@ def threaded_opener(filenames):
         yield fvfile, prev_filename
 
 
-@cloup.command(epilog="See https://github.com/richardsheridan/magic-afm for details.")
+@cloup.command(epilog="See https://github.com/richardsheridan/magic-afm for more.")
 @cloup.option_group(
     "Mode selection",
     click.option(

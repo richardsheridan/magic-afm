@@ -55,6 +55,23 @@ Requires CPython 3.11 or higher. (As of v0.9.0, we can read ARDF files natively,
 so :code:`ARDFtoHDF5.exe` is no longer required. We can still read the converted
 HDF5 files, if necessary.)
 
+From PyPI
+^^^^^^^^^
+You can install a release from PyPI::
+
+    python -m venv mafm
+    mafm\Scripts\activate.bat (or) mafm\bin\activate
+    pip install -e magic-afm[gui,cli,numba]
+    (or)
+    conda create -n mafm python=3.11
+    conda activate mafm
+    pip install magic-afm[gui,cli,numba]
+
+From GitHub Releases
+^^^^^^^^^^^^^^^^^^^^
+We use PyInstaller to build executable releases for Windows on Github.
+Simply download the ZIP archive, extract it to your hard drive.
+
 From source
 ^^^^^^^^^^^
 Clone the git repository to your local machine, and
@@ -62,31 +79,24 @@ install into a fresh environment::
 
     git clone https://github.com/richardsheridan/magic-afm.git
 
-    python -m venv magic_afm
-    magic_afm\Scripts\activate.bat (or) magic_afm\bin\activate
+    python -m venv mafm
+    mafm\Scripts\activate.bat (or) mafm\bin\activate
     pip install -e .[gui,cli,numba]
     (or)
-    conda create -n magic_afm python=3.11
-    conda activate magic_afm
+    conda create -n mafm python=3.11
+    conda activate mafm
     pip install -e .[gui,cli,numba]
 
 This is also a `Pixi <https://pixi.sh/>`_ project, so if you install Pixi, the
-Python install is automatic and fast.
+Python install is automatic and fast when you execute the ``cli`` or ``gui`` tasks::
 
-
-From PyPI
-^^^^^^^^^
-Eventually we should supply a pypi distribution.
-
-From GitHub Releases
-^^^^^^^^^^^^^^^^^^^^
-We use PyInstaller to build executable releases for Windows on Github.
-Simply download the ZIP archive, extract it to your hard drive.
+    pixi run cli
+    pixi run gui
 
 Usage
 -----
 All functionality available when the source is imported from the :code:`magic_afm`,
-see API_. :code:`magic fitting workflow.ipynb` doubles as an explainer and alternative
+see API. :code:`magic fitting workflow.ipynb` doubles as an explainer and alternative
 interface. It also functions as the test suite for the calculation code, such as it is.
 The notebook needs additional dependencies you can get with the :code:`notebook` extra.
 
