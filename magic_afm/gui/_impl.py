@@ -95,7 +95,7 @@ from matplotlib.transforms import Bbox, BboxTransform
 from tqdm.std import tqdm as tqdm_std
 
 from magic_afm import async_tools, calculation, data_readers
-from magic_afm.gui.__main__ import nice_workers
+from magic_afm._util import nice_workers
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
@@ -147,12 +147,14 @@ class DispKind(enum.IntEnum):
     δf = enum.auto()
 
 
+# TODO: single source of truth for calculation module, split dispkind out of it
 @frozen
 class ForceCurveOptions:
     fit_mode: calculation.FitMode
     fit_fix: calculation.FitFix
     disp_kind: DispKind
     k: float
+    k_sens: bool
     defl_sens: float
     sync_dist: float | None
     radius: float
@@ -1289,6 +1291,12 @@ class ForceVolumeTkDisplay:
         fit_both_button.grid(row=0, column=2, sticky="W")
         segment_labelframe.pack(fill="x")
 
+        self.calc_k_sens_intvar = tk.IntVar(fit_group_frame, value=True)
+        calc_k_sens_ckbox = ttk.Checkbutton(
+            fit_group_frame, text="Estimate k sens.", variable=self.calc_k_sens_intvar
+        )
+        calc_k_sens_ckbox.pack(fill="x")
+
         # note: this was relocated so double check the row and columns
         fit_group_frame.grid(row=2, column=0, sticky="EW")
 
@@ -1347,13 +1355,13 @@ class ForceVolumeTkDisplay:
             to=1e5,
             increment=0.01,
             format="%0.3f",
-            fitfix=calculation.FitFix.VIRTUAL_DEFLECTION,
+            fitfix=calculation.FitFix.VD,
         )
         self.drag_strvar = self._add_parm(
             fit_labelframe,
             8,
             "Hydrodyn. Drag",
-            fitfix=calculation.FitFix.HYDRODYNAMIC_DRAG,
+            fitfix=calculation.FitFix.DRAG,
         )
         self.li_per_strvar = self._add_parm(
             fit_labelframe,
@@ -1362,7 +1370,7 @@ class ForceVolumeTkDisplay:
             0.0,
             increment=10.0,
             format="%0.0f",
-            fitfix=calculation.FitFix.LI_PERIOD,
+            fitfix=calculation.FitFix.LI_PER,
         )
         self.li_amp_strvar = self._add_parm(
             fit_labelframe,
@@ -1526,6 +1534,7 @@ class ForceVolumeTkDisplay:
                 fit_fix=calculation.FitFix(self._read_chkboxes()),
                 disp_kind=DispKind(self.disp_kind_intvar.get()),
                 k=float(self.spring_const_strvar.get()),
+                k_sens=bool(self.calc_k_sens_intvar.get()),
                 defl_sens=float(self.defl_sens_strvar.get()),
                 radius=float(self.radius_strvar.get()),
                 tau=float(self.tau_strvar.get()),
@@ -1696,6 +1705,8 @@ class ForceVolumeController:
                 half_red = np.array((1, 0, 0, 0.5), dtype="f4")
                 half_green = np.array((0, 1, 0, 0.5), dtype="f4")
                 property_map = np.empty(img_shape, dtype=calculation.PROPERTY_DTYPE)
+                parms_map = np.empty(img_shape, dtype=calculation.PARMS_DTYPE)
+                parms_err_map = np.empty(img_shape, dtype=calculation.PARMS_DTYPE)
 
                 def make_progress_image_draw_fn():
                     nonlocal progress_image, progress_array
@@ -1747,7 +1758,7 @@ class ForceVolumeController:
                     chunksize,
                 )
                 pipeline_nursery.start_soon(preparation_spinner)
-                async for rc, properties in property_aiter:
+                async for rc, properties, parms, parms_err in property_aiter:
                     if prepare_flag:
                         prepare_flag = False
                         pbar.set_description_str(
@@ -1757,9 +1768,13 @@ class ForceVolumeController:
                         pbar.bar_format = None
                     if properties is None:
                         property_map[rc] = np.nan
+                        parms_map[rc] = np.nan
+                        parms_err_map[rc] = np.nan
                         progress_array[rc] = half_red
                     else:
                         property_map[rc] = properties
+                        parms_map[rc] = parms
+                        parms_err_map[rc] = parms_err
                         progress_array[rc] = half_green
                     if pbar.update():
                         self.display.canvas.draw_send.send_nowait(blit_img_draw_fn)
@@ -1792,15 +1807,47 @@ class ForceVolumeController:
             extret = "Ret"
         else:
             extret = "Both"
-        for name in calculation.PROPERTY_UNITS_DICT:
-            newname = "Calc" + extret + name + trace
-            self.opened_fvol.add_image(
-                image_name=newname,
-                units=calculation.PROPERTY_UNITS_DICT[name],
-                image=property_map[name].squeeze(),
-            )
-            if newname not in combobox_values:
-                combobox_values.append(newname)
+        FitFix = calculation.FitFix
+        for names_units, map_, err_str in zip(
+            [
+                calculation.PROPERTY_UNITS_DICT,
+                calculation.PARMS_UNITS_DICT,
+                calculation.PARMS_UNITS_DICT,
+            ],
+            [property_map, parms_map, parms_err_map],
+            ["", "", "Err"],
+        ):
+            for name in names_units:
+                units_factor = 1  # would be great to use UNITS_DICT somehow
+                name2 = name
+                # skip writing fittable params that are fixed
+                if (
+                    name.upper() in FitFix.__members__
+                    and d["fit_fix"] & FitFix[name.upper()]
+                ):
+                    continue
+                # ugly special cases for M, etc.
+                if name == "M":
+                    if not d["fit_fix"] & FitFix["RADIUS"]:
+                        continue
+                    name2 = "IndentationModulus"
+                    units_factor = 1e9
+                if name == "li_pha":
+                    if d["fit_fix"] & FitFix["LI_AMP"]:
+                        continue
+                if name == "fc":
+                    name2 = "AdhesionForce"
+                    units_factor = 1e-9
+                if name == "SensIndMod_k" and not options.k_sens:
+                    continue
+                newname = "Calc" + extret + name2 + err_str + trace
+                self.opened_fvol.add_image(
+                    image_name=newname,
+                    units=names_units[name],
+                    image=map_[name].squeeze() * units_factor,
+                )
+                if newname not in combobox_values:
+                    combobox_values.append(newname)
 
         self.display.reset_image_name_menu(combobox_values)
         self.display.image_name_menu.set(self.display.image_name_menu.get())

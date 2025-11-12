@@ -64,11 +64,11 @@ install into a fresh environment::
 
     python -m venv magic_afm
     magic_afm\Scripts\activate.bat (or) magic_afm\bin\activate
-    pip install -e .[gui,numba]
+    pip install -e .[gui,cli,numba]
     (or)
     conda create -n magic_afm python=3.11
     conda activate magic_afm
-    pip install -e .[gui,numba]
+    pip install -e .[gui,cli,numba]
 
 This is also a `Pixi <https://pixi.sh/>`_ project, so if you install Pixi, the
 Python install is automatic and fast.
@@ -103,7 +103,7 @@ or if you are a Pixi user, you can use this while in the source tree::
 
 When running the GitHub release executable for Windows::
 
-     magic_gui.exe
+     magic_afm_gui.exe
 
 To load data, select "Open..." from the File menu, or press Ctrl+O. A dialog
 will open that will allow you to navigate and select any supported filetype.
@@ -277,20 +277,27 @@ creates new images for each in the "Image" menu. All calculated property maps ca
 be exported like any other image by clicking "Export calculated maps". Again, The
 current preprocessing and fit parameters will be written as JSON in the same folder.
 
-Future Plans:
+Running the CLI
+^^^^^^^^^^^^^^^
 
-- Test suite and CI
+All platforms, when running from source or PyPI::
 
-- More complete model outputs (e.g. expose LJ breadth parameter)
+     python -m magic_afm.cli
 
-- Viscoelastic model
+or if you are a Pixi user, you can use this while in the source tree::
 
-- CLI for batch fit
+     pixi run cli
 
-API
----
-:code:`magic_afm` can be imported and used, especially the submodules :code:`data_readers` and
-:code:`calculation`.
+When running the GitHub release executable for Windows::
+
+     magic_afm_cli.exe
+
+The CLI options are currently documented by passing the --help flag.
+
+Using the Python API
+^^^^^^^^^^^^^^^^^^^^
+:code:`magic_afm` can be imported and used, especially the submodules :code:`data_readers`
+and :code:`calculation`. See the module, class, and function docstrings for usage notes.
 
 .. TODO: This section will list the function names, arguments, results, exceptions and
    side effects. Possibly generated from docstrings?
@@ -302,3 +309,9 @@ GitHub issues and pull requests are very welcome!
 
 If you are reporting a crash, please include the traceback dump that is written
 in the source or PyInstaller folder.
+
+Future Plans:
+
+- Test suite and CI
+
+- Viscoelastic model

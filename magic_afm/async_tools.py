@@ -27,10 +27,12 @@ from math import inf
 
 import trio
 
+from ._util import MAX_WORKERS
+
 TOOLTIP_CANCEL = None, None, None
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 
-cpu_bound_limiter = trio.CapacityLimiter(os.cpu_count() or 1)
+cpu_bound_limiter = trio.CapacityLimiter(MAX_WORKERS)
 
 
 def _chunk_producer(fn, job_items, chunksize):

@@ -22,14 +22,16 @@ jobs:
       - name: Discover version
         run: pixi run make-version
       - name: Build with Pyinstaller
-        run:  pixi run -e build pyinstaller -y magic_gui_${RUNNER_OS::3}.spec
+        run:  pixi run -e build pyinstaller -y magic_afm_${RUNNER_OS::3}.spec
         shell: bash
-      - name: Tidy dist
-        if: startsWith( runner.os, 'mac')
-        run: rm -rf dist/magic_gui
+#      - name: Tidy dist
+#        if: startsWith( runner.os, 'mac')
+#        run: rm -rf dist/magic_afm
+      - name: Copy README
+        run: cp README.rst dist/magic_afm/
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: magic_gui-${{ matrix.os }}-build
+          name: magic_afm-${{ matrix.os }}-build
           path: dist/
           if-no-files-found: error

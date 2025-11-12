@@ -44,6 +44,7 @@ else:
 
 from ._vendored_lstsq import leastsq
 from ._vendored_root import root_df_sane
+from ._util import get_int_env_var
 
 
 ###############################################
@@ -53,16 +54,12 @@ from ._vendored_root import root_df_sane
 
 EPS = float(np.finfo(np.float64).eps)
 RT_EPS = float(np.sqrt(EPS))
-RESAMPLE_NPTS = 512
+RESAMPLE_NPTS = get_int_env_var("MAFM_RESAMPLE_NPTS") or 512
 
 gkern = np.array([0.25, 0.5, 0.25], dtype=np.float32)
 
 
 PROPERTY_UNITS_DICT = {
-    "IndentationModulus": "Pa",
-    "AdhesionForce": "N",
-    "IndentationModulusErr": "Pa",
-    "AdhesionForceErr": "N",
     "Deflection": "m",
     "Indentation": "m",
     "ContactRadius": "m",
@@ -81,7 +78,7 @@ PARMS_UNITS_DICT = {
     "fc": "N",
     "delta_shift": "m",
     "force_shift": "N",
-    "lj_delta_scale": None,
+    "lj_scale": None,
     "vd": None,
     "li_per": "m",
     "li_amp": "m",
@@ -100,17 +97,17 @@ class FitMode(enum.IntEnum):
     BOTH = enum.auto()
 
 
+# XXX DO NOT REORDER FOR BACKCOMPAT
 class FitFix(enum.IntFlag, boundary=enum.STRICT):
     RADIUS = enum.auto()
     TAU = enum.auto()
     LJ_SCALE = enum.auto()
-    VIRTUAL_DEFLECTION = enum.auto()
-    LI_PERIOD = enum.auto()
+    VD = enum.auto()
+    LI_PER = enum.auto()
     LI_AMP = enum.auto()
-    HYDRODYNAMIC_DRAG = enum.auto()
+    DRAG = enum.auto()
 
-
-FitFix.DEFAULTS = ~FitFix(0) & ~FitFix.LJ_SCALE
+    DEFAULTS = RADIUS | TAU | VD | LI_PER | LI_AMP | DRAG
 
 
 ###############################################
@@ -981,6 +978,7 @@ def fitfun(
     cancel_poller=bool,
     p0=None,
     nan_on_error=False,
+    verbose_nans=False,
     **kwargs,
 ):
     delta = z - d
@@ -1017,11 +1015,11 @@ def fitfun(
         (np.min(delta), np.max(delta)),  # delta_shift
         (np.min(force), np.max(force)),  # force_shift
         (lj_scale,) * 2 if fit_fix & FitFix.LJ_SCALE else (-6.0, 6.0),
-        (vd,) * 2 if fit_fix & FitFix.VIRTUAL_DEFLECTION else (-np.inf, np.inf),
-        ((lg[0],) * 2 if noli or fit_fix & FitFix.LI_PERIOD else (0.0, np.inf)),
+        (vd,) * 2 if fit_fix & FitFix.VD else (-np.inf, np.inf),
+        ((lg[0],) * 2 if noli or fit_fix & FitFix.LI_PER else (0.0, np.inf)),
         ((lg[1],) * 2 if noli or fit_fix & FitFix.LI_AMP else (-np.inf, np.inf)),
         ((lg[2],) * 2 if noli else (-np.inf, np.inf)),
-        (drag,) * 2 if fit_fix & FitFix.HYDRODYNAMIC_DRAG else (0.0, np.inf),
+        (drag,) * 2 if fit_fix & FitFix.DRAG else (0.0, np.inf),
     )
     bounds = np.transpose(bounds)
     p0 = np.clip(p0, *bounds)
@@ -1091,8 +1089,10 @@ def fitfun(
     except Exception:
         if not nan_on_error:
             raise
-        traceback.print_exc()
-        print(p0)
+        if verbose_nans:
+            # TODO: detect CLI and alert cleverly
+            traceback.print_exc()
+            print(p0)
         parms = np.void(np.nan, dtype=PARMS_DTYPE)
         parms_err = np.void(np.nan, dtype=PARMS_DTYPE)
         sse = np.nan
@@ -1127,7 +1127,7 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
         params["fc"],
         params["delta_shift"],
         params["force_shift"],
-        params["lj_delta_scale"],
+        params["lj_scale"],
     )
     mindelta = delta_curve(
         schwarz_wrap,
@@ -1139,7 +1139,7 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
         params["fc"],
         params["delta_shift"],
         params["force_shift"],
-        params["lj_delta_scale"],
+        params["lj_scale"],
     )
     # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
     zeroindforce = float(
@@ -1153,7 +1153,7 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
             params["fc"].squeeze(),
             params["delta_shift"].squeeze(),
             params["force_shift"].squeeze(),
-            params["lj_delta_scale"].squeeze(),
+            params["lj_scale"].squeeze(),
         )
     )
 
@@ -1180,41 +1180,40 @@ def perturb_k(d, k, epsilon=1e-3):
     return d_new, k_new
 
 
-def calc_properties_imap(z_d_s_rc, **kwargs):
+def calc_properties_imap(z_d_s_rc, k_sens=True, **kwargs):
     z, d, split, rc = z_d_s_rc
     kwargs["split"] = split
     parms, parms_err, sse, _ = fitfun(z, d, nan_on_error=True, **kwargs)
     if np.any(np.isnan(parms.item())):
-        return rc, None
+        return rc, None, None, None
     (deflection, indentation, z_true_surface, mindelta, a_c) = calc_def_ind_ztru_ac(
         d, parms, **kwargs
     )
-    k = kwargs.pop("k")
-    eps = 1e-3
-    params_perturb, *_ = fitfun(
-        z, *perturb_k(d, k, eps), p0=parms, nan_on_error=True, **kwargs
-    )
-    if np.any(np.isnan(params_perturb.item())):
-        return rc, None
-    ind_mod_sens_k = (params_perturb["M"] - parms["M"]) / parms["M"] / eps
+    if k_sens:
+        k = kwargs.pop("k")
+        eps = 1e-3
+        params_perturb, *_ = fitfun(
+            z, *perturb_k(d, k, eps), p0=parms, nan_on_error=True, **kwargs
+        )
+        if np.any(np.isnan(params_perturb.item())):
+            return rc, None, None, None
+        ind_mod_sens_k = (params_perturb["M"] - parms["M"]) / parms["M"] / eps
+    else:
+        ind_mod_sens_k = 0.
 
     # pack up properties, ensuring all fields are filled in order
     properties = np.void(np.nan, dtype=PROPERTY_DTYPE)
-    properties["IndentationModulus"] = parms["M"] * 1e9
-    properties["AdhesionForce"] = parms["fc"] / 1e9
-    properties["IndentationModulusErr"] = parms_err["M"] * 1e9
-    properties["AdhesionForceErr"] = parms_err["fc"] / 1e9
-    properties["Deflection"] = deflection / 1e9
-    properties["Indentation"] = indentation / 1e9
-    properties["ContactRadius"] = a_c / 1e9
-    properties["TrueHeight"] = -z_true_surface / 1e9
+    properties["Deflection"] = deflection
+    properties["Indentation"] = indentation
+    properties["ContactRadius"] = a_c
+    properties["TrueHeight"] = -z_true_surface
     properties["IndentationRatio"] = deflection / indentation
     properties["SensIndMod_k"] = ind_mod_sens_k
     properties["SumSquaredError"] = sse
     # .item() coerces structured dtype to tuple
     assert not np.any(np.isnan(properties.item()))
 
-    return rc, properties
+    return rc, properties, parms, parms_err
 
 
 def process_force_curve(x, fit_mode, s_ratio):
