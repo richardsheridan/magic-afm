@@ -215,7 +215,7 @@ def threaded_opener(filenames):
 @click.option("--disable-progress", is_flag=True)
 @click.option("--stop-on-error", is_flag=True)
 @click.option("--jit", is_flag=True)
-@click.option("--k-sens", is_flag=False)
+@click.option("--k-sens/--no-k-sens", is_flag=True, default=True)
 @click.argument(
     "filenames",
     nargs=-1,
