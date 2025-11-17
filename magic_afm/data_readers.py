@@ -948,13 +948,14 @@ class ARDFForceMapReader:
 
         zxr, dxr = NANCURVE
         for vdat in self.traverse_vdats(vset.offset + vset.size):
-            s = vdat.seg_offsets
+            _, ext, *_ = vdat.seg_offsets
+            ret = 2 * ext
             if vdat.channel == self.channels[self.zname][0]:
                 z = vdat.get_ndarray()
-                zxr = z[: s[1]], z[s[1] : s[2]]
+                zxr = z[:ret].reshape(2, ext)
             elif vdat.channel == self.channels["Defl"][0]:
                 d = vdat.get_ndarray()
-                dxr = d[: s[1]], d[s[1] : s[2]]
+                dxr = d[:ret].reshape(2, ext)
         return zxr, dxr
 
     def iter_indices(self) -> Iterable[Index]:
@@ -972,13 +973,14 @@ class ARDFForceMapReader:
                 continue
             zxr, dxr = NANCURVE
             for vdat in self.traverse_vdats(vset.offset + vset.size):
-                s = vdat.seg_offsets
+                _, ext, *_ = vdat.seg_offsets
+                ret = 2 * ext
                 if vdat.channel == self.channels[zname][0]:
                     z = vdat.get_ndarray()
-                    zxr = z[: s[1]], z[s[1] : s[2]]
+                    zxr = z[:ret].reshape(2, ext)
                 elif vdat.channel == self.channels["Defl"][0]:
                     d = vdat.get_ndarray()
-                    dxr = d[: s[1]], d[s[1] : s[2]]
+                    dxr = d[:ret].reshape(2, ext)
             yield (vset.line, vset.point), (zxr, dxr)
 
     def get_all_curves(self) -> ZDArrays:
@@ -994,11 +996,11 @@ class ARDFForceMapReader:
                     x[0] = vdat  # zvdat
                 elif vdat.channel == self.channels["Defl"][0]:
                     x[1] = vdat  # dvdat
-                minext = min(minext, vdat.seg_offsets[1])
             assert None not in x, f"missing vdat channel: {x}, {self.channels}"
+            minext = min(minext, vdat.seg_offsets[1])
         del vset, vdat, x
         minfloats = 2 * minext
-        x = np.empty((self.lines, self.points, 2, minfloats), dtype=np.float32)
+        x = np.full((self.lines, self.points, 2, minfloats), np.nan, dtype=np.float32)
         for (r, c), (zvdat, dvdat) in vdats.items():
             # code elsewhere assumes split is halfway through
             floats = zvdat.seg_offsets[1] * 2
