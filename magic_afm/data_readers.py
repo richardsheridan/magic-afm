@@ -27,6 +27,7 @@ should be loaded lazily. (I'm looking at you h5py..)
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import mmap
 import struct
+from bisect import bisect_left
 from collections.abc import Collection, Iterable
 from functools import partial
 from subprocess import PIPE
@@ -557,7 +558,6 @@ class ARDFVolumeTableOfContents:
     offset: int
     size: int
     lines: np.ndarray
-    points: np.ndarray
     pointers: np.ndarray
     _voff_struct = struct.Struct("<LLQQ")
 
@@ -571,30 +571,23 @@ class ARDFVolumeTableOfContents:
         size, nentries, stride = TOC_STRUCT.unpack_from(data, offset + 16)
         assert stride == 40, stride
         assert size - 32 == nentries * stride, (size, nentries, stride)
-        vtoc_arr = np.zeros(
-            nentries,
-            dtype=[  # match _voff_struct.format
-                ("force_index", "L"),
-                ("line", "L"),
-                ("point", "Q"),
-                ("pointer", "Q"),
-            ],
-        )
+        lines, pointers = [], []
         for i, toc_offset in enumerate(
             range(header.offset + 32, header.offset + size, stride)
         ):
             entry_header = ARDFHeader.unpack(data, toc_offset)
             if not entry_header.crc:
                 # scan was interrupted, and vtoc is zero-filled
-                vtoc_arr = vtoc_arr[:i].copy()
                 break
             if entry_header.name != b"VOFF":
                 raise ValueError("Malformed volume table entry.", entry_header)
             entry_header.validate()
-            vtoc_arr[i] = cls._voff_struct.unpack_from(data, toc_offset + 16)
-        return cls(
-            offset, size, vtoc_arr["line"], vtoc_arr["point"], vtoc_arr["pointer"]
-        )
+            force_index, line, point, pointer = cls._voff_struct.unpack_from(
+                data, toc_offset + 16
+            )
+            lines.append(line)
+            pointers.append(pointer)
+        return cls(offset, size, lines, pointers)
 
 
 @frozen
@@ -938,7 +931,7 @@ class ARDFForceMapReader:
                 sl = np.s_[::-1]
             else:
                 sl = np.s_[:]
-            i = self.vtoc.lines[sl].searchsorted(r)
+            i = bisect_left(self.vtoc.lines[sl], r)
             if i >= len(self.vtoc.lines) or r != int(self.vtoc.lines[sl][i]):
                 return NANCURVE
             # read entire line of the vtoc
@@ -966,7 +959,7 @@ class ARDFForceMapReader:
 
     def iter_indices(self) -> Iterable[Index]:
         """Iterate over force curve indices in on-disk order"""
-        for vset in self.traverse_vsets(int(self.vtoc.pointers[0])):
+        for vset in self.traverse_vsets(self.vtoc.pointers[0]):
             if vset.vtype != self.vtype:
                 continue
             yield vset.line, vset.point
@@ -974,7 +967,7 @@ class ARDFForceMapReader:
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
         zname = self.zname
-        for vset in self.traverse_vsets(int(self.vtoc.pointers[0])):
+        for vset in self.traverse_vsets(self.vtoc.pointers[0]):
             if vset.vtype != self.vtype:
                 continue
             zxr, dxr = NANCURVE
@@ -992,7 +985,7 @@ class ARDFForceMapReader:
         """Eagerly load all curves into memory."""
         minext = 0xFFFFFFFF
         vdats = {}
-        for vset in self.traverse_vsets(int(self.vtoc.pointers[0])):
+        for vset in self.traverse_vsets(self.vtoc.pointers[0]):
             if vset.vtype != self.vtype:
                 continue
             x = vdats[vset.line, vset.point] = [None, None]
@@ -1084,8 +1077,8 @@ class ARDFVolume:
 
         # Check if each offset is regularly spaced
         # optimize for LARGE regular case (FMaps are SMALL)
-        first_vset_header = ARDFHeader.unpack(data, int(vtoc.pointers[0]))
-        if complete and not np.any(np.diff(np.diff(vtoc.pointers.astype(np.uint64)))):
+        first_vset_header = ARDFHeader.unpack(data, vtoc.pointers[0])
+        if complete and not np.any(np.diff(np.diff(vtoc.pointers))):
             reader = ARDFFFMReader.parse(first_vset_header, points, lines, channels)
             name = "Trace" if reader.trace else "Retrace"
         else:
