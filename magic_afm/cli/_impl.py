@@ -119,30 +119,6 @@ def _chunk_consumer(chunk):
     return tuple(map(*chunk))
 
 
-def wait_and_process(
-    concurrent_submissions, property_map, parms_map, parms_err_map, nan_counter, pbar
-):
-    done, concurrent_submissions = wait(
-        concurrent_submissions, return_when="FIRST_COMPLETED"
-    )
-    for fut in done:
-        for rc, properties, parms, parms_err in fut.result():
-            if properties is None:
-                property_map[rc] = np.nan
-                parms_map[rc] = np.nan
-                parms_err_map[rc] = np.nan
-                nan_count = next(nan_counter)
-            else:
-                property_map[rc] = properties
-                parms_map[rc] = parms
-                parms_err_map[rc] = parms_err
-                nan_count = None
-            if pbar.update() and nan_count is not None:
-                pbar.set_postfix(bad_fits=nan_count)
-
-    return concurrent_submissions
-
-
 def threaded_opener(filenames):
     """Yield the opened fvfiles and names while opening the next in a background thread.
 
@@ -168,6 +144,171 @@ def threaded_opener(filenames):
     with fut.result() as open_thing:
         fvfile = fvfile_cls.parse(open_thing)
         yield fvfile, prev_filename
+
+
+def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe, pbar):
+
+    def wait_and_process():
+        result = wait(concurrent_submissions, return_when="FIRST_COMPLETED")
+        concurrent_submissions.difference_update(result.done)
+        for fut in result.done:
+            for rc, properties, parms, parms_err in fut.result():
+                if properties is None:
+                    property_map[rc] = np.nan
+                    parms_map[rc] = np.nan
+                    parms_err_map[rc] = np.nan
+                    nan_count = next(nan_counter)
+                else:
+                    property_map[rc] = properties
+                    parms_map[rc] = parms
+                    parms_err_map[rc] = parms_err
+                    nan_count = None
+                if pbar.update() and nan_count is not None:
+                    pbar.set_postfix(bad_fits=nan_count)
+
+    prepare_flag = True
+
+    # per file defaults overridden here
+    k = co["k"] or fvfile.k
+    defl_sens = co["defl_sens"] or fvfile.defl_sens
+    sync_dist = co["sync_dist"] or getattr(fvfile, "sync_dist", None)
+    trace = co["trace"] is None or co["trace"]
+
+    v = fvfile.volumes[not trace]
+    if sync_dist != getattr(fvfile, "sync_dist", None):
+        v = evolve(v, sync_dist=sync_dist)
+
+    imshape = v.shape
+    property_map = np.empty(imshape, dtype=PROPERTY_DTYPE)
+    parms_map = np.empty(imshape, dtype=PARMS_DTYPE)
+    parms_err_map = np.empty(imshape, dtype=PARMS_DTYPE)
+    concurrent_submissions = set()
+    nan_counter = count(1)
+
+    procfun = partial(
+        process_force_curve,
+        fit_mode=co["fit_mode"],
+        s_ratio=defl_sens / fvfile.defl_sens,
+    )
+    calcfun = partial(calc_properties_imap, **{**co, "k": k})
+    chunksize = 8
+    for rc_zd_chunk in _chunk_producer(procfun, v.iter_curves(), chunksize):
+        if prepare_flag:
+            prepare_flag = False
+            pbar.set_description_str(f"Fitting {filename.name} force curves")
+            pbar.reset(total=imshape[0] * imshape[1])
+            pbar.bar_format = None
+
+        if co["fit_mode"] == FitMode.SKIP:
+            pbar.update(len(rc_zd_chunk[1]))
+            continue
+
+        z_d_s_rc_chunk = _chunk_consumer(rc_zd_chunk)
+        concurrent_submissions.add(
+            ppe.submit(
+                _chunk_consumer,
+                (calcfun, z_d_s_rc_chunk),
+            )
+        )
+
+        if len(concurrent_submissions) >= MAX_WORKERS:
+            wait_and_process()
+
+    while concurrent_submissions:
+        wait_and_process()
+
+    if co["fit_mode"] == FitMode.SKIP:
+        if verbose:
+            echo("Skipping writing options_json and property maps")
+        return
+
+    # Actually write out results to external world
+    if co["trace"] is None:
+        tracestr = ""
+    elif trace == 0:
+        tracestr = "Retrace"
+    elif trace == 1:
+        tracestr = "Trace"
+    else:
+        tracestr = str(trace)
+    if co["fit_mode"] == FitMode.EXTEND:
+        extret = "Ext"
+    elif co["fit_mode"] == FitMode.RETRACT:
+        extret = "Ret"
+    else:
+        extret = "Both"
+
+    if output_path is None:
+        parent_path = filename.parent
+    elif output_path.is_absolute():
+        parent_path = output_path
+    else:
+        parent_path = filename.parent / output_path
+
+    options_json_path = parent_path / (
+        filename.stem + "_options" + extret + tracestr + ".json"
+    )
+
+    # recreate options_json dict with selections
+    new_json = {k: co[k] for k in OPTIONS_JSON_SCHEMA}
+    # save per-file defaults/cli overrides
+    new_json["k"] = k
+    new_json["defl_sens"] = defl_sens
+    new_json["sync_dist"] = sync_dist
+    # convert enums to names
+    # TODO: convert via single source of truth
+    new_json["fit_mode"] = FitMode(new_json["fit_mode"]).name
+    if new_json["trace"] is not None:
+        new_json["trace"] = TraceChoice(co["trace"]).name
+
+    if verbose:
+        echo("Writing " + str(options_json_path))
+    with options_json_path.open("w") as fp:
+        json.dump(new_json, fp)
+
+    for names, map_, err_str in zip(
+        [PROPERTY_UNITS_DICT, PARMS_UNITS_DICT, PARMS_UNITS_DICT],
+        [property_map, parms_map, parms_err_map],
+        ["", "", "Err"],
+    ):
+        for name in names:
+            units_factor = 1  # would be great to use UNITS_DICT somehow
+            name2 = name
+            # skip writing fittable params that are fixed
+            if (
+                name.upper() in FitFix.__members__
+                and co["fit_fix"] & FitFix[name.upper()]
+            ):
+                continue
+            # ugly special case for M, etc.
+            if name == "M":
+                if not co["fit_fix"] & FitFix["RADIUS"]:
+                    continue
+                name2 = "IndentationModulus"
+                units_factor = 1e9
+            if name == "li_pha":
+                if co["fit_fix"] & FitFix["LI_AMP"]:
+                    continue
+            if name == "fc":
+                name2 = "AdhesionForce"
+                units_factor = 1e-9
+            if name == "SensIndMod_k" and not co["k_sens"]:
+                continue
+            export_path = parent_path / (
+                filename.stem
+                + "_"
+                + extret
+                + name2
+                + err_str
+                + tracestr
+                + "."
+                + output_type
+            )
+            if verbose:
+                echo("Writing " + str(export_path))
+            EXPORTER_MAP[output_type](
+                export_path, units_factor * map_[name].squeeze()[::-1]
+            )
 
 
 @cloup.command(epilog="See https://github.com/richardsheridan/magic-afm for more.")
@@ -344,171 +485,12 @@ def main(
                 position=1,
                 disable=disable_progress,
             ) as pbar:
-                prepare_flag = True
-
-                # per file defaults overridden here
-                k = co["k"] or fvfile.k
-                defl_sens = co["defl_sens"] or fvfile.defl_sens
-                sync_dist = co["sync_dist"] or getattr(fvfile, "sync_dist", None)
-                trace = co["trace"] is None or co["trace"]
-
-                v = fvfile.volumes[not trace]
-                if sync_dist != getattr(fvfile, "sync_dist", None):
-                    v = evolve(v, sync_dist=sync_dist)
-
-                imshape = v.shape
-                property_map = np.empty(imshape, dtype=PROPERTY_DTYPE)
-                parms_map = np.empty(imshape, dtype=PARMS_DTYPE)
-                parms_err_map = np.empty(imshape, dtype=PARMS_DTYPE)
-                concurrent_submissions = set()
-                nan_counter = count(1)
-
-                procfun = partial(
-                    process_force_curve,
-                    fit_mode=co["fit_mode"],
-                    s_ratio=defl_sens / fvfile.defl_sens,
+                process_fvfile(
+                    fvfile, filename, output_type, output_path, verbose, co, ppe, pbar
                 )
-                calcfun = partial(calc_properties_imap, **{**co, "k": k})
-                chunksize = 8
-                for rc_zd_chunk in _chunk_producer(procfun, v.iter_curves(), chunksize):
-                    if prepare_flag:
-                        prepare_flag = False
-                        pbar.set_description_str(
-                            f"Fitting {filename.name} force curves"
-                        )
-                        pbar.reset(total=imshape[0] * imshape[1])
-                        pbar.bar_format = None
-
-                    if co["fit_mode"] == FitMode.SKIP:
-                        pbar.update(len(rc_zd_chunk[1]))
-                        continue
-
-                    z_d_s_rc_chunk = _chunk_consumer(rc_zd_chunk)
-                    concurrent_submissions.add(
-                        ppe.submit(
-                            _chunk_consumer,
-                            (calcfun, z_d_s_rc_chunk),
-                        )
-                    )
-
-                    if len(concurrent_submissions) < MAX_WORKERS:
-                        continue
-
-                    concurrent_submissions = wait_and_process(
-                        concurrent_submissions,
-                        property_map,
-                        parms_map,
-                        parms_err_map,
-                        nan_counter,
-                        pbar,
-                    )
-
-                while concurrent_submissions:
-                    concurrent_submissions = wait_and_process(
-                        concurrent_submissions,
-                        property_map,
-                        parms_map,
-                        parms_err_map,
-                        nan_counter,
-                        pbar,
-                    )
         except Exception as e:
             message = f"Unhandled error processing {str(filename)}."
             if stop_on_error:
                 raise RuntimeError(message) from e
             else:
-                echo(message + " Continuing...", err=True)
-                continue
-
-        if co["fit_mode"] == FitMode.SKIP:
-            if verbose:
-                echo("Skipping writing options_json and property maps")
-            continue
-
-        # Actually write out results to external world
-        if is_default("trace"):
-            tracestr = ""
-        elif trace == 0:
-            tracestr = "Retrace"
-        elif trace == 1:
-            tracestr = "Trace"
-        else:
-            tracestr = str(trace)
-        if co["fit_mode"] == FitMode.EXTEND:
-            extret = "Ext"
-        elif co["fit_mode"] == FitMode.RETRACT:
-            extret = "Ret"
-        else:
-            extret = "Both"
-
-        if output_path is None:
-            parent_path = filename.parent
-        elif output_path.is_absolute():
-            parent_path = output_path
-        else:
-            parent_path = filename.parent / output_path
-
-        options_json_path = parent_path / (
-            filename.stem + "_options" + extret + tracestr + ".json"
-        )
-
-        # recreate options_json dict with selections
-        new_json = {k: co[k] for k in OPTIONS_JSON_SCHEMA}
-        # save per-file defaults/cli overrides
-        new_json["k"] = k
-        new_json["defl_sens"] = defl_sens
-        new_json["sync_dist"] = sync_dist
-        # convert enums to names
-        # TODO: convert via single source of truth
-        new_json["fit_mode"] = FitMode(new_json["fit_mode"]).name
-        if new_json["trace"] is not None:
-            new_json["trace"] = TraceChoice(co["trace"]).name
-
-        if verbose:
-            echo("Writing " + str(options_json_path))
-        with options_json_path.open("w") as fp:
-            json.dump(new_json, fp)
-
-        for names, map_, err_str in zip(
-            [PROPERTY_UNITS_DICT, PARMS_UNITS_DICT, PARMS_UNITS_DICT],
-            [property_map, parms_map, parms_err_map],
-            ["", "", "Err"],
-        ):
-            for name in names:
-                units_factor = 1  # would be great to use UNITS_DICT somehow
-                name2 = name
-                # skip writing fittable params that are fixed
-                if (
-                    name.upper() in FitFix.__members__
-                    and co["fit_fix"] & FitFix[name.upper()]
-                ):
-                    continue
-                # ugly special case for M, etc.
-                if name == "M":
-                    if not co["fit_fix"] & FitFix["RADIUS"]:
-                        continue
-                    name2 = "IndentationModulus"
-                    units_factor = 1e9
-                if name == "li_pha":
-                    if co["fit_fix"] & FitFix["LI_AMP"]:
-                        continue
-                if name == "fc":
-                    name2 = "AdhesionForce"
-                    units_factor = 1e-9
-                if name == "SensIndMod_k" and not co["k_sens"]:
-                    continue
-                export_path = parent_path / (
-                    filename.stem
-                    + "_"
-                    + extret
-                    + name2
-                    + err_str
-                    + tracestr
-                    + "."
-                    + output_type
-                )
-                if verbose:
-                    echo("Writing " + str(export_path))
-                EXPORTER_MAP[output_type](
-                    export_path, units_factor * map_[name].squeeze()[::-1]
-                )
+                echo("\n".join((message, str(e), "Continuing...")), err=True)
