@@ -1261,8 +1261,8 @@ class FFVReader:
         offset = int(subheader["Data offset"])
         length = int(subheader["Data length"])
         # npts = int(subheader["Sample Points"])  # only QNM?
-        n_ext, n_ret = tuple(map(int, subheader["Samps/line"].split()))
-        bpp = length // (r * c * (n_ret + n_ext))
+        n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
+        bpp = length // (r * c * 2 * n_ext)
         ints = np.ndarray(
             shape=(r, c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
@@ -1297,10 +1297,9 @@ class QNMDReader:
         r, c = shape
         length = int(subheader["Data length"])
         offset = int(subheader["Data offset"])
-        # npts = int(header["Ciao scan list"][0]["Sample Points"]) only at 2kHz?
-        n_ext, n_ret = tuple(map(int, subheader["Samps/line"].split()))
-        assert n_ext == n_ret
-        npts = n_ext + n_ret
+        # npts = int(subheader["Sample Points"]) only at 2kHz?
+        n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
+        npts = 2 * n_ext
         bpp = length // (r * c * npts)
         d_ints = np.ndarray(
             shape=(r * c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
