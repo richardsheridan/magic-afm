@@ -278,7 +278,7 @@ ExpandedFVFile: TypeAlias = data_readers.FVFile | SyncDistFVFile | TraceRetraceF
 
 
 @mutable
-class AsyncFVFile:
+class GUIFVFile:
     """Consistent interface across filetypes for Magic AFM GUI"""
 
     _units_map = {
@@ -341,14 +341,11 @@ class AsyncFVFile:
         image_name = self.strip_trace(image_name)
         self._units_map[image_name] = units
 
-    async def get_image(self, image_name):
+    def get_image(self, image_name):
         if image_name in self._image_cache:
-            await trio.sleep(0)
             image = self._image_cache[image_name]
         else:
-            image = await trio.to_thread.run_sync(
-                self.fvfile.images[image_name].get_image
-            )
+            image = self.fvfile.images[image_name].get_image()
             self._image_cache[image_name] = image
         return image
 
@@ -378,7 +375,7 @@ class DemoStub:
 
 
 @mutable
-class DemoForceVolumeFile(AsyncFVFile):
+class DemoForceVolumeFile(GUIFVFile):
     delta: np.ndarray = field(
         default=-15 * (np.cos(np.linspace(0, np.pi * 2, 1000, endpoint=False)) + 0.5)
     )
@@ -405,9 +402,8 @@ class DemoForceVolumeFile(AsyncFVFile):
         zret = deltaret + dret + gen.normal(scale=0.01, size=fret.size)
         return (zext, zret), (dext, dret)
 
-    async def get_image(self, image_name):
+    def get_image(self, image_name):
         if image_name in self._image_cache:
-            await trio.sleep(0)
             image = self._image_cache[image_name]
         else:
             image = np.zeros((64, 64), dtype=np.float32)
@@ -786,22 +782,20 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             async with await trio.open_file(root + "_options.json", "w") as f:
                 await f.write(options)
 
-        async def export_one(image_name):
+        def export_one(image_name):
             # to date, all afm images have been "flipped" on disk, which is
             # why they are displayed with "lower" origin, but on export users
             # have found this confusing, so we manually flip here
             # TODO: solve this at the data reader level?
-            image = (await self._get_image_by_name(image_name))[::-1]
-            await trio.to_thread.run_sync(
-                exporter, root + "_" + image_name[4:] + ext, image
-            )
+            image = self._get_image_by_name(image_name)[::-1]
+            exporter(root + "_" + image_name[4:] + ext, image)
 
         try:
             async with trio.open_nursery() as n:
                 n.cancel_scope.shield = True
                 n.start_soon(write_options)
                 for image_name in image_names:
-                    n.start_soon(export_one, image_name)
+                    n.start_soon(trio.to_thread.run_sync, export_one, image_name)
         except BaseException as e:
             e_repr = repr(e)
             if "mode F" in e_repr:
@@ -1639,7 +1633,7 @@ class ForceVolumeTkDisplay:
 @mutable
 class ForceVolumeController:
     display: ForceVolumeTkDisplay
-    opened_fvol: AsyncFVFile
+    opened_fvol: GUIFVFile
 
     # plot_curve_event_response
     plot_curve_cancels_pending: set = field(init=False, factory=set)
@@ -1874,7 +1868,9 @@ class ForceVolumeController:
             image_name, cmap, log_scale = (
                 await async_tools.receive_drain_and_get_latest(recv_chan)
             )
-            image_array = await self.opened_fvol.get_image(image_name)
+            image_array = await trio.to_thread.run_sync(
+                self.opened_fvol.get_image, image_name
+            )
             image_stats = ImageStats.from_array(image_array)
             unit = self.opened_fvol.get_image_units(image_name)
             fastscansize, slowscansize = self.opened_fvol.fvfile.scansize
@@ -2526,7 +2522,7 @@ async def open_one(root, path):
                 )
             )
             return
-        opened_fv = AsyncFVFile(fvfile)
+        opened_fv = GUIFVFile(fvfile)
         display = ForceVolumeTkDisplay(
             root, path.name, opened_fv.initial_parameters, opened_fv.fvfile.headers
         )
