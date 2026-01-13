@@ -123,17 +123,16 @@ def threaded_opener(filenames):
     """Yield the opened fvfiles and names while opening the next in a background thread.
 
     This generator goes out of its way to avoid opening more than 2 files at a time."""
-    first = True
     tpe = ThreadPoolExecutor()
     fvfile: FVFile
-    for filename in filenames:
-        if first:
-            fvfile_cls, opener = SUFFIX_FVFILE_MAP[filename.suffix.lower()]
-            fut = tpe.submit(opener, filename)
-            prev_filename = filename
-            first = False
-            continue
 
+    filenames = iter(filenames)
+    filename = next(filenames)
+    fvfile_cls, opener = SUFFIX_FVFILE_MAP[filename.suffix.lower()]
+    fut = tpe.submit(opener, filename)
+    prev_filename = filename
+
+    for filename in filenames:
         with fut.result() as open_thing:
             fvfile = fvfile_cls.parse(open_thing)
             fvfile_cls, opener = SUFFIX_FVFILE_MAP[filename.suffix.lower()]
