@@ -329,8 +329,8 @@ def secant(func, args, x0, x1):
         eps = RT_EPS
         p1 = x0 * (1 + eps)
         p1 += eps if p1 >= 0 else -eps
-    q0 = func(p0, *args)
-    q1 = func(p1, *args)
+    q0 = func(p0, *args)[0]
+    q1 = func(p1, *args)[0]
     if abs(q1) < abs(q0):
         p0, p1, q0, q1 = p1, p0, q1, q0
     for itr in range(maxiter):
@@ -346,7 +346,7 @@ def secant(func, args, x0, x1):
             break
         p0, q0 = p1, q1
         p1 = p
-        q1 = func(p1, *args)
+        q1 = func(p1, *args)[0]
     else:
         p = (p1 + p0) / 2.0
 
@@ -641,7 +641,7 @@ def schwarz_red(red_f, red_fc, stable, offset):
 
     # Save computations if pure DMT
     if red_fc == -2:
-        return df ** (2 / 3) - offset
+        return df ** (2 / 3) - offset, df ** (2/ 6)
 
     # fmt: off
     red_contact_radius = (
@@ -653,7 +653,7 @@ def schwarz_red(red_f, red_fc, stable, offset):
     ) ** (1 / 2)
     # fmt: on
 
-    return red_delta - offset
+    return red_delta - offset, red_contact_radius
 
 
 @jit(nopython=True, nogil=True, cache=True)
@@ -729,7 +729,7 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     """
 
     # The indentation at the critical force must be calculated directly, no shortcuts
-    red_deltac = schwarz_red(red_fc, red_fc, 1.0, 0.0)
+    red_deltac = schwarz_red(red_fc, red_fc, 1.0, 0.0)[0]
 
     # lj_force() outputs a curve with minimum at (lj_delta_scale,lj_force_scale)
     # offset needed to put minimum at red_deltac
@@ -769,11 +769,11 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
     f = mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100, True)
-    d = schwarz_red(f, red_fc, 1.0, 0.0)
+    d,red_contact_radius = schwarz_red(f, red_fc, 1.0, 0.0)
 
     s_f = np.interp(red_delta, d, f, left=-np.inf)
 
-    return np.maximum(s_f, lj_f)
+    return np.maximum(s_f, lj_f), red_contact_radius
 
 
 def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
@@ -794,7 +794,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     not_DMT = not red_fc == -2
 
     # The indentation at the critical force must be calculated directly, no shortcuts
-    red_deltac = schwarz_red(red_fc, red_fc, 1.0, 0.0)
+    red_deltac = schwarz_red(red_fc, red_fc, 1.0, 0.0)[0]
 
     # lj_force() outputs a curve with minimum at (lj_delta_scale,lj_force_scale)
     # offset needed to put minimum at red_deltac
@@ -815,7 +815,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
     f = mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100, False)
-    d = schwarz_red(f, red_fc, 1.0, 0.0)
+    d, red_contact_radius = schwarz_red(f, red_fc, 1.0, 0.0)
 
     # Use this endpoint in DMT case or if there is a problem with the slope finding
     s_end_pos = 0.0
@@ -824,7 +824,7 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     if not_DMT:
         # Find slope == red_k between vertical and horizontal parts of unstable branch
         f0 = mylinspace((7.0 * red_fc + 8.0) / 3.0, red_fc, 100, False)
-        d0 = schwarz_red(f0, red_fc, -1.0, 0.0)
+        d0 = schwarz_red(f0, red_fc, -1.0, 0.0)[0]
         df0dd0 = mygradient(f0, d0)
 
         s_end_pos = brentq(interp_with_offset, (d0, df0dd0, red_k), d0[0], d0[-1])
@@ -843,16 +843,18 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
         red_delta[red_delta <= s_end_pos] - s_end_pos
     ) * red_k + s_end_force
 
-    return np.minimum(s_f, lj_f)
+    return np.minimum(s_f, lj_f), red_contact_radius
 
 
 def red_both(red_delta, red_fc, red_k, lj_delta_scale, split):
+    f_red_ext, ac_red_ext = red_extend(red_delta[:split], red_fc, red_k, lj_delta_scale)
+    f_red_ret, ac_red_ret = red_retract(red_delta[split:], red_fc, red_k, lj_delta_scale)
     return np.concatenate(
         (
-            red_extend(red_delta[:split], red_fc, red_k, lj_delta_scale),
-            red_retract(red_delta[split:], red_fc, red_k, lj_delta_scale),
+            f_red_ext,
+            f_red_ret
         )
-    )
+    ), np.concatenate((ac_red_ext, ac_red_ret))
 
 
 def force_curve(
@@ -887,10 +889,10 @@ def force_curve(
     lj_delta_scale = np.exp(lj_delta_scale) / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
-    red_force = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale, split)
+    red_force, red_contact_radius = red_curve(red_delta, red_fc, -red_k, -lj_delta_scale, split)
 
     # Rescale to dimensioned units
-    return (red_force * ref_force) + force_shift
+    return (red_force * ref_force) + force_shift, red_contact_radius*ref_radius
 
 
 def delta_curve(
@@ -925,10 +927,10 @@ def delta_curve(
     lj_delta_scale = np.exp(lj_delta_scale) / ref_delta
 
     # Match sign conventions of force curve calculations now rather than later
-    red_delta = red_curve(red_force, red_fc, -red_k, -lj_delta_scale, split)
+    red_delta, red_contact_radius = red_curve(red_force, red_fc, -red_k, -lj_delta_scale, split)
 
     # Rescale to dimensioned units
-    return (red_delta * ref_delta) + delta_shift
+    return (red_delta * ref_delta) + delta_shift, red_contact_radius*ref_radius
 
 
 def rapid_forcecurve_estimate(delta, force, radius):
@@ -1062,7 +1064,7 @@ def fitfun(
                     k,
                     *fc_parms,
                     split=split,
-                )
+                )[0]
                 / k
                 - d,
                 x0=d0,
@@ -1072,7 +1074,7 @@ def fitfun(
             dout += d0
         else:
             # fast path for no major artifacts
-            dout += force_curve(red_curve, z - d, k, *fc_parms, split=split) / k
+            dout += force_curve(red_curve, z - d, k, *fc_parms, split=split)[0] / k
         return dout
 
     try:
@@ -1117,7 +1119,7 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
-    maxdelta = delta_curve(
+    maxdelta, contact_radius = delta_curve(
         schwarz_wrap,
         maxforce,
         k,
@@ -1140,7 +1142,7 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
         params["delta_shift"],
         params["force_shift"],
         params["lj_scale"],
-    )
+    )[0]
     # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
     zeroindforce = float(
         force_curve(
@@ -1154,17 +1156,10 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
             params["delta_shift"].squeeze(),
             params["force_shift"].squeeze(),
             params["lj_scale"].squeeze(),
-        )
+        )[0]
     )
 
     maxforce -= params["force_shift"]
-    red_fc = (params["tau"] - 4) / 2
-    ref_force = -params["fc"] / red_fc
-    df = abs(maxforce / ref_force - red_fc)
-    red_contact_radius = ((3 * red_fc + 6) ** (1 / 2) + df ** (1 / 2)) ** (2 / 3)
-    contact_radius = red_contact_radius * (
-        params["M"] / ref_force / params["radius"]
-    ) ** (-1 / 3)
 
     deflection = (maxforce + params["fc"]) / k
     indentation = maxdelta - mindelta

@@ -394,8 +394,8 @@ class DemoForceVolumeFile(GUIFVFile):
         parms = (self.fvfile.k, 20, 0, 0.1, 2, 0, 0, 1)
         deltaext = self.delta[: self.delta.size // 2]
         deltaret = self.delta[self.delta.size // 2 :]
-        fext = calculation.force_curve(calculation.red_extend, deltaext, *parms)
-        fret = calculation.force_curve(calculation.red_retract, deltaret, *parms)
+        fext = calculation.force_curve(calculation.red_extend, deltaext, *parms)[0]
+        fret = calculation.force_curve(calculation.red_retract, deltaret, *parms)[0]
         dext = fext / self.fvfile.k + gen.normal(scale=0.1, size=fext.size)
         dret = fret / self.fvfile.k + gen.normal(scale=0.1, size=fret.size)
         zext = deltaext + dext + gen.normal(scale=0.01, size=fext.size)
