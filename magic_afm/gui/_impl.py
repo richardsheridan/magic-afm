@@ -1945,7 +1945,9 @@ class ForceVolumeController:
                 manip_fn = calculation.MANIPULATIONS[manip_name]
                 async with self.spinner_scope():
                     manip_img = await trio.to_thread.run_sync(
-                        manip_fn, self.axesimage.get_array().data
+                        manip_fn,
+                        self.axesimage.get_array().data,
+                        *self.axesimage.get_extent(),
                     )
                 self.opened_fvol.add_image(name, unit, manip_img)
                 if name not in current_names:

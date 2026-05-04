@@ -557,8 +557,8 @@ class ARDFTextTableOfContents:
 class ARDFVolumeTableOfContents:
     offset: int
     size: int
-    lines: np.ndarray
-    pointers: np.ndarray
+    lines: list[int]
+    pointers: list[int]
     _voff_struct = struct.Struct("<LLQQ")
 
     @classmethod

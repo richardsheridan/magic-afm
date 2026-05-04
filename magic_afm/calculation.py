@@ -116,7 +116,7 @@ class FitFix(enum.IntFlag, boundary=enum.STRICT):
 
 
 @jit(nopython=True, nogil=True, cache=True)
-def gauss3x3(img):
+def gauss3x3(img, *args):
     img = np.copy(img)
     rows, cols = np.shape(img)
     tmp = np.empty(cols + 6, dtype=img.dtype)
@@ -136,7 +136,7 @@ def gauss3x3(img):
 
 
 @jit(nopython=True, nogil=True, cache=True)
-def median3x1(img):
+def median3x1(img, *args):
     out = np.empty_like(img)
     rows, cols = np.shape(out)
     for r in range(rows):
@@ -152,7 +152,7 @@ def median3x1(img):
 
 
 @jit(nopython=True, nogil=True, cache=True)
-def median3x3(img):
+def median3x3(img, *args):
     out = np.empty_like(img)
     rows, cols = np.shape(out)
     for r in range(rows):
@@ -174,7 +174,7 @@ def median3x3(img):
 
 
 @jit(nopython=True, nogil=True, cache=True)
-def fillnan(img):
+def fillnan(img, *args):
     out = np.copy(img)
     rows, cols = np.shape(out)
     nan_inds = np.nonzero(np.isnan(img))
@@ -195,7 +195,7 @@ def fillnan(img):
     return out
 
 
-def flatten(img):
+def flatten(img, *args):
     a = np.vander(np.arange(np.shape(img)[1]), 2)
     b = img.T
     # noinspection PyUnresolvedReferences
@@ -207,7 +207,7 @@ def flatten(img):
     return img - (a @ x).T
 
 
-def planefit(img):
+def planefit(img, *args):
     ind = np.indices(np.shape(img))
     # [1, x, y]
     a = np.stack((np.ones_like(img.ravel()), ind[0].ravel(), ind[1].ravel())).T
@@ -220,8 +220,19 @@ def planefit(img):
     return img - (a @ x).reshape(img.shape)
 
 
-def offset(img):
+def offset(img, *args):
     return img - np.nanmin(img)
+
+
+def curve(img, xmin, xmax, ymin, ymax):
+    rows, cols = img.shape
+    dx = (xmax - xmin) / cols * 1e-9  # hardcoded to match imageaxes extent units
+    dy = (ymax - ymin) / rows * 1e-9
+    gy, gx = np.gradient(img, dy, dx)
+    gyy, gyx = np.gradient(gy, dy, dx)
+    gxy, gxx = np.gradient(gx, dy, dx)
+    gxy = 0.5 * (gxy + gyx)
+    return (gxx * gyy - gxy * gxy) / (1 + gx * gx + gy * gy)
 
 
 MANIPULATIONS = dict(
@@ -233,6 +244,7 @@ MANIPULATIONS = dict(
         ("Median3x3", median3x3),
         ("Gauss3x3", gauss3x3),
         ("FillNaNs", fillnan),
+        ("Curvature", curve),
     )
 )
 
@@ -1199,7 +1211,7 @@ def calc_properties_imap(z_d_s_rc, k_sens=True, **kwargs):
             return rc, None, None, None
         ind_mod_sens_k = (params_perturb["M"] - parms["M"]) / parms["M"] / eps
     else:
-        ind_mod_sens_k = 0.
+        ind_mod_sens_k = 0.0
 
     # pack up properties, ensuring all fields are filled in order
     properties = np.void(np.nan, dtype=PROPERTY_DTYPE)
