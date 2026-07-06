@@ -2181,7 +2181,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
     assert point_data
     if len(point_data) == 1:
         data: ForceCurveData = next(iter(point_data.values()))
-        exp = math.log10(data.parms["M"])
+        exp = math.log10(data.parms["M"].item())
         prefix, fac = {0: ("G", 1), 1: ("M", 1e3), 2: ("k", 1e6)}.get(
             (-exp + 2.7) // 3, ("", 1)
         )
@@ -2199,11 +2199,11 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
             [
                 [
                     "{:.2f}±{:.2f}".format(
-                        float(data.parms["M"] * fac), float(data.parms_err["M"] * fac)
+                        data.parms["M"].item() * fac, data.parms_err["M"].item() * fac
                     ),
-                    "{:.2e}".format(float(data.sens)),
+                    "{:.2e}".format(data.sens.item()),
                     "{:.2f}±{:.2f}".format(
-                        float(data.parms["fc"]), float(data.parms_err["fc"])
+                        data.parms["fc"].item(), data.parms_err["fc"].item()
                     ),
                     "{:.2f}".format(data.defl),
                     "{:.2f}".format(data.ind),

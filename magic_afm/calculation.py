@@ -1154,8 +1154,7 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
         params["lj_scale"],
     )
     # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
-    zeroindforce = float(
-        force_curve(
+    zeroindforce = force_curve(
             red_retract,
             params["delta_shift"].squeeze(),
             k,
@@ -1166,8 +1165,7 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
             params["delta_shift"].squeeze(),
             params["force_shift"].squeeze(),
             params["lj_scale"].squeeze(),
-        )
-    )
+    ).item()
 
     maxforce -= params["force_shift"]
     red_fc = (params["tau"] - 4) / 2
@@ -1182,7 +1180,7 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
     indentation = maxdelta - mindelta
     z_true_surface = params["delta_shift"] + zeroindforce / k
     return tuple(
-        map(float, (deflection, indentation, z_true_surface, mindelta, contact_radius))
+        x.item() for x in (deflection, indentation, z_true_surface, mindelta, contact_radius)
     )
 
 
@@ -1210,6 +1208,7 @@ def calc_properties_imap(z_d_s_rc, k_sens=True, **kwargs):
         if np.any(np.isnan(params_perturb.item())):
             return rc, None, None, None
         ind_mod_sens_k = (params_perturb["M"] - parms["M"]) / parms["M"] / eps
+        ind_mod_sens_k = ind_mod_sens_k.item()
     else:
         ind_mod_sens_k = 0.0
 
