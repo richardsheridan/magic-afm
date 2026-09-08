@@ -2866,9 +2866,7 @@ def main():
     except* KeyboardInterrupt:
         pass
     except* BaseException:
-        import datetime, traceback
+        from magic_afm.gui import report_crash
 
-        date = datetime.datetime.now().isoformat().replace(":", ";")
-        with open(f"traceback-{date}.dump", "w", encoding="utf8") as file:
-            traceback.print_exc(file=file)
+        report_crash()
         raise

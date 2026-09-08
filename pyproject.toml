@@ -47,7 +47,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
 
-[tool.pixi.project]
+[tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["win-64", "linux-64", "osx-arm64"]
 
@@ -72,7 +72,7 @@ notebook = { cmd = ["python", "-m", "notebook", "magic fitting workflow.ipynb"] 
 
 [tool.pixi.feature.build.tasks]
 make-version = { cmd = ["python", "magic_afm/_make_version.py"] }
-build = { cmd = ["pyinstaller", "-y", "magic_afm_win.spec"], depends-on = ["make-version"] }
+build = { cmd = ["pyinstaller", "-y"], depends-on = ["make-version"] }
 
 [tool.pixi.environments]
 default = { solve-group = "default" }

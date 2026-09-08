@@ -31,6 +31,8 @@ __version__ = '{version}'
 
 if __name__ == "__main__":
     __version__ = get()
+    print(__version__)
 
     if not read() == __version__:
         write(__version__)
+        print("Version updated")

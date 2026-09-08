@@ -8,7 +8,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest]  #, macos-11, macos-10.15]
+        os: [windows-latest, macos-latest]
       fail-fast: true
     timeout-minutes: 10
     steps:
@@ -24,9 +24,9 @@ jobs:
       - name: Build with Pyinstaller
         run:  pixi run -e build pyinstaller -y magic_afm_${RUNNER_OS::3}.spec
         shell: bash
-#      - name: Tidy dist
-#        if: startsWith( runner.os, 'mac')
-#        run: rm -rf dist/magic_afm
+      - name: Tidy dist
+        if: startsWith( runner.os, 'mac')
+        run: rm -rf dist/magic_afm
       - name: Copy README
         run: cp README.rst dist/magic_afm/
       - name: Upload build artifact

@@ -1,11 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import copy_metadata
 
-
+# imageio calls importlib.metadata.version on import
 gui_a = Analysis(
     ['magic_afm\\gui\\__main__.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=copy_metadata('imageio'),
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -37,7 +38,7 @@ cli_a = Analysis(
     ['magic_afm\\cli\\__main__.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=copy_metadata('imageio'),
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
