@@ -26,6 +26,7 @@ should be loaded lazily. (I'm looking at you h5py..)
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import mmap
+import re
 import struct
 from bisect import bisect_left
 from collections.abc import Collection, Iterable
@@ -132,43 +133,33 @@ def decode_cstring(cstring: bytes):
     return cstring.rstrip(b"\0").decode("windows-1252")
 
 
-# noinspection PyUnboundLocalVariable
-def parse_nanoscope_header(header_lines: Iterable[str]):
-    """Convert header from a Nanoscope file to a convenient nested dict
+SEARCH_CHUNK_BYTES = 1 << 20
 
-    header_lines can be an opened file object or a list of strings or anything
-    that iterates the header line-by-line."""
 
-    header = {}
-    for line in header_lines:
-        assert line.startswith("\\")
-        line = line[1:].strip()  # strip leading slash and newline
+def find_in_buffer(data: Buffer, sub: bytes, start: int = 0, end: int | None = None):
+    """Lowest index of sub in any buffer object, with bytes.find semantics."""
+    find = getattr(data, "find", None)
+    if find is not None:
+        return find(sub, start) if end is None else find(sub, start, end)
+    with memoryview(data).cast("B") as view:
+        start, end, _ = slice(start, end).indices(len(view))
+        # overlapping windows so that a straddling match is not missed
+        step = SEARCH_CHUNK_BYTES - len(sub) + 1
+        for pos in range(start, end, step):
+            index = bytes(view[pos : min(pos + SEARCH_CHUNK_BYTES, end)]).find(sub)
+            if index >= 0:
+                return pos + index
+    return -1
 
-        if line.startswith("*"):
-            # we're starting a new section
-            section_name = line[1:]
-            current_section = {}
-            if section_name == "File list end":
-                break  # THIS IS THE **NORMAL** WAY TO END THE FOR LOOP
-            if section_name in header:
-                header[section_name].append(current_section)
-            else:
-                header[section_name] = [current_section]
-        else:
-            # add key, value pairs for this section
-            key, value = line.split(":", maxsplit=1)
-            # Colon special case for "groups"
-            if key.startswith("@") and key[1].isdigit() and len(key) == 2:
-                key2, value = value.split(":", maxsplit=1)
-                key = key + ":" + key2
 
-            current_section[key] = value.strip()
-    else:
-        raise ValueError("File ended too soon")
-    if (not header) or ("" in header):
-        raise ValueError("File is empty or not a Bruker data file")
+###############################################
+################## FVFiles ####################
+###############################################
 
-    return header
+
+###############################################
+################### Asylum ####################
+###############################################
 
 
 def parse_ar_note(note: Iterable[str]):
@@ -251,16 +242,6 @@ async def convert_ardf(
         raise
 
     return h5file_path
-
-
-###############################################
-################## FVFiles ####################
-###############################################
-
-
-###############################################
-################### Asylum ####################
-###############################################
 
 
 class ARH5ForceMapVolume:
@@ -1188,6 +1169,45 @@ class ARDFFile:
 ###############################################
 
 
+# noinspection PyUnboundLocalVariable
+def parse_nanoscope_header(header_lines: Iterable[str]):
+    """Convert header from a Nanoscope file to a convenient nested dict
+
+    header_lines can be an opened file object or a list of strings or anything
+    that iterates the header line-by-line."""
+
+    header = {}
+    for line in header_lines:
+        assert line.startswith("\\")
+        line = line[1:].strip()  # strip leading slash and newline
+
+        if line.startswith("*"):
+            # we're starting a new section
+            section_name = line[1:]
+            current_section = {}
+            if section_name == "File list end":
+                break  # THIS IS THE **NORMAL** WAY TO END THE FOR LOOP
+            if section_name in header:
+                header[section_name].append(current_section)
+            else:
+                header[section_name] = [current_section]
+        else:
+            # add key, value pairs for this section
+            key, value = line.split(":", maxsplit=1)
+            # Colon special case for "groups"
+            if key.startswith("@") and key[1].isdigit() and len(key) == 2:
+                key2, value = value.split(":", maxsplit=1)
+                key = key + ":" + key2
+
+            current_section[key] = value.strip()
+    else:
+        raise ValueError("File ended too soon")
+    if (not header) or ("" in header):
+        raise ValueError("File is empty or not a Bruker data file")
+
+    return header
+
+
 @frozen
 class NanoscopeImage:
     data: Buffer
@@ -1472,9 +1492,7 @@ class NanoscopeFile:
     def parse(cls, data: Buffer):
         cls.check_type(data)
         # End of header is demarcated by a SUB byte (26 = 0x1A)
-        # Longest header so far was 80 kB,
-        # stop there to avoid searching gigabytes before fail
-        header_end_pos = bytes(memoryview(data)[:80960]).find(b"\x1A")
+        header_end_pos = find_in_buffer(data, b"\x1A")
         if header_end_pos < 0:
             raise ValueError(
                 "No stop byte found, are you sure this is a Nanoscope file?"
@@ -1571,9 +1589,476 @@ class NanoscopeFile:
         return cls(header, images, volumes, k, defl_sens, t_step, scansize, sync_dist)
 
 
+###############################################
+################## Nanosurf ###################
+###############################################
+
+
+NANOSURF_VALUE_REGEX = re.compile(r"(\S)\[(.*)\]\*\[(.*)\]")
+NANOSURF_LINE_POINTS_REGEX = re.compile(r"LineDim\d*Points")
+NANOSURF_PARAM_TYPES = {
+    "Frame": str,
+    "Points": int,
+    "Lines": int,
+    "SaveBits": int,
+    "Dim0Min": float,
+    "Dim0Range": float,
+    "Dim0Unit": str,
+    "Dim1Min": float,
+    "Dim1Range": float,
+    "Dim1Unit": str,
+    "Dim2Min": float,
+    "Dim2Range": float,
+    "Dim2Unit": str,
+    "Dim2Name": str,
+}
+# frames of the raw curves and images, everything else is an analysis result
+NANOSURF_RAW_FRAMES = (
+    "Spec forward",
+    "Spec backward",
+    "Scan forward",
+    "Scan backward",
+)
+# result frame -> image name and sign; adhesion is stored as a negative force
+NANOSURF_RESULT_IMAGES = {
+    "MaxAdhesionOut00": ("MaxRetAdhesionForce", -1.0),
+    "SnapInOut00": ("MaxExtAdhesionForce", -1.0),
+    "MaxAdhesionOut10": ("MaxRetAdhesionHeight", 1.0),
+    "SnapInOut10": ("MaxExtAdhesionHeight", 1.0),
+}
+
+
+def parse_nanosurf_value(string: str):
+    """Decode a typed Nanosurf value such as "D[25.03]*[N/m]" to (value, unit)"""
+    ty, val, unit = NANOSURF_VALUE_REGEX.search(string).groups()
+    if ty == "D":
+        val = float(val)
+    elif ty == "B":
+        val = bool(int(val))
+    elif ty == "L":
+        val = int(val)
+    elif ty == "V":
+        val = [float(v) for v in val.split(",")]
+        unit = unit.split(",")
+    return val, unit
+
+
+def parse_nanosurf_line_points(section: dict[str, str]):
+    """List the point count of each line of a dataset section with ragged lines"""
+    return [
+        int(value)
+        for key, value in section.items()
+        if NANOSURF_LINE_POINTS_REGEX.match(key)
+    ]
+
+
+def parse_nanosurf_header(header_lines: Iterable[str]):
+    """Convert header from a Nanosurf file to a convenient dict of sections
+
+    The header is INI-like, a "[name]" line starting a section of "key=value"
+    lines. header_lines can be an opened file object or a list of strings or
+    anything that iterates the header line-by-line. Derived items are added
+    under the keys "datasets", "param", "cantilever", "spec_map",
+    "image_center" and "thermal_tune".
+
+    Copyright (C) Nanosurf AG - All Rights Reserved (2021)
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    “Software”), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to permit
+    persons to whom the Software is furnished to do so, subject to the
+    following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+    NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+    DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+    OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+    USE OR OTHER DEALINGS IN THE SOFTWARE.
+    """
+
+    header = {}
+    current_section = {}
+    for line in header_lines:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            # we're starting a new section
+            current_section = header[line[1:-1]] = {}
+        else:
+            # add key, value pairs for this section
+            key, _, value = line.partition("=")
+            current_section[key.strip()] = value.strip()
+
+    datasets = []
+    ds = header["DataSet"]
+    for gr in range(int(ds["GroupCount"])):
+        for g in range(int(ds[f"Gr{gr}-Count"])):
+            key = f"Gr{gr}-Ch{g}"
+            if key in ds:
+                datasets.append(ds[key])
+
+    param = {}
+    for term, ty in NANOSURF_PARAM_TYPES.items():
+        param[term] = [ty(header[d][term]) for d in datasets if term in header[d]]
+
+    # for spectroscopy with maps, lines are ragged
+    line_points = []
+    for d in datasets:
+        h = header[d]
+        points = parse_nanosurf_line_points(h) if "LineDim0Min" in h else []
+        line_points.append(np.array(points, dtype=int))
+    param["LinePoints"] = line_points
+
+    cantilever = header.get("DataSet\\Calibration\\Cantilever", {})
+    key = "DataSet\\Calibration\\Scanhead"
+    if key in header:
+        deflection_input = header[key]["In5"]
+        sensitivity = float(deflection_input.split(",")[4]) / 10.0
+        cantilever["Sensitivity"] = str(sensitivity)
+
+    spec_map = None
+    key = "DataSet\\SpecInfos"
+    if key in header:
+        n = int(header[key]["SubSectionCount"])
+        sec_names = [header[key][f"SubSection{i}"] for i in range(n)]
+        spec_mode = header[key + "\\" + sec_names[0]]["SpecMode"]
+        table = header[key + "\\" + sec_names[1]]
+        count = int(table["Count"])
+        spec_map = np.array(
+            [table[spec_mode[:3] + str(i)].split(";") for i in range(count)]
+        ).astype(float)
+
+    image_center = []
+    key = "DataSet\\Parameters\\Imaging"
+    if key in header:
+        image_center, _ = parse_nanosurf_value(header[key]["ScanOffset"])
+
+    thermal_tune = None
+    info = header.get("DataSet-Info", {})
+    if "-- Thermal Tuning --" in info:
+        thermal_tune = {"q_factor": float(info["Q Factor:"])}
+        for name, key, pattern in (
+            ("peak_freq", "Frequency:", r"(\d+\.\d+)(\S*)"),
+            ("spring_const", "Spring Constant:", r"(\d+\.\d+)\s(\S*)"),
+            ("peak_amp", "Peak Value:", r"(\d+\.\d+)(\S*)"),
+        ):
+            value, unit = re.search(pattern, info[key]).groups()
+            thermal_tune[name] = value
+            thermal_tune[name + "_unit"] = unit
+
+    header["datasets"] = datasets
+    header["param"] = param
+    header["cantilever"] = cantilever
+    header["spec_map"] = spec_map
+    header["image_center"] = image_center
+    header["thermal_tune"] = thermal_tune
+    return header
+
+
+@frozen
+class NIDDataset:
+    data: Buffer
+    name: str
+    frame: str
+    channel: str
+    unit: str
+    offset: int
+    points: int
+    lines: int
+    bpp: int
+    cur_line: int
+    unit_scale: float
+    unit_offset: float
+    line_points: np.ndarray = field(repr=False)
+
+    @classmethod
+    def parse(cls, data: Buffer, h, name, offset, line_points=None):
+        bits = int(h["SaveBits"])
+        unit_range = float(h["Dim2Range"])
+        if line_points is None:
+            line_points = parse_nanosurf_line_points(h)
+        line_points = np.asarray(line_points, dtype=int)
+        return cls(
+            data=data,
+            name=name,
+            frame=h["Frame"],
+            channel=h["Dim2Name"],
+            unit=h["Dim2Unit"],
+            offset=offset,
+            points=int(h["Points"]),
+            lines=int(h["Lines"]),
+            bpp=bits // 8,
+            cur_line=int(h["CurLine"]),
+            unit_scale=unit_range / 2**bits,
+            unit_offset=unit_range / 2 + float(h["Dim2Min"]),
+            line_points=line_points,
+        )
+
+    @property
+    def nbytes(self) -> int:
+        return self.points * self.lines * self.bpp
+
+    def _get_floats(self, shape: Index | int, offset: int, index=...) -> np.ndarray:
+        with memoryview(self.data) as v:  # assert data is open, and hold it open
+            floats = np.ndarray(
+                shape=shape,
+                dtype=f"<i{self.bpp}",
+                buffer=v,
+                offset=offset,
+            )[index].astype("f4", copy=True)
+        floats *= self.unit_scale
+        floats += self.unit_offset
+        return floats
+
+    def _get_block_floats(self, index=...) -> np.ndarray:
+        # the dataset is stored as one (lines, points) block
+        return self._get_floats((self.lines, self.points), self.offset, index)
+
+    def get_ndarray(self) -> np.ndarray:
+        return self._get_block_floats()
+
+    def get_line(self, line: int) -> np.ndarray:
+        offset = self.offset + line * self.points * self.bpp
+        return self._get_floats(self.points, offset)
+
+    def get_column(self, column: int, n_lines: int) -> np.ndarray:
+        return self._get_block_floats(np.s_[:n_lines, column])
+
+    def get_line_ends(self, n_lines: int) -> np.ndarray:
+        # each line ends at its own LineDim{n}Points
+        lines = np.arange(n_lines)
+        return self._get_block_floats((lines, self.line_points[:n_lines] - 1))
+
+
+def nid_map_line_to_rc(line: int, nx: int) -> Index:
+    # the map is scanned as a serpentine starting from the bottom row
+    r, c = divmod(line, nx)
+    return r, (c if r % 2 == 0 else nx - 1 - c)
+
+
+def nid_map_rc_to_line(r: int, c: int, nx: int) -> int:
+    return r * nx + (c if r % 2 == 0 else nx - 1 - c)
+
+
+def nid_map_from_lines(values: np.ndarray, shape: Index) -> np.ndarray:
+    # lines that were never scanned have no value, so start from nan
+    image = np.full(shape, np.nan, dtype=np.float32)
+    for line, value in enumerate(values):
+        r, c = nid_map_line_to_rc(line, shape[1])
+        image[r, c] = value
+    return image
+
+
+@frozen
+class NIDVolume:
+    name: str
+    shape: Index
+    n_lines: int
+    k: float
+    _zfwd: NIDDataset
+    _dfwd: NIDDataset
+    _zbwd: NIDDataset
+    _dbwd: NIDDataset
+
+    @classmethod
+    def parse(cls, spec, spec_map_row, k):
+        zfwd = spec["Spec forward", "Z-Axis Sensor"]
+        dfwd = spec["Spec forward", "Deflection"]
+        zbwd = spec["Spec backward", "Z-Axis Sensor"]
+        dbwd = spec["Spec backward", "Deflection"]
+        nx, ny = int(spec_map_row[4]), int(spec_map_row[5])
+        # a stopped scan leaves the lines past CurLine unwritten
+        n_lines = min(
+            min(d.cur_line + 1, d.lines, len(d.line_points))
+            for d in (zfwd, dfwd, zbwd, dbwd)
+        )
+        return cls("SpecMap", (ny, nx), n_lines, k, zfwd, dfwd, zbwd, dbwd)
+
+    def _line_npts(self, line: int) -> tuple[int, int]:
+        # rows are zero filled past LineDim{n}Points
+        return int(self._zfwd.line_points[line]), int(self._zbwd.line_points[line])
+
+    def _get_line_curve(self, line: int, n: int | None = None) -> ZDArrays:
+        nf, nb = self._line_npts(line)
+        if n is None:
+            n = min(nf, nb)
+        zext = self._zfwd.get_line(line)[nf - n : nf]
+        dext = self._dfwd.get_line(line)[nf - n : nf]
+        # backward rows are stored far-to-near
+        zret = self._zbwd.get_line(line)[nb - n : nb][::-1]
+        dret = self._dbwd.get_line(line)[nb - n : nb][::-1]
+        z = np.stack((zext, zret))
+        d = np.stack((dext, dret))
+        z *= NANOMETER_UNIT_CONVERSION
+        # Deflection is stored in N
+        d *= NANOMETER_UNIT_CONVERSION / self.k
+        return z, d
+
+    def get_curve(self, r: int, c: int) -> ZDArrays:
+        """Efficiently get a specific curve from disk."""
+        ny, nx = self.shape
+        if not (0 <= r < ny and 0 <= c < nx):
+            raise ValueError("Invalid index:", self.shape, (r, c))
+        line = nid_map_rc_to_line(r, c, nx)
+        if line >= self.n_lines:
+            return NANCURVE
+        return self._get_line_curve(line)
+
+    def iter_indices(self) -> Iterable[Index]:
+        """Iterate over force curve indices in on-disk order"""
+        nx = self.shape[1]
+        for line in range(self.n_lines):
+            yield nid_map_line_to_rc(line, nx)
+
+    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+        """Iterate over curves lazily in on-disk order."""
+        nx = self.shape[1]
+        for line in range(self.n_lines):
+            yield nid_map_line_to_rc(line, nx), self._get_line_curve(line)
+
+    def get_all_curves(self) -> ZDArrays:
+        """Eagerly load all curves into memory."""
+        nx = self.shape[1]
+        n_min = min(n for line in range(self.n_lines) for n in self._line_npts(line))
+        x = np.full(self.shape + (2, 2, n_min), np.nan, dtype=np.float32)
+        for line in range(self.n_lines):
+            r, c = nid_map_line_to_rc(line, nx)
+            x[r, c] = self._get_line_curve(line, n_min)
+        return np.moveaxis(x, 2, 0)
+
+
+@frozen
+class NIDMapHeightImage:
+    name: str
+    shape: Index
+    n_lines: int
+    _zfwd: NIDDataset
+
+    def get_image(self) -> np.ndarray:
+        """Get the image from disk."""
+        # the extend curve ends at max force, and rows are zero filled past it
+        heights = self._zfwd.get_line_ends(self.n_lines)
+        return nid_map_from_lines(heights, self.shape)
+
+
+@frozen
+class NIDMapImage:
+    name: str
+    shape: Index
+    n_lines: int
+    sign: float
+    _dataset: NIDDataset
+
+    def get_image(self) -> np.ndarray:
+        """Get the image from disk."""
+        values = self._dataset.get_column(0, self.n_lines)
+        values *= self.sign
+        return nid_map_from_lines(values, self.shape)
+
+
+@frozen
+class NIDFile:
+    headers: dict[str, Any] = field(repr=lambda x: f"<dict with {len(x)} entries>")
+    images: dict[str, Image]
+    volumes: list[Volume]
+    k: float
+    defl_sens: float
+    t_step: float
+    scansize: tuple[float, float]
+
+    @staticmethod
+    def check_type(data: Buffer):
+        # Check for magic string indicating Nanosurf
+        magic = b"[DataSet]"
+        start = bytes(memoryview(data)[: len(magic)])
+        if not start == magic:
+            raise ValueError("Not a Nanosurf NID file.", start)
+
+    @classmethod
+    def parse(cls, data: Buffer):
+        cls.check_type(data)
+        # End of header is demarcated by the bytes b"#!"
+        header_end_pos = find_in_buffer(data, b"#!")
+        if header_end_pos < 0:
+            raise ValueError("No stop bytes found, are you sure this is a NID file?")
+        header = parse_nanosurf_header(
+            bytes(memoryview(data)[:header_end_pos]).decode("utf-8").splitlines()
+        )
+
+        # datasets are stored contiguously in header order right after the marker
+        offset = header_end_pos + 2
+        datasets = {}
+        for name, points in zip(header["datasets"], header["param"]["LinePoints"]):
+            dataset = NIDDataset.parse(data, header[name], name, offset, points)
+            datasets[name] = dataset
+            offset += dataset.nbytes
+        nbytes = memoryview(data).nbytes
+        if offset > nbytes:
+            raise ValueError("Datasets overrun the end of the file.", offset, nbytes)
+
+        k, _ = parse_nanosurf_value(header["cantilever"]["Prop0"])
+        defl_sens = (
+            float(header["cantilever"]["Sensitivity"]) * NANOMETER_UNIT_CONVERSION
+        )
+        spectroscopy = header["DataSet\\Parameters\\Spectroscopy"]
+        mod_time, _ = parse_nanosurf_value(spectroscopy["FwModTime"])
+        mod_points, _ = parse_nanosurf_value(spectroscopy["FwModDatapoints"])
+        t_step = mod_time / mod_points
+
+        spec_mode = header["DataSet\\SpecInfos\\SpecHeader"]["SpecMode"]
+        if spec_mode != "Map" or len(header["spec_map"]) != 1:
+            raise NotImplementedError(
+                "Only single spectroscopy maps are supported.",
+                spec_mode,
+                len(header["spec_map"]),
+            )
+        # spectroscopy datasets are identified by frame and channel, not name
+        spec = {(d.frame, d.channel): d for d in datasets.values()}
+        volume = NIDVolume.parse(spec, header["spec_map"][0], k)
+        image = NIDMapHeightImage(
+            "MapHeight",
+            volume.shape,
+            volume.n_lines,
+            spec["Spec forward", "Z-Axis Sensor"],
+        )
+        images = {image.name: image}
+
+        # datasets on the map grid shorter than a curve hold per-curve analysis results
+        # in column 0, later columns hold the live chart's running min/max
+        # except Slope frames, which hold a fit window, slope and intercept
+        spec_points = spec["Spec forward", "Deflection"].points
+        n_map = volume.shape[0] * volume.shape[1]
+        for d in datasets.values():
+            if (
+                d.frame not in NANOSURF_RAW_FRAMES
+                and not d.frame.startswith("Slope")
+                and d.lines == n_map
+                and d.points < spec_points
+            ):
+                name, sign = NANOSURF_RESULT_IMAGES.get(d.frame, (d.frame, 1.0))
+                images[name] = NIDMapImage(name, volume.shape, volume.n_lines, sign, d)
+
+        # map extents are inclusive of the outermost points, so pitch is span/(n-1)
+        xmin, xmax, ymin, ymax, nx, ny = header["spec_map"][0][:6]
+        scansize = (
+            float((xmax - xmin) * nx / (nx - 1) * NANOMETER_UNIT_CONVERSION),
+            float((ymax - ymin) * ny / (ny - 1) * NANOMETER_UNIT_CONVERSION),
+        )
+        return cls(header, images, [volume], k, defl_sens, t_step, scansize)
+
+
 SUFFIX_FVFILE_MAP = {
     ".ardf": (ARDFFile, mmap_path_read_only),
     ".h5": (ARH5File, open_h5),
     ".spm": (NanoscopeFile, mmap_path_read_only),
     ".pfc": (NanoscopeFile, mmap_path_read_only),
+    ".nid": (NIDFile, mmap_path_read_only),
 }

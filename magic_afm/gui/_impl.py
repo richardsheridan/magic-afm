@@ -2479,10 +2479,11 @@ async def open_task(root, nursery):
             tk.filedialog.askopenfilenames,
             master=root,
             filetypes=[
-                ("AFM Data", "*.h5 *.ARDF *.spm *.pfc"),
+                ("AFM Data", "*.h5 *.ARDF *.spm *.pfc *.nid"),
                 ("AR HDF5", "*.h5"),
                 ("ARDF", "*.ARDF"),
                 ("Nanoscope", "*.spm *.pfc"),
+                ("Nanosurf", "*.nid"),
             ],
         )
     )
