@@ -2831,6 +2831,10 @@ def main():
     root.wm_minsize(300, 20)
     root.wm_title("Magic AFM")
     # root.wm_iconbitmap("something.ico")
+    if root.tk.call("tk", "windowingsystem") == "x11":
+        # better theme for linux
+        ttk.Style(root).theme_use("clam")
+
     host = TkHost(root)
     try:
         host.run(main_task, root)
