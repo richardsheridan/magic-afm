@@ -1,48 +1,18 @@
-"""MagicAFM GUI
+# Copyright (C) Richard J. Sheridan
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-This is a trio guest-mode async tkinter graphical interface for AFM users to
-calculate indentation ratios and modulus sensitivities for their force curve
-data in an intuitive and responsive package. By facilitating these sorts of
-calculations, we hope to improve the overall systematic error of reported
-modulus maps in the greater AFM nanomechanics community.
-"""
-
-__author__ = "Richard J. Sheridan"
-__app_name__ = __doc__.split("\n", 1)[0]
-
-# noinspection PyUnreachableCode
-if __debug__:
-    from multiprocessing import parent_process
-
-    assert parent_process() is None, "importing gui code in a worker"
-
-# FROZEN = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
-from importlib.metadata import version, PackageNotFoundError
-
-try:
-    __version__ = version("magic-afm")
-except PackageNotFoundError:
-    try:
-        from magic_afm._version import __version__
-    except ImportError:
-        __version__ = "(unknown version)"
-
-__short_license__ = f"""{__app_name__} {__version__}
-Copyright (C) {__author__}
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""
 
 import ctypes
 import enum
@@ -2704,6 +2674,7 @@ async def about_task(root):
     ☒ display cute progress bar spinners to diagnose event loops
 
     """
+    from . import __app_name__, __short_license__
     top = tk.Toplevel(root)
     top.wm_title(f"About {__app_name__}")
     message = tk.Message(top, text=__short_license__)

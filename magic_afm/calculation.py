@@ -1,4 +1,4 @@
-"""Magic AFM Calculation
+"""MagicAFM Calculation
 
 This module contains the actual, core code to calculate indentation ratios and
 modulus sensitivities from force curve data, and is self-sufficient from the
@@ -21,6 +21,8 @@ module should contain everything you need.
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+
 import enum
 import traceback
 

@@ -1,4 +1,4 @@
-"""Magic AFM Data Readers
+"""MagicAFM Data Readers
 
 This module has readers for file types that this package supports.
 Generally, they have the structure of a FVFile that has a dict of Images
@@ -25,6 +25,8 @@ should be loaded lazily. (I'm looking at you h5py..)
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+
 import mmap
 import re
 import struct
