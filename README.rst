@@ -20,6 +20,8 @@ Supported file formats:
 
 - Asylum research ARDF/HDF5
 
+- Nanosurf .nid
+
 - Additional format contributions welcome!
 
 Motivation
@@ -69,8 +71,28 @@ You can install a release from PyPI::
 
 From GitHub Releases
 ^^^^^^^^^^^^^^^^^^^^
-We use PyInstaller to build executable releases for Windows on Github.
-Simply download the ZIP archive, extract it to your hard drive.
+We use PyInstaller to build executable releases for Windows and macOS on
+`GitHub <https://github.com/richardsheridan/magic-afm/releases>`_. Download the
+ZIP archive for your operating system and extract it to your hard drive.
+The app is not notarized, so your OS blocks it the first time you open it.
+
+On Windows, run ``magic_afm_gui.exe`` or ``magic_afm_cli.exe`` from the extracted
+``magic_afm`` folder. When SmartScreen says "Windows protected your PC", click
+**More info**, then **Run anyway**.
+
+On macOS, open ``magic_afm_gui.app`` from the extracted ``magic_afm`` folder.
+Do this to allow it:
+
+1. Try to open the app once and click **Done** on the dialog saying that
+   Apple could not verify it is free of malware.
+2. Open **System Settings > Privacy & Security** and scroll down to the
+   **Security** section. There should be a line saying
+   ``"magic_afm_gui.app" was blocked to protect your Mac``, with an
+   **Open Anyway** button. It only appears for about an hour after the blocked
+   attempt, so if it's missing, try opening the app again.
+3. Click **Open Anyway** and confirm with your password or Touch ID.
+4. Click **Open Anyway** once more in the dialog that follows. From then on
+   the app opens normally.
 
 From source
 ^^^^^^^^^^^
