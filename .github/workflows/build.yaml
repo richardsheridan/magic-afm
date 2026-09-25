@@ -26,9 +26,22 @@ jobs:
         shell: bash
       - name: Tidy dist
         if: startsWith( runner.os, 'mac')
-        run: rm -rf dist/magic_afm
+        # keep only the .app, in a dist/magic_afm folder like on Windows
+        run: |
+          rm -rf dist/magic_afm_gui
+          mkdir dist/magic_afm
+          mv dist/magic_afm_gui.app dist/magic_afm/
       - name: Copy README
         run: cp README.rst dist/magic_afm/
+      - name: Zip app
+        if: startsWith( runner.os, 'mac')
+        # upload-artifact drops permissions and symlinks,
+        # so zip it with ditto to keep the app working.
+        # --norsrc leaves out xattrs, since
+        # unzip would write it into the bundle as ._* files.
+        run: |
+          ditto -c -k --norsrc --keepParent dist/magic_afm dist/magic_afm_mac.zip
+          rm -rf dist/magic_afm
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
