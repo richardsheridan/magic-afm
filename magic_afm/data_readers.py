@@ -361,8 +361,8 @@ class ARH5FFMVolume:
     def get_all_curves(self):
         z = self._zreader[:] * NANOMETER_UNIT_CONVERSION
         d = self._dreader[:] * NANOMETER_UNIT_CONVERSION
-        z.reshape(z.shape[:-1] + (2, -1))
-        d.reshape(d.shape[:-1] + (2, -1))
+        z = z.reshape(z.shape[:-1] + (2, -1))
+        d = d.reshape(d.shape[:-1] + (2, -1))
         return z, d
 
 
