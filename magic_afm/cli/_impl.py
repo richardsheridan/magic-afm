@@ -53,6 +53,11 @@ class TraceChoice(enum.IntEnum):
     # ALL = -1
 
 
+def trace_choice(v):
+    # name (CLI-written) or legacy int (GUI-written)
+    return TraceChoice[v] if isinstance(v, str) else TraceChoice(v)
+
+
 # must take two positional arguments, fname and array
 EXPORTER_MAP = {
     "txt": partial(np.savetxt, fmt="%.8g"),
@@ -68,7 +73,8 @@ OPTIONS_JSON_SCHEMA = dict(
     k=float,
     defl_sens=float,
     sync_dist=float,
-    trace=TraceChoice.__getitem__,
+    trace=trace_choice,
+    k_sens=bool,
     radius=float,
     M=float,
     tau=float,
@@ -102,7 +108,10 @@ def readjson(c, p, options_json):
         for k, value in list(options_json.items()):
             if k in NULLABLE_FIELDS and value is None:
                 continue
-            validator = OPTIONS_JSON_SCHEMA[k]
+            try:
+                validator = OPTIONS_JSON_SCHEMA[k]
+            except KeyError:
+                raise click.BadParameter(f"Unknown key '{k}' in options_json") from None
             options_json[k] = validator(value)
     return options_json
 
