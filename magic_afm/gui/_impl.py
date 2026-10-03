@@ -1611,7 +1611,7 @@ class ForceVolumeController:
     plot_artists: list = field(init=False, factory=list)
     table: Optional[Table] = None
     existing_points: set = field(init=False, factory=set)
-    point_data: dict[ImagePoint, ForceCurveData] = {}
+    point_data: dict[ImagePoint, ForceCurveData] = field(init=False, factory=dict)
 
     # set in change_image_task
     axesimage: Optional[AxesImage] = None
