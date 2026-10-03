@@ -65,6 +65,7 @@ from matplotlib.transforms import Bbox, BboxTransform
 from tqdm.std import tqdm as tqdm_std
 
 from magic_afm import async_tools, calculation, data_readers
+from magic_afm._options import dump_options
 from magic_afm._util import nice_workers
 
 try:
@@ -743,12 +744,9 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         image_names = [x for x in self._get_image_names() if x.startswith("Calc")]
 
         async def write_options():
-            import json
-
             options = asdict(self._get_options())
             del options["disp_kind"]
-            options["fit_mode"] = options["fit_mode"].name
-            options = json.dumps(options)
+            options = dump_options(options)
             async with await trio.open_file(root + "_options.json", "w") as f:
                 await f.write(options)
 

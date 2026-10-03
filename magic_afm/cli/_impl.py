@@ -14,8 +14,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-import enum
-import json
 import pathlib
 import sys
 
@@ -43,19 +41,13 @@ from magic_afm.calculation import (
     PARMS_UNITS_DICT,
     PARMS_DTYPE,
 )
+from magic_afm._options import (
+    OPTIONS_JSON_SCHEMA,
+    TraceChoice,
+    dump_options,
+    load_options,
+)
 from magic_afm._util import cli_init, MAX_WORKERS
-
-
-class TraceChoice(enum.IntEnum):
-    RETRACE = 0
-    TRACE = 1
-    # BOTH = 2
-    # ALL = -1
-
-
-def trace_choice(v):
-    # name (CLI-written) or legacy int (GUI-written)
-    return TraceChoice[v] if isinstance(v, str) else TraceChoice(v)
 
 
 # must take two positional arguments, fname and array
@@ -69,26 +61,6 @@ EXPORTER_MAP = {
     "npz": np.savez_compressed,
 }
 
-OPTIONS_JSON_SCHEMA = dict(
-    k=float,
-    defl_sens=float,
-    sync_dist=float,
-    trace=trace_choice,
-    k_sens=bool,
-    radius=float,
-    M=float,
-    tau=float,
-    lj_scale=float,
-    vd=float,
-    li_per=float,
-    li_amp=float,
-    drag=float,
-    fit_fix=FitFix,
-    fit_mode=FitMode.__getitem__,
-)
-
-NULLABLE_FIELDS = {"k", "defl_sens", "sync_dist", "trace"}
-
 
 def echo(message=None, file=None, nl=True, err=False, color=None):
     with tqdm.external_write_mode(file=sys.stderr if err else sys.stdout):
@@ -101,18 +73,11 @@ def abs_cb(c, p, v):
 
 def readjson(c, p, options_json):
     if options_json is not None:
-        import json
-
         with options_json:
-            options_json = json.load(options_json)
-        for k, value in list(options_json.items()):
-            if k in NULLABLE_FIELDS and value is None:
-                continue
             try:
-                validator = OPTIONS_JSON_SCHEMA[k]
-            except KeyError:
-                raise click.BadParameter(f"Unknown key '{k}' in options_json") from None
-            options_json[k] = validator(value)
+                options_json = load_options(options_json)
+            except ValueError as e:
+                raise click.BadParameter(str(e)) from None
     return options_json
 
 
@@ -279,16 +244,11 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
     new_json["k"] = k
     new_json["defl_sens"] = defl_sens
     new_json["sync_dist"] = sync_dist
-    # convert enums to names
-    # TODO: convert via single source of truth
-    new_json["fit_mode"] = FitMode(new_json["fit_mode"]).name
-    if new_json["trace"] is not None:
-        new_json["trace"] = TraceChoice(co["trace"]).name
 
     if verbose:
         echo("Writing " + str(options_json_path))
     with options_json_path.open("w") as fp:
-        json.dump(new_json, fp)
+        fp.write(dump_options(new_json))
 
     for names, map_, err_str in zip(
         [PROPERTY_UNITS_DICT, PARMS_UNITS_DICT, PARMS_UNITS_DICT],
@@ -356,7 +316,14 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
     click.option("-fix-radius/-fit-radius"),
     click.option("--radius", type=float, callback=abs_cb, default=20.0),
     # click.option("-fix-M/-fit-M"), # TODO: implement with constraint
-    click.option("--M", "M", type=float, callback=abs_cb, default=1e9),
+    click.option(
+        "--M",
+        "M",
+        type=float,
+        callback=abs_cb,
+        default=1.0,
+        help="Indentation modulus in GPa.",
+    ),
     click.option("-fix-tau/-fit-tau"),
     click.option("--tau", type=float, callback=clip(0.0, 1.0), default=0.0),
     click.option("-fix-lj-scale/-fit-lj-scale"),
