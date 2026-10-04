@@ -1876,6 +1876,12 @@ class NIDVolume:
         dfwd = spec["Spec forward", "Deflection"]
         zbwd = spec["Spec backward", "Z-Axis Sensor"]
         dbwd = spec["Spec backward", "Deflection"]
+        # the conversions in _get_line_curve assume Z in m and Deflection in N
+        for d, unit in ((zfwd, "m"), (dfwd, "N"), (zbwd, "m"), (dbwd, "N")):
+            if d.unit != unit:
+                raise ValueError(
+                    f"Expected curve data in {unit}.", d.frame, d.channel, d.unit
+                )
         nx, ny = int(spec_map_row[4]), int(spec_map_row[5])
         # a stopped scan leaves the lines past CurLine unwritten
         n_lines = min(
@@ -1944,6 +1950,10 @@ class NIDMapHeightImage:
     n_lines: int
     _zfwd: NIDDataset
 
+    @property
+    def units(self) -> str:
+        return self._zfwd.unit
+
     def get_image(self) -> np.ndarray:
         """Get the image from disk."""
         # the extend curve ends at max force, and rows are zero filled past it
@@ -1958,6 +1968,10 @@ class NIDMapImage:
     n_lines: int
     sign: float
     _dataset: NIDDataset
+
+    @property
+    def units(self) -> str:
+        return self._dataset.unit
 
     def get_image(self) -> np.ndarray:
         """Get the image from disk."""
@@ -2006,7 +2020,9 @@ class NIDFile:
         if offset > nbytes:
             raise ValueError("Datasets overrun the end of the file.", offset, nbytes)
 
-        k, _ = parse_nanosurf_value(header["cantilever"]["Prop0"])
+        k, k_unit = parse_nanosurf_value(header["cantilever"]["Prop0"])
+        if k_unit != "N/m":
+            raise ValueError("Expected spring constant in N/m.", k_unit)
         defl_sens = (
             float(header["cantilever"]["Sensitivity"]) * NANOMETER_UNIT_CONVERSION
         )

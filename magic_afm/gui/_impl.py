@@ -303,7 +303,10 @@ class GUIFVFile:
         return image_name
 
     def get_image_units(self, image_name):
-        # TODO: check FVFile for units
+        # TODO: check every FVFile for units, not only NID (and Demo has no images)
+        image = getattr(self.fvfile, "images", {}).get(image_name)
+        if isinstance(image, data_readers.NIDMapHeightImage | data_readers.NIDMapImage):
+            return image.units
         image_name = self.strip_trace(image_name)
         return self._units_map.get(image_name, "V")
 
