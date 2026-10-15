@@ -1,0 +1,5 @@
+# Mechanical reformatting; skip with git blame --ignore-revs-file .git-blame-ignore-revs
+# (GitHub applies this file automatically).
+
+# apply ruff format and import sorting
+84b6235c71f1bdebe762b304ed00e1ffb156cda7

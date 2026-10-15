@@ -1,0 +1,445 @@
+{
+  "errors": [
+    {
+      "column": 29,
+      "path": "magic_afm/calculation.py",
+      "name": "missing-module-attribute",
+      "concise_description": "Could not import `number_domain` from `numba.types`",
+      "severity": "error"
+    },
+    {
+      "column": 57,
+      "path": "magic_afm/calculation.py",
+      "name": "bad-assignment",
+      "concise_description": "`type[Warning]` is not assignable to attribute `NumbaExperimentalFeatureWarning` with type `type[NumbaExperimentalFeatureWarning]`",
+      "severity": "error"
+    },
+    {
+      "column": 28,
+      "path": "magic_afm/data_readers.py",
+      "name": "missing-module-attribute",
+      "concise_description": "Could not import `STARTF_USESHOWWINDOW` from `subprocess`",
+      "severity": "error"
+    },
+    {
+      "column": 50,
+      "path": "magic_afm/data_readers.py",
+      "name": "missing-module-attribute",
+      "concise_description": "Could not import `STARTUPINFO` from `subprocess`",
+      "severity": "error"
+    },
+    {
+      "column": 13,
+      "path": "magic_afm/data_readers.py",
+      "name": "bad-assignment",
+      "concise_description": "`list[Any]` is not assignable to `ARDFHeader`",
+      "severity": "error"
+    },
+    {
+      "column": 57,
+      "path": "magic_afm/data_readers.py",
+      "name": "not-iterable",
+      "concise_description": "Type `ARDFHeader` is not iterable",
+      "severity": "error"
+    },
+    {
+      "column": 13,
+      "path": "magic_afm/data_readers.py",
+      "name": "bad-assignment",
+      "concise_description": "`list[Any]` is not assignable to `ARDFHeader`",
+      "severity": "error"
+    },
+    {
+      "column": 57,
+      "path": "magic_afm/data_readers.py",
+      "name": "not-iterable",
+      "concise_description": "Type `ARDFHeader` is not iterable",
+      "severity": "error"
+    },
+    {
+      "column": 71,
+      "path": "magic_afm/data_readers.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `list[Any]` is not assignable to parameter `seg_offsets` with type `tuple[int, ...]` in function `ARDFVdata.__init__`",
+      "severity": "error"
+    },
+    {
+      "column": 22,
+      "path": "magic_afm/data_readers.py",
+      "name": "missing-attribute",
+      "concise_description": "Object of class `NoneType` has no attribute `seg_offsets`",
+      "severity": "error"
+    },
+    {
+      "column": 29,
+      "path": "magic_afm/data_readers.py",
+      "name": "missing-attribute",
+      "concise_description": "Object of class `NoneType` has no attribute `get_ndarray`",
+      "severity": "error"
+    },
+    {
+      "column": 54,
+      "path": "magic_afm/data_readers.py",
+      "name": "missing-attribute",
+      "concise_description": "Object of class `NoneType` has no attribute `get_ndarray`",
+      "severity": "error"
+    },
+    {
+      "column": 48,
+      "path": "magic_afm/data_readers.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `floating[_32Bit]` is not assignable to parameter `amp` with type `float` in function `QNMZReader.__init__`",
+      "severity": "error"
+    },
+    {
+      "column": 43,
+      "path": "magic_afm/data_readers.py",
+      "name": "missing-argument",
+      "concise_description": "Missing argument `sync_dist_frac` in function `QNMZReader.get_curve`",
+      "severity": "error"
+    },
+    {
+      "column": 74,
+      "path": "magic_afm/data_readers.py",
+      "name": "missing-argument",
+      "concise_description": "Missing argument `sync_dist_int` in function `QNMDReader.get_curve`",
+      "severity": "error"
+    },
+    {
+      "column": 47,
+      "path": "magic_afm/data_readers.py",
+      "name": "bad-argument-count",
+      "concise_description": "Expected 2 positional arguments, got 3 in function `FFVReader.get_curve`",
+      "severity": "error"
+    },
+    {
+      "column": 47,
+      "path": "magic_afm/data_readers.py",
+      "name": "bad-argument-count",
+      "concise_description": "Expected 2 positional arguments, got 3 in function `FFVReader.get_curve`",
+      "severity": "error"
+    },
+    {
+      "column": 21,
+      "path": "magic_afm/data_readers.py",
+      "name": "missing-attribute",
+      "concise_description": "Object of class `NoneType` has no attribute `groups`",
+      "severity": "error"
+    },
+    {
+      "column": 27,
+      "path": "magic_afm/data_readers.py",
+      "name": "unsupported-operation",
+      "concise_description": "Cannot set item in `dict[str, list[float | int | str]]`",
+      "severity": "error"
+    },
+    {
+      "column": 27,
+      "path": "magic_afm/data_readers.py",
+      "name": "missing-attribute",
+      "concise_description": "Object of class `NoneType` has no attribute `groups`",
+      "severity": "error"
+    },
+    {
+      "column": 26,
+      "path": "magic_afm/data_readers.py",
+      "name": "unsupported-operation",
+      "concise_description": "Cannot set item in `dict[str, dict[Unknown, Unknown]]`",
+      "severity": "error"
+    },
+    {
+      "column": 26,
+      "path": "magic_afm/data_readers.py",
+      "name": "unsupported-operation",
+      "concise_description": "Cannot set item in `dict[str, dict[Unknown, Unknown]]`",
+      "severity": "error"
+    },
+    {
+      "column": 30,
+      "path": "magic_afm/data_readers.py",
+      "name": "unsupported-operation",
+      "concise_description": "Cannot set item in `dict[str, dict[Unknown, Unknown]]`",
+      "severity": "error"
+    },
+    {
+      "column": 30,
+      "path": "magic_afm/data_readers.py",
+      "name": "unsupported-operation",
+      "concise_description": "Cannot set item in `dict[str, dict[Unknown, Unknown]]`",
+      "severity": "error"
+    },
+    {
+      "column": 13,
+      "path": "magic_afm/data_readers.py",
+      "name": "unsupported-operation",
+      "concise_description": "Cannot set item in `ndarray[tuple[*tuple[int, ...], int, int, int], dtype[floating[_32Bit]]]`",
+      "severity": "error"
+    },
+    {
+      "column": 32,
+      "path": "magic_afm/data_readers.py",
+      "name": "unsupported-operation",
+      "concise_description": "Cannot set item in `dict[str, NIDMapHeightImage]`",
+      "severity": "error"
+    },
+    {
+      "column": 28,
+      "path": "magic_afm/data_readers.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `dict[str, NIDMapHeightImage]` is not assignable to parameter `images` with type `dict[str, Image]` in function `NIDFile.__init__`",
+      "severity": "error"
+    },
+    {
+      "column": 5,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "missing-attribute",
+      "concise_description": "No attribute `windll` in module `ctypes`",
+      "severity": "error"
+    },
+    {
+      "column": 38,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "no-matching-overload",
+      "concise_description": "No matching overload found for function `tkinter.Wm.wm_overrideredirect` called with arguments: (Literal[1])",
+      "severity": "error"
+    },
+    {
+      "column": 17,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "missing-attribute",
+      "concise_description": "Object of class `Toplevel` has no attribute `_w`",
+      "severity": "error"
+    },
+    {
+      "column": 21,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "missing-attribute",
+      "concise_description": "Object of class `NoneType` has no attribute `get_size`",
+      "severity": "error"
+    },
+    {
+      "column": 20,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "not-callable",
+      "concise_description": "Expected a callable, got `None`",
+      "severity": "error"
+    },
+    {
+      "column": 20,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "not-callable",
+      "concise_description": "Expected a callable, got `None`",
+      "severity": "error"
+    },
+    {
+      "column": 26,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 70,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "no-matching-overload",
+      "concise_description": "No matching overload found for function `dict.get` called with arguments: (float, tuple[Literal[''], Literal[1]])",
+      "severity": "error"
+    },
+    {
+      "column": 25,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 55,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 37,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "missing-attribute",
+      "concise_description": "Object of class `NoneType` has no attribute `item`",
+      "severity": "error"
+    },
+    {
+      "column": 25,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 50,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 37,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`/` is not supported between `None` and `None`",
+      "severity": "error"
+    },
+    {
+      "column": 58,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "no-matching-overload",
+      "concise_description": "No matching overload found for function `numpy._core.fromnumeric.transpose` called with arguments: (list[tuple[float, float, float, ndarray | None, ndarray | None, ndarray[tuple[Any, ...], dtype[float64]] | Unknown, ndarray | None]])",
+      "severity": "error"
+    },
+    {
+      "column": 27,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 27,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `ndarray | None` is not assignable to parameter `x` with type `Buffer | SupportsFloat | SupportsIndex | str` in function `float.__new__`",
+      "severity": "error"
+    },
+    {
+      "column": 27,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 21,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`/` is not supported between `None` and `None`",
+      "severity": "error"
+    },
+    {
+      "column": 70,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "no-matching-overload",
+      "concise_description": "No matching overload found for function `dict.get` called with arguments: (float, tuple[Literal[''], Literal[1]])",
+      "severity": "error"
+    },
+    {
+      "column": 34,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 39,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 35,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 39,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 35,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 56,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 62,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 25,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`+` is not supported between `None` and `None`",
+      "severity": "error"
+    },
+    {
+      "column": 52,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 41,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 25,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`*` is not supported between `None` and `float`",
+      "severity": "error"
+    },
+    {
+      "column": 49,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 26,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 42,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "bad-assignment",
+      "concise_description": "`tuple[ndarray | Any, ...]` is not assignable to `tuple[ndarray, ndarray]`",
+      "severity": "error"
+    },
+    {
+      "column": 42,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "bad-assignment",
+      "concise_description": "`tuple[ndarray, ...]` is not assignable to `tuple[ndarray, ndarray]`",
+      "severity": "error"
+    },
+    {
+      "column": 46,
+      "path": "magic_afm/gui/_impl.py",
+      "name": "bad-assignment",
+      "concise_description": "`tuple[ndarray | Any, ...]` is not assignable to `tuple[ndarray, ndarray]`",
+      "severity": "error"
+    }
+  ]
+}
