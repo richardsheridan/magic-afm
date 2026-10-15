@@ -2713,6 +2713,9 @@ async def about_task(root):
             task_stats = trio.lowlevel.current_statistics()
             worker_stats = trio_parallel.default_context_statistics()
             q50, q95, q99 = inst.hist.quantile((0.5, 0.95, 0.99))
+            cpu_limiter = repr(async_tools.cpu_bound_limiter).split(",")[1][:-1]
+            thread_limiter = trio.to_thread.current_default_thread_limiter()
+            thread_limiter = repr(thread_limiter).split(",")[1][:-1]
             task_strvar.set(
                 f"Tasks living: {task_stats.tasks_living}\n"
                 f"Tasks runnable: {task_stats.tasks_runnable}\n"
@@ -2721,14 +2724,8 @@ async def about_task(root):
                 f"Sleep: {100 * inst.sleep_time / inst.cycle_time:.1f} %\n"
                 f"Tick percentiles (seconds):\n"
                 f"50 %: {q50:.1e} | 95 %: {q95:.1e} | 99 %: {q99:.1e}\n"
-                f"""CPU-bound tasks:{
-                    repr(async_tools.cpu_bound_limiter).split(",")[1][:-1]
-                }\n"""
-                f"""Default threads:{
-                    repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][
-                        :-1
-                    ]
-                }\n"""
+                f"CPU-bound tasks:{cpu_limiter}\n"
+                f"Default threads:{thread_limiter}\n"
                 f"Worker processes: {worker_stats.running_workers}/"
                 f"{worker_stats.idle_workers + worker_stats.running_workers}"
             )
@@ -2824,9 +2821,8 @@ async def main_task(root):
         for _ in range(async_tools.cpu_bound_limiter.total_tokens):
             nursery.start_soon(tprs, bool)  # start workers while choosing data
         nursery.start_soon(trio.to_thread.run_sync, calculation.warmup_jit_main)
-        await (
-            trio.sleep_forever()
-        )  # needed if nursery never starts a long running child
+        # needed if nursery never starts a long running child
+        await trio.sleep_forever()
 
 
 def main():
