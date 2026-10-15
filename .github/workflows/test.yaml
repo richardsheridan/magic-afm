@@ -37,3 +37,15 @@ jobs:
           locked: true
       # tests marked slow skip here: CI has no example.data until T5b publishes it
       - run: pixi run -e ${{ matrix.environment }} pytest -rfEs
+      # when tests fail, regenerate the T2 goldens on this platform so every field's
+      # drift can be measured offline with make_t2_goldens.py --compare
+      - name: Regenerate T2 goldens
+        if: failure()
+        run: pixi run -e ${{ matrix.environment }} python tests/goldens/make_t2_goldens.py --out t2-goldens-${{ matrix.os }}-${{ matrix.environment }}.json
+      - name: Upload regenerated T2 goldens
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t2-goldens-${{ matrix.os }}-${{ matrix.environment }}
+          path: t2-goldens-${{ matrix.os }}-${{ matrix.environment }}.json
+          if-no-files-found: warn
