@@ -82,6 +82,11 @@ pytest-trio = "*"
 [tool.pixi.feature.test.tasks]
 test = { cmd = ["pytest", "tests"], default-environment = "test" }
 
+# oldest supported python, for the CI matrix (T4); its own solve group so the
+# default group keeps the newest stack
+[tool.pixi.feature.py311.dependencies]
+python = "3.11.*"
+
 [tool.pixi.feature.lint.dependencies]
 python = ">=3.11.0, <3.15.0"
 
@@ -137,4 +142,5 @@ build = { features = ["build", "cli", "gui", "numba", "h5py"], solve-group = "de
 notebook = { features = ["notebook", "numba", "h5py"], solve-group = "default" }
 test = { features = ["test", "cli", "gui", "numba", "h5py"], solve-group = "default" }
 test-nonumba = { features = ["test", "cli", "gui", "h5py"], solve-group = "default" }
+test-py311 = { features = ["test", "cli", "gui", "numba", "h5py", "py311"], solve-group = "py311" }
 lint = { features = ["lint"], no-default-feature = true, solve-group = "lint" }
