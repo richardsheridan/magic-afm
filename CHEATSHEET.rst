@@ -2,20 +2,38 @@
 Releasing
 =========
 
-1. Create the GitHub release and its tag
+1. Re-lock the environments
+---------------------------
+
+Before tagging, refresh ``pixi.lock`` on ``master`` so both frozen apps ship one
+current stack. First raise the upper bound of the ``python`` pins in
+``pyproject.toml`` (``[tool.pixi.dependencies]`` and the ``lint`` feature) to the
+newest CPython that PyInstaller supports and that every dependency has wheels for
+on all three platforms; ``no-build`` is set, so a missing wheel fails the solve.
+
+.. code-block:: bash
+
+    pixi update
+    pixi run gate
+
+The gate runs the golden tests, so a pass means the new stack reproduces the
+stored results; if one fails, investigate before tagging. Commit ``pixi.lock``
+and any pin change, push, and wait for CI before going on.
+
+2. Create the GitHub release and its tag
 ----------------------------------------
 
 On GitHub, go to **Releases > Draft a new release**, type the new tag ``<version>``
 (e.g., ``1.0.0b3``) under **Choose a tag**, write the release notes, and
 publish. GitHub then creates the version tag for use in the remainder of the flow.
 
-2. Build the executables
+3. Build the executables
 ------------------------
 
 Go to **Actions > Build > Run workflow**, pick the tag under **Use workflow
 from**, and wait for both jobs (``windows-latest`` and ``macos-latest``) to finish.
 
-3. Attach the executables to the release
+4. Attach the executables to the release
 ----------------------------------------
 
 From the workflow run's summary page, download and clean up both artifacts:
@@ -27,7 +45,7 @@ From the workflow run's summary page, download and clean up both artifacts:
 
 Edit the release and add both files as assets.
 
-4. Upload to PyPI
+5. Upload to PyPI
 -----------------
 
 Build from a clean checkout of the tag and upload. Take care to choose the
