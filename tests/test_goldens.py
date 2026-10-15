@@ -99,37 +99,63 @@ FINGERPRINT_STRIDE = {"raw": 100, "resampled": 32}
 # float64 does not shrink it: the fits then differ by up to 1% in M between
 # the envs, so their agreement here depends on the float32 input path.)
 #
-# Every other field had no spread, so its tolerance is a floor from float32
-# storage: rtol 1e-6 (8 float32 ulps), plus an atol of about 8 ulps at the
-# field's natural scale where its value can sit near 0 (shifts and fc at the
-# 10-20 nm or nN scale of the curves, lj_scale on [-6, 6]). SensIndMod_k is
-# (M' - M) / M / 1e-3 from float32 M, so one ulp of M moves it by about
-# 1.2e-4 at any magnitude; it gets atol 1e-3.
+# The atols cover fields whose value can sit near 0: about 8 float32 ulps at
+# the field's natural scale (shifts and fc at the 10-20 nm or nN scale of the
+# curves, lj_scale on [-6, 6]). SensIndMod_k is (M' - M) / M / 1e-3 from
+# float32 M, so one ulp of M moves it by about 1.2e-4 at any magnitude; it
+# gets atol 1e-3.
+#
+# Across operating systems the spread is far larger than numba against plain.
+# T4's CI goldens (2026-10-15, C7's lock, all six Linux and Windows x86-64
+# envs against these osx-arm64 values) keep every NaN pattern, but the
+# resampled curves already differ by up to rel 3.2e-6 and the fits amplify
+# that. At the atols here, the rtol each field needs is at most 2.2e-5
+# (parms_err.lj_scale) and 9e-5 for SensIndMod_k, so every field gets rtol
+# 1e-4 (4.5x) and SensIndMod_k 1e-3. Within one OS, numba against plain and
+# 3.11 against 3.14 agree to 4e-7. One case is ill-conditioned and gets its
+# own tolerances (CASE_TOLERANCES). Tightening these again is for the
+# numerics freeze (RELEASE_PLAN.md: C3, C2b, C2e, T6).
 #
 # For C2b: with warmup_jit_worker() (GUI workers, CLI --jit) the spread
 # against the unjitted numba state is at most rel 3.2e-7 in Indentation and
 # IndentationRatio, and about 1e-7 (1 ulp) in synthetic delta_shift and
-# force_shift, so that state passes too. These are drift checks for
-# C7, so do not widen them past what numba against plain needs.
+# force_shift, so that state passes too.
 SHIFT_ATOL = 1e-5
+CROSS_OS_RTOL = 1e-4
 TOLERANCES: dict[tuple[str, str], tuple[float, float]] = {
-    ("properties", "Deflection"): (1e-6, 0.0),
-    ("properties", "Indentation"): (1e-4, 0.0),
-    ("properties", "ContactRadius"): (1e-6, 0.0),
-    ("properties", "TrueHeight"): (1e-6, SHIFT_ATOL),
-    ("properties", "IndentationRatio"): (1e-4, 0.0),
-    ("properties", "SensIndMod_k"): (1e-6, 1e-3),
-    ("properties", "SumSquaredError"): (1e-6, 0.0),
-    ("parms", "M"): (1e-6, 0.0),
-    ("parms", "fc"): (1e-6, SHIFT_ATOL),
-    ("parms", "delta_shift"): (1e-6, SHIFT_ATOL),
-    ("parms", "force_shift"): (1e-6, SHIFT_ATOL),
-    ("parms", "lj_scale"): (1e-6, 4e-6),
-    ("parms_err", "M"): (1e-6, 0.0),
-    ("parms_err", "fc"): (1e-6, 0.0),
-    ("parms_err", "delta_shift"): (1e-6, 0.0),
-    ("parms_err", "force_shift"): (1e-6, 0.0),
-    ("parms_err", "lj_scale"): (1e-6, 0.0),
+    ("properties", "Deflection"): (CROSS_OS_RTOL, 0.0),
+    ("properties", "Indentation"): (CROSS_OS_RTOL, 0.0),
+    ("properties", "ContactRadius"): (CROSS_OS_RTOL, 0.0),
+    ("properties", "TrueHeight"): (CROSS_OS_RTOL, SHIFT_ATOL),
+    ("properties", "IndentationRatio"): (CROSS_OS_RTOL, 0.0),
+    ("properties", "SensIndMod_k"): (1e-3, 1e-3),
+    ("properties", "SumSquaredError"): (CROSS_OS_RTOL, 0.0),
+    ("parms", "M"): (CROSS_OS_RTOL, 0.0),
+    ("parms", "fc"): (CROSS_OS_RTOL, SHIFT_ATOL),
+    ("parms", "delta_shift"): (CROSS_OS_RTOL, SHIFT_ATOL),
+    ("parms", "force_shift"): (CROSS_OS_RTOL, SHIFT_ATOL),
+    ("parms", "lj_scale"): (CROSS_OS_RTOL, 4e-6),
+    ("parms_err", "M"): (CROSS_OS_RTOL, 0.0),
+    ("parms_err", "fc"): (CROSS_OS_RTOL, 0.0),
+    ("parms_err", "delta_shift"): (CROSS_OS_RTOL, 0.0),
+    ("parms_err", "force_shift"): (CROSS_OS_RTOL, 0.0),
+    ("parms_err", "lj_scale"): (CROSS_OS_RTOL, 0.0),
+}
+# The stiff curve fitted in BOTH is ill-conditioned: across OSes its fields
+# need rtol up to 4.9e-3, and 2.7e-2 for parms_err.lj_scale and 2.1e-2 for
+# SensIndMod_k. It keeps the atols above with rtol 2e-2 (about 4x), and 1e-1
+# for those two. The fitted M and the properties still need only 2e-5 here.
+STIFF_BOTH_RTOL = 2e-2
+CASE_TOLERANCES: dict[tuple[str, str], dict[tuple[str, str], tuple[float, float]]] = {
+    ("stiff", "BOTH"): {
+        key: (
+            1e-1
+            if key in {("parms_err", "lj_scale"), ("properties", "SensIndMod_k")}
+            else STIFF_BOTH_RTOL,
+            atol,
+        )
+        for key, (_, atol) in TOLERANCES.items()
+    }
 }
 # Curve samples: spread 0 in both. raw is float64 from numpy's RNG stream and
 # the model; resampled is soxr output (float64 for Demo, float32 for the nid).
@@ -240,7 +266,7 @@ def default_resample_npts():
     )
 
 
-def assert_fields_match(actual, golden, where):
+def assert_fields_match(actual, golden, where, tolerances=TOLERANCES):
     for group, names in FIELDS.items():
         for name in names:
             got = np.asarray(actual[group][name], dtype=np.float32)
@@ -249,7 +275,7 @@ def assert_fields_match(actual, golden, where):
             np.testing.assert_array_equal(
                 np.isnan(got), np.isnan(want), err_msg=f"{label}: NaN pattern"
             )
-            rtol, atol = TOLERANCES[group, name]
+            rtol, atol = tolerances[group, name]
             np.testing.assert_allclose(
                 got, want, rtol=rtol, atol=atol, equal_nan=True, err_msg=label
             )
@@ -289,7 +315,9 @@ def test_resampled_demo_curve_samples_match_golden(goldens, mode):
 @pytest.mark.parametrize("case", SYNTHETIC_CASES)
 def test_synthetic_fit_matches_golden(goldens, case, mode):
     golden = goldens["synthetic"][case]["fits"][mode.name]
-    assert_fields_match(fit_synthetic(case, mode), golden, f"{case} {mode.name}")
+    tolerances = CASE_TOLERANCES.get((case, mode.name), TOLERANCES)
+    actual = fit_synthetic(case, mode)
+    assert_fields_match(actual, golden, f"{case} {mode.name}", tolerances)
 
 
 @pytest.mark.slow
