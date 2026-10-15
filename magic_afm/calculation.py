@@ -42,7 +42,7 @@ except ImportError:
 else:
     abs = np.fabs
 
-from ._util import get_int_env_var
+from ._env import get_int_env_var
 from ._vendored_lstsq import leastsq
 from ._vendored_root import root_df_sane
 

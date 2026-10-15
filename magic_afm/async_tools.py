@@ -28,7 +28,24 @@ from math import inf
 
 import trio
 
-from ._util import MAX_WORKERS
+
+def _max_workers():
+    try:
+        if n := int(os.environ["MAFM_MAX_CPUS"]):
+            return n
+    except (ValueError, KeyError):
+        pass
+    try:
+        import psutil
+    except ImportError:
+        pass
+    else:
+        if n := psutil.cpu_count(logical=False):
+            return n
+    return os.cpu_count() or 1
+
+
+MAX_WORKERS = _max_workers()
 
 TOOLTIP_CANCEL = None, None, None
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
