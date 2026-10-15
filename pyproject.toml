@@ -74,7 +74,7 @@ notebook = { cmd = ["python", "-m", "notebook", "magic fitting workflow.ipynb"] 
 make-version = { cmd = ["python", "magic_afm/_make_version.py"] }
 build = { cmd = ["pyinstaller", "-y"], depends-on = ["make-version"] }
 
-[tool.pixi.feature.test.dependencies]
+[tool.pixi.feature.test.pypi-dependencies]
 pytest = "*"
 pytest-trio = "*"
 
@@ -94,5 +94,5 @@ default = { solve-group = "default" }
 #gui = { features = ["gui", "numba"], solve-group = "default" }
 build = { features = ["build", "cli", "gui", "numba", "h5py"], solve-group = "default" }
 notebook = { features = ["notebook", "numba", "h5py"], solve-group = "default" }
-test = { features = ["test", "cli", "gui", "numba", "h5py"], solve-group = "test" }
-test-nonumba = { features = ["test", "cli", "gui", "h5py"], solve-group = "test" }
+test = { features = ["test", "cli", "gui", "numba", "h5py"], solve-group = "default" }
+test-nonumba = { features = ["test", "cli", "gui", "h5py"], solve-group = "default" }
