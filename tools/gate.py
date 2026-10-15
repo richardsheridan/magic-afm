@@ -1,7 +1,9 @@
 """Run every pre-merge check and summarize the results.
 
 Steps: ``pixi run lint``, then the test suite in the ``test`` and
-``test-nonumba`` environments. Every step runs even if an earlier one fails.
+``test-nonumba`` environments, then ``pixi run typecheck`` (last, because
+pyrefly reads the ``test`` environment's interpreter, which the test step
+installs). Every step runs even if an earlier one fails.
 The full output goes to ``build/gate/gate-<timestamp>.log`` (copied to
 ``build/gate/last.log``); the console gets one line per step plus the
 relevant excerpts. Extra arguments are passed to pytest. Exits nonzero if any
@@ -44,6 +46,7 @@ def steps(pixi, extra):
     yield "lint", [*run, "lint"], False
     for env in ("test", "test-nonumba"):
         yield f"pytest {env}", [*run, "-e", env, "test", *PYTEST_ARGS, *extra], True
+    yield "typecheck", [*run, "typecheck"], False
 
 
 def run_step(cmd, log):
