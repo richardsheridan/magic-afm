@@ -67,6 +67,8 @@ def load_options(fp):
 
     Any subset of the keys in OPTIONS_JSON_SCHEMA may be present."""
     options = json.load(fp)
+    if not isinstance(options, dict):
+        raise ValueError("options_json must be a JSON object")
     for k, value in list(options.items()):
         if k in NULLABLE_FIELDS and value is None:
             continue
@@ -74,7 +76,10 @@ def load_options(fp):
             validator = OPTIONS_JSON_SCHEMA[k]
         except KeyError:
             raise ValueError(f"Unknown key '{k}' in options_json") from None
-        options[k] = validator(value)
+        try:
+            options[k] = validator(value)
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError(f"Bad value {value!r} for '{k}' in options_json") from e
     return options
 
 
