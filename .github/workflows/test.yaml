@@ -1,0 +1,39 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi@v0
+        with:
+          # typecheck reads the test environment's interpreter
+          environments: lint test
+          locked: true
+      - run: pixi run lint
+      - run: pixi run typecheck
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # newest python with and without numba, oldest python with numba
+        environment: [test, test-nonumba, test-py311]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi@v0
+        with:
+          environments: ${{ matrix.environment }}
+          locked: true
+      # tests marked slow skip here: CI has no example.data until T5b publishes it
+      - run: pixi run -e ${{ matrix.environment }} pytest -rfEs
