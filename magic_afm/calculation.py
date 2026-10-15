@@ -88,13 +88,6 @@ PARMS_UNITS_DICT = {
 PARMS_DTYPE = np.dtype([(name, "f4") for name in PARMS_UNITS_DICT])
 
 
-def nan_array(shape, dtype: np.dtype) -> np.ndarray:
-    """Array of shape and (possibly structured) dtype with every field NaN."""
-    out = np.empty(shape, dtype=dtype)
-    out[...] = np.nan
-    return out
-
-
 @enum.unique
 class FitMode(enum.IntEnum):
     SKIP = 0  # needs to be inty and falsy

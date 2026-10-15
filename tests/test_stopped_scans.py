@@ -42,7 +42,6 @@ from test_cli import (
 from tqdm.std import tqdm as tqdm_std
 
 from magic_afm.calculation import FitFix, FitMode
-from magic_afm.data_readers import SUFFIX_FVFILE_MAP
 
 STOPPED_SCANS = {
     "hard0001": "test_cases/PDMS_SAA/ffm/hard0001.ARDF",
