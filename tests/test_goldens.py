@@ -92,9 +92,12 @@ FINGERPRINT_STRIDE = {"raw": 100, "resampled": 32}
 #   Indentation       nid: max rel 3.21e-5 (abs 2.5e-4 nm); synthetic: 0
 #   IndentationRatio  nid: max rel 3.21e-5 (abs 2.2e-4); synthetic: 0
 #   parms.delta_shift synthetic soft BOTH: rel 9.9e-8 (abs 3e-10 nm, 1 ulp)
-# The nid curves are float32, so calc_def_ind_ztru_ac's root solve runs in
-# float32 on the plain path and differs from numba's jitted schwarz_wrap.
-# Those two fields get rtol 1e-4, about 3x the spread.
+# The nid fitted parameters are bitwise equal, so the Indentation spread
+# arises after the fit, in calc_def_ind_ztru_ac (delta_curve over
+# schwarz_wrap, jitted only with numba), on float32 parameters. Those two
+# fields get rtol 1e-4, about 3x the spread. (Casting the nid curves to
+# float64 does not shrink it: the fits then differ by up to 1% in M between
+# the envs, so their agreement here depends on the float32 input path.)
 #
 # Every other field had no spread, so its tolerance is a floor from float32
 # storage: rtol 1e-6 (8 float32 ulps), plus an atol of about 8 ulps at the
@@ -104,8 +107,9 @@ FINGERPRINT_STRIDE = {"raw": 100, "resampled": 32}
 # 1.2e-4 at any magnitude; it gets atol 1e-3.
 #
 # For C2b: with warmup_jit_worker() (GUI workers, CLI --jit) the spread
-# against the unjitted numba state is at most rel 3.2e-7, in Indentation and
-# IndentationRatio only, so that state passes too. These are drift checks for
+# against the unjitted numba state is at most rel 3.2e-7 in Indentation and
+# IndentationRatio, and about 1e-7 (1 ulp) in synthetic delta_shift and
+# force_shift, so that state passes too. These are drift checks for
 # C7, so do not widen them past what numba against plain needs.
 SHIFT_ATOL = 1e-5
 TOLERANCES: dict[tuple[str, str], tuple[float, float]] = {
