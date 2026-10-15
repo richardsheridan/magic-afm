@@ -3,9 +3,9 @@ import sys
 
 import psutil
 
-from ._env import get_int_env_var
+from ._env import max_workers
 
-MAX_WORKERS = get_int_env_var("MAFM_MAX_CPUS") or psutil.cpu_count(logical=False) or 1
+MAX_WORKERS = max_workers()
 
 
 def nice_workers():
