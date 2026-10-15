@@ -81,6 +81,45 @@ pytest-trio = "*"
 [tool.pixi.feature.test.tasks]
 test = { cmd = ["pytest", "tests"], default-environment = "test" }
 
+[tool.pixi.feature.lint.dependencies]
+python = ">=3.11.0, <3.14.0"
+
+[tool.pixi.feature.lint.pypi-dependencies]
+ruff = "*"
+mdformat = "*"
+mdformat-gfm = ">=1.0"
+prek = "*"
+pyrefly = "*"
+
+[tool.pixi.feature.lint.tasks]
+fmt = { cmd = "ruff check --select I --fix && ruff format && python tools/mdformat_tracked.py", default-environment = "lint" }
+lint = { cmd = "ruff check --select I && ruff format --check && python tools/mdformat_tracked.py --check", default-environment = "lint" }
+typecheck = { cmd = ["pyrefly", "check", "--baseline", "pyrefly-baseline.json"], default-environment = "lint" }
+
+# [tool.pyrefly] points at the unix layout of the test env's python.
+[tool.pixi.feature.lint.target.win-64.tasks]
+typecheck = { cmd = ["pyrefly", "check", "--baseline", "pyrefly-baseline.json", "--python-interpreter-path", ".pixi/envs/test/python.exe"], default-environment = "lint" }
+
+[tool.ruff]
+line-length = 88
+extend-exclude = [
+    "*.ipynb",
+    "magic_afm/_vendored_lstsq.py",
+    "magic_afm/_vendored_root.py",
+    "magic_afm/_version.py",
+]
+force-exclude = true
+
+[tool.pyrefly]
+project-includes = ["magic_afm"]
+project-excludes = [
+    "magic_afm/_vendored_lstsq.py",
+    "magic_afm/_vendored_root.py",
+    "magic_afm/_version.py",
+]
+python-interpreter-path = ".pixi/envs/test/bin/python"
+preset = "legacy"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
@@ -96,3 +135,4 @@ build = { features = ["build", "cli", "gui", "numba", "h5py"], solve-group = "de
 notebook = { features = ["notebook", "numba", "h5py"], solve-group = "default" }
 test = { features = ["test", "cli", "gui", "numba", "h5py"], solve-group = "default" }
 test-nonumba = { features = ["test", "cli", "gui", "h5py"], solve-group = "default" }
+lint = { features = ["lint"], no-default-feature = true, solve-group = "lint" }
