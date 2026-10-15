@@ -1,8 +1,8 @@
 """MagicAFM Async Tools
 
-A collection of standalone tools created to serve the async needs of the GUI
-with no dependencies beyond trio and the standard library (the worker count
-comes from the stdlib-only ``_env`` helper).
+A collection of standalone tools created to serve the async needs of the GUI with no
+dependencies beyond trio and the standard library (the worker count comes from the
+stdlib-only ``_env`` helper).
 
 It is meant to be easy to lift individual items out into other projects.
 """

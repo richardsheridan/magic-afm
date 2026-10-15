@@ -18,7 +18,8 @@ import os
 
 def get_int_env_var(var_name):
     """
-    Retrieves an integer environment variable, returning None on missing values and conversion errors.
+    Retrieves an integer environment variable, returning None on missing values and
+    conversion errors.
     """
 
     try:
