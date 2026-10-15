@@ -48,6 +48,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path[:0] = [str(REPO_ROOT), str(REPO_ROOT / "tests")]
 
 import numpy as np  # noqa: E402
+import pytest  # noqa: E402
 import test_goldens as t2  # noqa: E402
 from conftest import resolve_real_data_file  # noqa: E402
 
@@ -123,7 +124,13 @@ def generate():
         }
         synthetic[case] = entry
 
-    path = Path(resolve_real_data_file(t2.NID_RELPATH))
+    out = {"stack": stack(), "synthetic": synthetic}
+    try:
+        path = Path(resolve_real_data_file(t2.NID_RELPATH))
+    except pytest.skip.Exception as e:
+        # CI has no example.data; write the synthetic part alone
+        print("no nid section:", e.msg)
+        return out
     nid = {"relpath": t2.NID_RELPATH}
     for mode in t2.MODES:
         fp, maps = t2.nid_results(path, mode)
@@ -131,7 +138,8 @@ def generate():
             "resampled": fingerprint_json(fp),
             "maps": fields_json(maps),
         }
-    return {"stack": stack(), "synthetic": synthetic, "nid": nid}
+    out["nid"] = nid
+    return out
 
 
 def dumps(obj, indent=0):
@@ -169,6 +177,9 @@ def compare(a_path, b_path):
     print(f"{'field':60} {'max abs':>10} {'max rel':>10} NaN")
     b_leaves = dict(leaves(b))
     for path, x in leaves(a):
+        if path not in b_leaves:
+            print(f"{'.'.join(path):60} {'missing in B':>21}")
+            continue
         y = b_leaves[path]
         nan_same = np.array_equal(np.isnan(x), np.isnan(y))
         ok = ~np.isnan(x) & ~np.isnan(y)
