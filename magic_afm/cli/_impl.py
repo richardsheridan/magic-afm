@@ -43,6 +43,7 @@ from magic_afm.calculation import (
     FitFix,
     FitMode,
     calc_properties_imap,
+    nan_array,
     process_force_curve,
 )
 from magic_afm.data_readers import SUFFIX_FVFILE_MAP, FVFile
@@ -165,9 +166,9 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
         v = evolve(v, sync_dist=sync_dist)
 
     imshape = v.shape
-    property_map = np.empty(imshape, dtype=PROPERTY_DTYPE)
-    parms_map = np.empty(imshape, dtype=PARMS_DTYPE)
-    parms_err_map = np.empty(imshape, dtype=PARMS_DTYPE)
+    property_map = nan_array(imshape, PROPERTY_DTYPE)
+    parms_map = nan_array(imshape, PARMS_DTYPE)
+    parms_err_map = nan_array(imshape, PARMS_DTYPE)
     concurrent_submissions = set()
     nan_counter = count(1)
 

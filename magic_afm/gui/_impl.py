@@ -335,6 +335,9 @@ class GUIFVFile:
     def iter_curves(self, trace=None, sync_dist=None):
         yield from self._get_volume(trace, sync_dist).iter_curves()
 
+    def count_curves(self, trace=None, sync_dist=None) -> int:
+        return sum(1 for _ in self._get_volume(trace, sync_dist).iter_indices())
+
 
 @frozen
 class DemoStub:
@@ -384,6 +387,9 @@ class DemoForceVolumeFile(GUIFVFile):
     def iter_curves(self, trace=None, sync_dist=None):
         for r, c in np.ndindex((64, 64)):
             yield (r, c), self.get_curve(r, c)
+
+    def count_curves(self, trace=None, sync_dist=None) -> int:
+        return 64 * 64
 
 
 class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
@@ -1628,7 +1634,9 @@ class ForceVolumeController:
     async def calc_prop_map_response(self, options: ForceCurveOptions):
         assert options.fit_mode
         img_shape = self.axesimage.get_size()
-        ncurves = img_shape[0] * img_shape[1]
+        ncurves = await trio.to_thread.run_sync(
+            self.opened_fvol.count_curves, options.trace, options.sync_dist
+        )
         chunksize = 4
 
         pause_event = trio.Event()
@@ -1667,9 +1675,13 @@ class ForceVolumeController:
                 progress_array = np.zeros(img_shape + (4,), dtype="f4")
                 half_red = np.array((1, 0, 0, 0.5), dtype="f4")
                 half_green = np.array((0, 1, 0, 0.5), dtype="f4")
-                property_map = np.empty(img_shape, dtype=calculation.PROPERTY_DTYPE)
-                parms_map = np.empty(img_shape, dtype=calculation.PARMS_DTYPE)
-                parms_err_map = np.empty(img_shape, dtype=calculation.PARMS_DTYPE)
+                property_map = calculation.nan_array(
+                    img_shape, calculation.PROPERTY_DTYPE
+                )
+                parms_map = calculation.nan_array(img_shape, calculation.PARMS_DTYPE)
+                parms_err_map = calculation.nan_array(
+                    img_shape, calculation.PARMS_DTYPE
+                )
 
                 def make_progress_image_draw_fn():
                     nonlocal progress_image, progress_array
