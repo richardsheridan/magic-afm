@@ -93,7 +93,7 @@ pyrefly = "*"
 
 [tool.pixi.feature.lint.tasks]
 fmt = { cmd = "ruff check --select I --fix && ruff format && python tools/mdformat_tracked.py", default-environment = "lint" }
-lint = { cmd = "ruff check --select I && ruff format --check && python tools/mdformat_tracked.py --check", default-environment = "lint" }
+lint = { cmd = ["python", "tools/lint.py"], default-environment = "lint" }
 typecheck = { cmd = ["pyrefly", "check", "--baseline", "pyrefly-baseline.json"], default-environment = "lint" }
 gate = { cmd = ["python", "tools/gate.py"], default-environment = "lint", description = "lint, then pytest in test and test-nonumba; extra args go to pytest" }
 
