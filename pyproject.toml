@@ -74,8 +74,25 @@ notebook = { cmd = ["python", "-m", "notebook", "magic fitting workflow.ipynb"] 
 make-version = { cmd = ["python", "magic_afm/_make_version.py"] }
 build = { cmd = ["pyinstaller", "-y"], depends-on = ["make-version"] }
 
+[tool.pixi.feature.test.dependencies]
+pytest = "*"
+pytest-trio = "*"
+
+[tool.pixi.feature.test.tasks]
+test = { cmd = ["pytest", "tests"], default-environment = "test" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["--strict-markers"]
+markers = [
+    "slow: needs real data files from example.data; skips when absent",
+]
+
 [tool.pixi.environments]
 default = { solve-group = "default" }
 #gui = { features = ["gui", "numba"], solve-group = "default" }
 build = { features = ["build", "cli", "gui", "numba", "h5py"], solve-group = "default" }
 notebook = { features = ["notebook", "numba", "h5py"], solve-group = "default" }
+test = { features = ["test", "cli", "gui", "numba", "h5py"], solve-group = "test" }
+test-nonumba = { features = ["test", "cli", "gui", "h5py"], solve-group = "test" }
