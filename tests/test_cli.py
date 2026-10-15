@@ -46,6 +46,7 @@ import imageio
 import numpy as np
 import pytest
 from click.testing import CliRunner, Result
+from test_goldens import TOLERANCES as T2_TOLERANCES
 
 from magic_afm.calculation import FitFix
 
@@ -162,25 +163,14 @@ EXPORT_FIELDS = {
 # is 5.4e-5 on onekhz.000.pfc, 2.6e-5 on A1...spm, 3.2e-5 on the nid and
 # 1.5e-6 on both0001.ARDF and rtrace0001.h5. T2's rtol 1e-4 would leave less
 # than 2x on the .pfc, so these two get 2e-4 here, about 3.7x the spread.
-SHIFT_ATOL = 1e-5
+#
+# The other fields take T2's cross-OS tolerances (see the comment above
+# TOLERANCES in tests/test_goldens.py). These real-file maps skip in CI, so
+# their own cross-OS spread is not measured yet.
 FIT_TOLERANCES = {
-    ("properties", "Deflection"): (1e-6, 0.0),
+    **T2_TOLERANCES,
     ("properties", "Indentation"): (2e-4, 0.0),
-    ("properties", "ContactRadius"): (1e-6, 0.0),
-    ("properties", "TrueHeight"): (1e-6, SHIFT_ATOL),
     ("properties", "IndentationRatio"): (2e-4, 0.0),
-    ("properties", "SensIndMod_k"): (1e-6, 1e-3),
-    ("properties", "SumSquaredError"): (1e-6, 0.0),
-    ("parms", "M"): (1e-6, 0.0),
-    ("parms", "fc"): (1e-6, SHIFT_ATOL),
-    ("parms", "delta_shift"): (1e-6, SHIFT_ATOL),
-    ("parms", "force_shift"): (1e-6, SHIFT_ATOL),
-    ("parms", "lj_scale"): (1e-6, 4e-6),
-    ("parms_err", "M"): (1e-6, 0.0),
-    ("parms_err", "fc"): (1e-6, 0.0),
-    ("parms_err", "delta_shift"): (1e-6, 0.0),
-    ("parms_err", "force_shift"): (1e-6, 0.0),
-    ("parms_err", "lj_scale"): (1e-6, 0.0),
 }
 
 
