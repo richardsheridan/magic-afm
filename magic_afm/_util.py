@@ -1,6 +1,7 @@
 import os
-import psutil
 import sys
+
+import psutil
 
 
 def get_int_env_var(var_name):
@@ -39,8 +40,9 @@ def nice_workers():
 def cli_init(jit):
     nice_workers()
     if jit:
-        from .calculation import warmup_jit_worker
         import warnings
+
+        from .calculation import warmup_jit_worker
 
         # hacked NumbaExperimentalWarning to be just Warning to avoid slowdown bug
         warnings.simplefilter("ignore", Warning, lineno=621)

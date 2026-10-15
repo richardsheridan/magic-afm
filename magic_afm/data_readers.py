@@ -26,7 +26,6 @@ should be loaded lazily. (I'm looking at you h5py..)
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-
 import mmap
 import re
 import struct
@@ -34,7 +33,7 @@ from bisect import bisect_left
 from collections.abc import Collection, Iterable
 from functools import partial
 from subprocess import PIPE
-from typing import Protocol, TypeAlias, Any, Union
+from typing import Any, Protocol, TypeAlias, Union
 
 try:
     from collections.abc import Buffer
@@ -48,8 +47,7 @@ except ImportError:
     STARTF_USESHOWWINDOW = None
 
 import numpy as np
-
-from attrs import frozen, field
+from attrs import field, frozen
 
 NANOMETER_UNIT_CONVERSION = (
     1e9  # maybe we can intelligently read this from the file someday
@@ -1494,7 +1492,7 @@ class NanoscopeFile:
     def parse(cls, data: Buffer):
         cls.check_type(data)
         # End of header is demarcated by a SUB byte (26 = 0x1A)
-        header_end_pos = find_in_buffer(data, b"\x1A")
+        header_end_pos = find_in_buffer(data, b"\x1a")
         if header_end_pos < 0:
             raise ValueError(
                 "No stop byte found, are you sure this is a Nanoscope file?"

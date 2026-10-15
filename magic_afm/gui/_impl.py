@@ -28,20 +28,19 @@ import tkinter.messagebox
 import traceback
 import warnings
 import webbrowser
-
 from bisect import bisect_right
 from contextlib import nullcontext
 from functools import partial, wraps
 from math import inf
 from tkinter import ttk
 from typing import (
+    AsyncContextManager,
     Callable,
     ClassVar,
-    Optional,
     Literal,
+    Optional,
     Protocol,
     TypeAlias,
-    AsyncContextManager,
 )
 
 import imageio
@@ -50,13 +49,12 @@ import numpy as np
 import outcome
 import trio
 import trio_parallel
-
-from attrs import field, mutable, frozen, asdict, evolve
+from attrs import asdict, evolve, field, frozen, mutable
 from matplotlib.axes import Axes
 from matplotlib.backend_bases import MouseButton
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.colorbar import Colorbar
-from matplotlib.colors import Normalize, LogNorm
+from matplotlib.colors import LogNorm, Normalize
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
 from matplotlib.table import Table
@@ -1836,9 +1834,11 @@ class ForceVolumeController:
         colorbar: Optional[Colorbar] = None
 
         while True:
-            image_name, cmap, log_scale = (
-                await async_tools.receive_drain_and_get_latest(recv_chan)
-            )
+            (
+                image_name,
+                cmap,
+                log_scale,
+            ) = await async_tools.receive_drain_and_get_latest(recv_chan)
             image_array = await trio.to_thread.run_sync(
                 self.opened_fvol.get_image, image_name
             )
@@ -2676,6 +2676,7 @@ async def about_task(root):
 
     """
     from . import __app_name__, __short_license__
+
     top = tk.Toplevel(root)
     top.wm_title(f"About {__app_name__}")
     message = tk.Message(top, text=__short_license__)
@@ -2717,17 +2718,19 @@ async def about_task(root):
                 f"Tasks runnable: {task_stats.tasks_runnable}\n"
                 f"Unprocessed callbacks: {task_stats.run_sync_soon_queue_size}\n"
                 f"Ticks: {inst.hist.count}\n"
-                f"Sleep: {100 * inst.sleep_time / inst.cycle_time :.1f} %\n"
+                f"Sleep: {100 * inst.sleep_time / inst.cycle_time:.1f} %\n"
                 f"Tick percentiles (seconds):\n"
                 f"50 %: {q50:.1e} | 95 %: {q95:.1e} | 99 %: {q99:.1e}\n"
-                f"""CPU-bound tasks:{repr(
-                    async_tools.cpu_bound_limiter
-                ).split(',')[1][:-1]}\n"""
-                f"""Default threads:{repr(
-                    trio.to_thread.current_default_thread_limiter()
-                ).split(',')[1][:-1]}\n"""
+                f"""CPU-bound tasks:{
+                    repr(async_tools.cpu_bound_limiter).split(",")[1][:-1]
+                }\n"""
+                f"""Default threads:{
+                    repr(trio.to_thread.current_default_thread_limiter()).split(",")[1][
+                        :-1
+                    ]
+                }\n"""
                 f"Worker processes: {worker_stats.running_workers}/"
-                f"{worker_stats.idle_workers+worker_stats.running_workers}"
+                f"{worker_stats.idle_workers + worker_stats.running_workers}"
             )
             t += interval / 1000
             await trio.sleep_until(t)
@@ -2821,7 +2824,9 @@ async def main_task(root):
         for _ in range(async_tools.cpu_bound_limiter.total_tokens):
             nursery.start_soon(tprs, bool)  # start workers while choosing data
         nursery.start_soon(trio.to_thread.run_sync, calculation.warmup_jit_main)
-        await trio.sleep_forever()  # needed if nursery never starts a long running child
+        await (
+            trio.sleep_forever()
+        )  # needed if nursery never starts a long running child
 
 
 def main():

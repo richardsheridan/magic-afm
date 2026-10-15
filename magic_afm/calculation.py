@@ -22,32 +22,29 @@ module should contain everything you need.
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-
 import enum
 import traceback
 
 import numpy as np
 from numpy.linalg import lstsq
 from numpy.random import uniform
-
 from soxr import resample
 
 try:
+    import numba.core.errors
     from numba import jit
     from numba.extending import overload
     from numba.types import number_domain
-    import numba.core.errors
 
     numba.core.errors.NumbaExperimentalFeatureWarning = Warning
 except ImportError:
-    jit = overload = lambda *a, **kw: (lambda x: x)
+    jit = overload = lambda *a, **kw: lambda x: x
 else:
     abs = np.fabs
 
+from ._util import get_int_env_var
 from ._vendored_lstsq import leastsq
 from ._vendored_root import root_df_sane
-from ._util import get_int_env_var
-
 
 ###############################################
 ################# Constants ###################
@@ -1070,15 +1067,17 @@ def fitfun(
         if np.any(dout):
             # update initial guess each round
             d0 = root_df_sane(
-                lambda d: force_curve(
-                    red_curve,
-                    z - d,
-                    k,
-                    *fc_parms,
-                    split=split,
-                )
-                / k
-                - d,
+                lambda d: (
+                    force_curve(
+                        red_curve,
+                        z - d,
+                        k,
+                        *fc_parms,
+                        split=split,
+                    )
+                    / k
+                    - d
+                ),
                 x0=d0,
                 ftol=1e-3,
                 callback=lambda *a: cancel_poller(),
@@ -1157,16 +1156,16 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
     )
     # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
     zeroindforce = force_curve(
-            red_retract,
-            params["delta_shift"].squeeze(),
-            k,
-            params["radius"].squeeze(),
-            params["tau"].squeeze(),
-            params["M"].squeeze(),
-            params["fc"].squeeze(),
-            params["delta_shift"].squeeze(),
-            params["force_shift"].squeeze(),
-            params["lj_scale"].squeeze(),
+        red_retract,
+        params["delta_shift"].squeeze(),
+        k,
+        params["radius"].squeeze(),
+        params["tau"].squeeze(),
+        params["M"].squeeze(),
+        params["fc"].squeeze(),
+        params["delta_shift"].squeeze(),
+        params["force_shift"].squeeze(),
+        params["lj_scale"].squeeze(),
     ).item()
 
     maxforce -= params["force_shift"]
@@ -1182,7 +1181,8 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
     indentation = maxdelta - mindelta
     z_true_surface = params["delta_shift"] + zeroindforce / k
     return tuple(
-        x.item() for x in (deflection, indentation, z_true_surface, mindelta, contact_radius)
+        x.item()
+        for x in (deflection, indentation, z_true_surface, mindelta, contact_radius)
     )
 
 

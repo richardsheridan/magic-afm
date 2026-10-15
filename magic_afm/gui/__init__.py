@@ -21,7 +21,7 @@ if __debug__:
     assert parent_process() is None, "importing gui code in a worker"
 
 # FROZEN = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
-from importlib.metadata import version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError, version
 
 try:
     __version__ = version("magic-afm")
