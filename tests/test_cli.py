@@ -28,8 +28,8 @@
 # ARDF (both0001: two volumes, so --trace matters), ARH5 (rtrace0001.h5),
 # Nanoscope QNM (onekhz.000.pfc), Nanoscope force volume (A1...spm) and NID
 # (the example .nid, also the subject of T2). Excluded, per the plan: DOE4
-# (mis-decoded), the stopped hard/mellow scans (uninitialised memory until
-# D4) and the non-square twoxln/twoxpt (the CLI crashes until B2a).
+# (mis-decoded), the stopped hard/mellow scans (hard0001 and hard0003 are covered by
+# test_stopped_scans.py since D4) and the non-square twoxln/twoxpt (the CLI crashes until B2a).
 #
 # Every in-process run passes --disable-progress (tqdm only) and an absolute
 # --output-path under pytest's tmp dir; nothing else is restricted. The one

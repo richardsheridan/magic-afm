@@ -165,9 +165,9 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
         v = evolve(v, sync_dist=sync_dist)
 
     imshape = v.shape
-    property_map = np.empty(imshape, dtype=PROPERTY_DTYPE)
-    parms_map = np.empty(imshape, dtype=PARMS_DTYPE)
-    parms_err_map = np.empty(imshape, dtype=PARMS_DTYPE)
+    property_map = np.full(imshape, np.nan, dtype=PROPERTY_DTYPE)
+    parms_map = np.full(imshape, np.nan, dtype=PARMS_DTYPE)
+    parms_err_map = np.full(imshape, np.nan, dtype=PARMS_DTYPE)
     concurrent_submissions = set()
     nan_counter = count(1)
 

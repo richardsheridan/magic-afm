@@ -335,6 +335,9 @@ class GUIFVFile:
     def iter_curves(self, trace=None, sync_dist=None):
         yield from self._get_volume(trace, sync_dist).iter_curves()
 
+    def count_curves(self, trace=None, sync_dist=None) -> int:
+        return sum(1 for _ in self._get_volume(trace, sync_dist).iter_indices())
+
 
 @frozen
 class DemoStub:
@@ -352,6 +355,7 @@ class DemoForceVolumeFile(GUIFVFile):
         default=-15 * (np.cos(np.linspace(0, np.pi * 2, 1000, endpoint=False)) + 0.5)
     )
     fvfile: DemoStub = field(default=DemoStub())
+    shape = (64, 64)  # unannotated: a class constant, not an attrs field
 
     @property
     def image_names(self):
@@ -378,12 +382,15 @@ class DemoForceVolumeFile(GUIFVFile):
         if image_name in self._image_cache:
             image = self._image_cache[image_name]
         else:
-            image = np.zeros((64, 64), dtype=np.float32)
+            image = np.zeros(self.shape, dtype=np.float32)
         return image
 
     def iter_curves(self, trace=None, sync_dist=None):
-        for r, c in np.ndindex((64, 64)):
+        for r, c in np.ndindex(self.shape):
             yield (r, c), self.get_curve(r, c)
+
+    def count_curves(self, trace=None, sync_dist=None) -> int:
+        return math.prod(self.shape)
 
 
 class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
@@ -1628,7 +1635,9 @@ class ForceVolumeController:
     async def calc_prop_map_response(self, options: ForceCurveOptions):
         assert options.fit_mode
         img_shape = self.axesimage.get_size()
-        ncurves = img_shape[0] * img_shape[1]
+        ncurves = await trio.to_thread.run_sync(
+            self.opened_fvol.count_curves, options.trace, options.sync_dist
+        )
         chunksize = 4
 
         pause_event = trio.Event()
@@ -1667,9 +1676,13 @@ class ForceVolumeController:
                 progress_array = np.zeros(img_shape + (4,), dtype="f4")
                 half_red = np.array((1, 0, 0, 0.5), dtype="f4")
                 half_green = np.array((0, 1, 0, 0.5), dtype="f4")
-                property_map = np.empty(img_shape, dtype=calculation.PROPERTY_DTYPE)
-                parms_map = np.empty(img_shape, dtype=calculation.PARMS_DTYPE)
-                parms_err_map = np.empty(img_shape, dtype=calculation.PARMS_DTYPE)
+                property_map = np.full(
+                    img_shape, np.nan, dtype=calculation.PROPERTY_DTYPE
+                )
+                parms_map = np.full(img_shape, np.nan, dtype=calculation.PARMS_DTYPE)
+                parms_err_map = np.full(
+                    img_shape, np.nan, dtype=calculation.PARMS_DTYPE
+                )
 
                 def make_progress_image_draw_fn():
                     nonlocal progress_image, progress_array
