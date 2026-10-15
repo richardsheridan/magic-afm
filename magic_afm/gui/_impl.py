@@ -2834,6 +2834,11 @@ async def main_task(root):
         for _ in range(async_tools.cpu_bound_limiter.total_tokens):
             nursery.start_soon(tprs, bool)  # start workers while choosing data
         nursery.start_soon(trio.to_thread.run_sync, calculation.warmup_jit_main)
+        if os.environ.get("MAFM_SMOKE_EXIT"):
+            # frozen-build smoke test (Build workflow): one worker round trip, then
+            # quit as the menu does
+            await tprs(bool)
+            quit_callback()
         # needed if nursery never starts a long running child
         await trio.sleep_forever()
 

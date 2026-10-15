@@ -24,6 +24,26 @@ jobs:
       - name: Build with Pyinstaller
         run:  pixi run -e build pyinstaller -y magic_afm_${RUNNER_OS::3}.spec
         shell: bash
+      - name: Smoke test frozen GUI
+        # MAFM_SMOKE_EXIT makes the GUI do one worker round trip and quit.
+        # A crash opens a modal dialog, so the timeout turns a hang into a failure.
+        env:
+          MAFM_SMOKE_EXIT: "1"
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            timeout 300 dist/magic_afm/magic_afm_gui.exe
+          else
+            timeout 300 dist/magic_afm_gui.app/Contents/MacOS/magic_afm_gui
+          fi
+        shell: bash
+      - name: Smoke test frozen CLI
+        if: startsWith( runner.os, 'win')
+        run: timeout 120 dist/magic_afm/magic_afm_cli.exe --help
+        shell: bash
+      - name: Show crash dumps
+        if: failure()
+        run: cat "$HOME/Library/Logs/MagicAFM/"*.dump "$LOCALAPPDATA/MagicAFM/Logs/"*.dump 2>/dev/null || true
+        shell: bash
       - name: Tidy dist
         if: startsWith( runner.os, 'mac')
         # keep only the .app, in a dist/magic_afm folder like on Windows
