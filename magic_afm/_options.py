@@ -23,7 +23,6 @@ Values are stored in the units of the fit, so e.g. radius is in nm and M is in G
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-
 import enum
 import json
 

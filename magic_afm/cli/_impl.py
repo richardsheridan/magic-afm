@@ -16,11 +16,10 @@
 
 import pathlib
 import sys
-
-from multiprocessing import get_context
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, wait
 from functools import partial
-from itertools import islice, count
+from itertools import count, islice
+from multiprocessing import get_context
 
 import click
 import cloup
@@ -29,26 +28,24 @@ import numpy as np
 from attr import evolve
 from tqdm import tqdm
 
-
-from magic_afm.data_readers import SUFFIX_FVFILE_MAP, FVFile
-from magic_afm.calculation import (
-    FitMode,
-    FitFix,
-    process_force_curve,
-    calc_properties_imap,
-    PROPERTY_UNITS_DICT,
-    PROPERTY_DTYPE,
-    PARMS_UNITS_DICT,
-    PARMS_DTYPE,
-)
 from magic_afm._options import (
     OPTIONS_JSON_SCHEMA,
     TraceChoice,
     dump_options,
     load_options,
 )
-from magic_afm._util import cli_init, MAX_WORKERS
-
+from magic_afm._util import MAX_WORKERS, cli_init
+from magic_afm.calculation import (
+    PARMS_DTYPE,
+    PARMS_UNITS_DICT,
+    PROPERTY_DTYPE,
+    PROPERTY_UNITS_DICT,
+    FitFix,
+    FitMode,
+    calc_properties_imap,
+    process_force_curve,
+)
+from magic_afm.data_readers import SUFFIX_FVFILE_MAP, FVFile
 
 # must take two positional arguments, fname and array
 EXPORTER_MAP = {

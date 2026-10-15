@@ -1,0 +1,23 @@
+# Hooks run the tools from the pixi `lint` environment, so the versions match
+# `pixi run fmt` / `pixi run lint`. Install with `pixi run -e lint prek install`.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-isort
+        name: ruff import sorting
+        entry: pixi run --frozen -e lint ruff check --select I --fix
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: ruff-format
+        name: ruff format
+        entry: pixi run --frozen -e lint ruff format
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: mdformat
+        name: mdformat
+        entry: pixi run --frozen -e lint mdformat
+        language: system
+        types: [markdown]
+        require_serial: true
