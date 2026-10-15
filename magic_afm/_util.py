@@ -3,19 +3,9 @@ import sys
 
 import psutil
 
+from ._env import max_workers
 
-def get_int_env_var(var_name):
-    """
-    Retrieves an integer environment variable, returning None on missing values and conversion errors.
-    """
-
-    try:
-        return int(os.environ[var_name])
-    except (ValueError, KeyError):
-        return None
-
-
-MAX_WORKERS = get_int_env_var("MAFM_MAX_CPUS") or psutil.cpu_count(logical=False) or 1
+MAX_WORKERS = max_workers()
 
 
 def nice_workers():

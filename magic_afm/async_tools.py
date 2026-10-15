@@ -1,7 +1,8 @@
 """MagicAFM Async Tools
 
 A collection of standalone tools created to serve the async needs of the GUI
-but that have no dependency on any other part of the package.
+with no dependencies beyond trio and the standard library (the worker count
+comes from the stdlib-only ``_env`` helper).
 
 It is meant to be easy to lift individual items out into other projects.
 """
@@ -28,7 +29,9 @@ from math import inf
 
 import trio
 
-from ._util import MAX_WORKERS
+from ._env import max_workers
+
+MAX_WORKERS = max_workers()
 
 TOOLTIP_CANCEL = None, None, None
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
