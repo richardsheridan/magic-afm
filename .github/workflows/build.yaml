@@ -10,7 +10,7 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest]
       fail-fast: true
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v3
         with:
@@ -26,19 +26,21 @@ jobs:
         shell: bash
       - name: Smoke test frozen GUI
         # MAFM_SMOKE_EXIT makes the GUI do one worker round trip and quit.
-        # A crash opens a modal dialog, so the timeout turns a hang into a failure.
+        # A crash opens a modal dialog, so timeout-minutes turns a hang into a failure.
+        timeout-minutes: 5
         env:
           MAFM_SMOKE_EXIT: "1"
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            timeout 300 dist/magic_afm/magic_afm_gui.exe
+            dist/magic_afm/magic_afm_gui.exe
           else
-            timeout 300 dist/magic_afm_gui.app/Contents/MacOS/magic_afm_gui
+            dist/magic_afm_gui.app/Contents/MacOS/magic_afm_gui
           fi
         shell: bash
       - name: Smoke test frozen CLI
         if: startsWith( runner.os, 'win')
-        run: timeout 120 dist/magic_afm/magic_afm_cli.exe --help
+        run: dist/magic_afm/magic_afm_cli.exe --help
+        timeout-minutes: 2
         shell: bash
       - name: Show crash dumps
         if: failure()
