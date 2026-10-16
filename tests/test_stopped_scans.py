@@ -31,6 +31,7 @@ import pytest
 import test_goldens as t2
 import trio
 import trio_parallel
+from click.testing import CliRunner
 from test_cli import (
     DEFAULT_MAPS,
     EXPORT_FIELDS,
@@ -114,7 +115,7 @@ def test_cli_maps_are_nan_exactly_at_curves_a_stopped_scan_never_acquired(
 
 
 class RecordingProgressBar(tqdm_std):
-    """The GUI's tqdm_tk without Tk: a plain tqdm writing to a string buffer."""
+    """The GUI's tqdm_tk without Tk (or the CLI's tqdm): a tqdm writing to a buffer."""
 
     instances: list["RecordingProgressBar"] = []
 
@@ -180,17 +181,44 @@ def test_gui_maps_are_nan_exactly_at_curves_a_stopped_scan_never_acquired(
     assert_nan_exactly_where_not_acquired(maps, acquired, want_maps)
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize("stem", STOPPED_SCANS)
-def test_gui_progress_total_is_the_number_of_curves_the_reader_yields(
-    real_data_file, monkeypatch, stem
-):
-    path = Path(real_data_file(STOPPED_SCANS[stem]))
+def shape_and_yielded_count(path):
+    """The default volume's grid shape and how many curves its reader yields."""
     fvfile_cls, data = t2.open_fvfile(path)
     with data:
         volume = fvfile_cls.parse(data).volumes[0]
         shape = volume.shape
         yielded = sum(1 for _ in volume.iter_indices())
     assert yielded == shape[1] * (shape[0] - MISSING_ROWS)
+    return shape, yielded
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("stem", STOPPED_SCANS)
+def test_gui_progress_total_is_the_number_of_curves_the_reader_yields(
+    real_data_file, monkeypatch, stem
+):
+    path = Path(real_data_file(STOPPED_SCANS[stem]))
+    shape, yielded = shape_and_yielded_count(path)
     pbar, _ = run_gui_fit(path, monkeypatch, shape)
+    assert pbar.total == pbar.n == yielded
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("stem", STOPPED_SCANS)
+def test_cli_progress_total_is_the_number_of_curves_the_reader_yields(
+    real_data_file, monkeypatch, tmp_path, stem
+):
+    from magic_afm.cli import _impl as cli
+
+    path = Path(real_data_file(STOPPED_SCANS[stem]))
+    _, yielded = shape_and_yielded_count(path)
+    monkeypatch.setattr(cli, "tqdm", RecordingProgressBar)
+    monkeypatch.setattr(RecordingProgressBar, "instances", [])
+    # progress stays enabled: a disabled tqdm never counts
+    argv = ["--output-path", str(tmp_path / "out"), "--stop-on-error", str(path)]
+    result = CliRunner().invoke(cli.main, argv, catch_exceptions=False)
+    assert result.exit_code == 0
+    (pbar,) = (
+        bar for bar in RecordingProgressBar.instances if bar.desc.startswith("Fitting")
+    )
     assert pbar.total == pbar.n == yielded
