@@ -141,21 +141,33 @@ TOLERANCES: dict[tuple[str, str], tuple[float, float]] = {
     ("parms_err", "force_shift"): (CROSS_OS_RTOL, 0.0),
     ("parms_err", "lj_scale"): (CROSS_OS_RTOL, 0.0),
 }
-# The stiff curve fitted in BOTH is ill-conditioned: across OSes its fields
-# need rtol up to 4.9e-3, and 2.7e-2 for parms_err.lj_scale and 2.1e-2 for
-# SensIndMod_k. It keeps the atols above with rtol 2e-2 (about 4x), and 1e-1
-# for those two. The fitted M and the properties still need only 2e-5 here.
-STIFF_BOTH_RTOL = 2e-2
+# The stiff curve fitted in BOTH is ill-conditioned: across OSes its fitted M and the
+# properties that follow from it stay within the tolerances above (at most rel 1.9e-5,
+# in Indentation), but TrueHeight, SensIndMod_k, the other fitted parameters and all
+# the errors need far more. At the atols above, the rtol each of those needs is
+#   properties  TrueHeight 2.4e-3, SensIndMod_k 2.1e-2
+#   parms       fc 1.2e-3, delta_shift 4.4e-3, force_shift 1.6e-3, lj_scale 2.8e-3
+#   parms_err   M 1.9e-3, fc 4.9e-3, delta_shift 3.4e-3, force_shift 4.2e-3,
+#               lj_scale 2.7e-2
+# with Linux farthest from these osx-arm64 values (alike in all three envs; Windows
+# about 0.8x of that). Each gets rtol about 4x its need, rounded to 1, 2 or 5 in the
+# leading digit, and keeps its atol.
+STIFF_BOTH_RTOL = {
+    ("properties", "TrueHeight"): 1e-2,
+    ("properties", "SensIndMod_k"): 1e-1,
+    ("parms", "fc"): 5e-3,
+    ("parms", "delta_shift"): 2e-2,
+    ("parms", "force_shift"): 1e-2,
+    ("parms", "lj_scale"): 1e-2,
+    ("parms_err", "M"): 1e-2,
+    ("parms_err", "fc"): 2e-2,
+    ("parms_err", "delta_shift"): 2e-2,
+    ("parms_err", "force_shift"): 2e-2,
+    ("parms_err", "lj_scale"): 1e-1,
+}
 CASE_TOLERANCES: dict[tuple[str, str], dict[tuple[str, str], tuple[float, float]]] = {
-    ("stiff", "BOTH"): {
-        key: (
-            1e-1
-            if key in {("parms_err", "lj_scale"), ("properties", "SensIndMod_k")}
-            else STIFF_BOTH_RTOL,
-            atol,
-        )
-        for key, (_, atol) in TOLERANCES.items()
-    }
+    ("stiff", "BOTH"): TOLERANCES
+    | {key: (rtol, TOLERANCES[key][1]) for key, rtol in STIFF_BOTH_RTOL.items()},
 }
 # Curve samples: spread 0 in both. raw is float64 from numpy's RNG stream and
 # the model; resampled is soxr output (float64 for Demo, float32 for the nid).
