@@ -20,7 +20,7 @@ Two more modes help measure spread between environments and stacks:
     ... make_t2_goldens.py --compare A.json B.json
 
 --warmup-jit calls calculation.warmup_jit_worker() first, the state of GUI
-workers and CLI --jit, which the tests do not run. --compare prints, per
+workers and CLI --jit, which the tests fit in a subprocess. --compare prints, per
 stored field, the largest absolute and relative difference and any change in
 the NaN pattern. A and B may be shared or platform files.
 """

@@ -26,15 +26,19 @@
 # tests/goldens/README.md for the golden sets.
 #
 # The model runs unjitted here, as in CLI workers at the default (no --jit).
-# warmup_jit_worker() rebinds module globals for the rest of the session, so
-# it is never called under pytest; the generator measures that state apart.
+# warmup_jit_worker() rebinds module globals for the rest of the process, so the
+# jitted state of GUI workers and CLI --jit is fitted in a subprocess and held to
+# the same goldens and tolerances.
 
+import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
-from conftest import load_platform_goldens
+from conftest import REPO_ROOT, load_platform_goldens
 
 from magic_afm import calculation
 from magic_afm.calculation import PROPERTY_DTYPE, FitFix, FitMode
@@ -141,21 +145,33 @@ TOLERANCES: dict[tuple[str, str], tuple[float, float]] = {
     ("parms_err", "force_shift"): (CROSS_OS_RTOL, 0.0),
     ("parms_err", "lj_scale"): (CROSS_OS_RTOL, 0.0),
 }
-# The stiff curve fitted in BOTH is ill-conditioned: across OSes its fields
-# need rtol up to 4.9e-3, and 2.7e-2 for parms_err.lj_scale and 2.1e-2 for
-# SensIndMod_k. It keeps the atols above with rtol 2e-2 (about 4x), and 1e-1
-# for those two. The fitted M and the properties still need only 2e-5 here.
-STIFF_BOTH_RTOL = 2e-2
+# The stiff curve fitted in BOTH is ill-conditioned: across OSes its fitted M and the
+# properties that follow from it stay within the tolerances above (at most rel 1.9e-5,
+# in Indentation), but TrueHeight, SensIndMod_k, the other fitted parameters and all
+# the errors need far more. At the atols above, the rtol each of those needs is
+#   properties  TrueHeight 2.4e-3, SensIndMod_k 2.1e-2
+#   parms       fc 1.2e-3, delta_shift 4.4e-3, force_shift 1.6e-3, lj_scale 2.8e-3
+#   parms_err   M 1.9e-3, fc 4.9e-3, delta_shift 3.4e-3, force_shift 4.2e-3,
+#               lj_scale 2.7e-2
+# with Linux farthest from these osx-arm64 values (alike in all three envs; Windows
+# about 0.8x of that). Each gets rtol about 4x its need, rounded to 1, 2 or 5 in the
+# leading digit, and keeps its atol.
+STIFF_BOTH_RTOL = {
+    ("properties", "TrueHeight"): 1e-2,
+    ("properties", "SensIndMod_k"): 1e-1,
+    ("parms", "fc"): 5e-3,
+    ("parms", "delta_shift"): 2e-2,
+    ("parms", "force_shift"): 1e-2,
+    ("parms", "lj_scale"): 1e-2,
+    ("parms_err", "M"): 1e-2,
+    ("parms_err", "fc"): 2e-2,
+    ("parms_err", "delta_shift"): 2e-2,
+    ("parms_err", "force_shift"): 2e-2,
+    ("parms_err", "lj_scale"): 1e-1,
+}
 CASE_TOLERANCES: dict[tuple[str, str], dict[tuple[str, str], tuple[float, float]]] = {
-    ("stiff", "BOTH"): {
-        key: (
-            1e-1
-            if key in {("parms_err", "lj_scale"), ("properties", "SensIndMod_k")}
-            else STIFF_BOTH_RTOL,
-            atol,
-        )
-        for key, (_, atol) in TOLERANCES.items()
-    }
+    ("stiff", "BOTH"): TOLERANCES
+    | {key: (rtol, TOLERANCES[key][1]) for key, rtol in STIFF_BOTH_RTOL.items()},
 }
 # Curve samples: spread 0 in both. raw is float64 from numpy's RNG stream and
 # the model; resampled is soxr output (float64 for Demo, float32 for the nid).
@@ -318,6 +334,57 @@ def test_synthetic_fit_matches_golden(goldens, case, mode):
     tolerances = CASE_TOLERANCES.get((case, mode.name), TOLERANCES)
     actual = fit_synthetic(case, mode)
     assert_fields_match(actual, golden, f"{case} {mode.name}", tolerances)
+
+
+# Runs in a fresh interpreter, so the rebinding cannot reach the other tests: argv[1]
+# is this directory. The last line of stdout is the JSON of every synthetic fit.
+JITTED_FITS_SCRIPT = """
+import json
+import sys
+import types
+
+sys.path.insert(0, sys.argv[1])
+import test_goldens as t2
+
+from magic_afm import calculation
+
+calculation.warmup_jit_worker()
+fits = {
+    case: {mode.name: t2.fit_synthetic(case, mode) for mode in t2.MODES}
+    for case in t2.SYNTHETIC_CASES
+}
+jitted = not isinstance(calculation.red_retract, types.FunctionType)
+print(json.dumps({"jitted": jitted, "fits": fits}))
+"""
+
+
+@pytest.fixture(scope="module")
+def jitted_fits():
+    """Every synthetic fit, made after warmup_jit_worker() in a subprocess."""
+    if importlib.util.find_spec("numba") is None:
+        pytest.skip("numba is not installed, so warmup_jit_worker() jits nothing")
+    proc = subprocess.run(
+        [sys.executable, "-c", JITTED_FITS_SCRIPT, str(Path(__file__).parent)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=REPO_ROOT,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def test_warmup_jit_worker_jits_the_model(jitted_fits):
+    assert jitted_fits["jitted"]
+
+
+@pytest.mark.parametrize("mode", MODES, ids=lambda m: m.name)
+@pytest.mark.parametrize("case", SYNTHETIC_CASES)
+def test_jitted_synthetic_fit_matches_golden(goldens, jitted_fits, case, mode):
+    golden = goldens["synthetic"][case]["fits"][mode.name]
+    tolerances = CASE_TOLERANCES.get((case, mode.name), TOLERANCES)
+    actual = jitted_fits["fits"][case][mode.name]
+    assert_fields_match(actual, golden, f"jitted {case} {mode.name}", tolerances)
 
 
 @pytest.mark.filterwarnings("error::DeprecationWarning")
