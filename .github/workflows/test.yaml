@@ -96,22 +96,6 @@ jobs:
         with:
           environments: ${{ matrix.environment }}
           locked: true
-      # Real-file fits change with the runner's CPU model (EPYC 7763 vs 9V74/9V45),
-      # through OpenBLAS's per-CPU kernels and numba's host-tuned code. Pin both to
-      # one x86-64 target so a golden set holds on every runner of an OS.
-      - name: Pin CPU-specific numerics on x86-64
-        if: runner.arch == 'X64'
-        run: |
-          echo "OPENBLAS_CORETYPE=Haswell" >> "$GITHUB_ENV"
-          echo "NUMBA_CPU_NAME=haswell" >> "$GITHUB_ENV"
-          # empty, or numba adds the host's own features (AVX-512 on some runners)
-          echo "NUMBA_CPU_FEATURES=" >> "$GITHUB_ENV"
-          # numpy's Linux build also dispatches AVX-512 where the runner has it
-          # (Windows builds have no AVX-512 targets)
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            echo "NPY_DISABLE_CPU_FEATURES=X86_V4 AVX512_ICL AVX512_SPR" >> "$GITHUB_ENV"
-          fi
-        shell: bash
       # real-file fits can depend on the CPU model, not only the OS
       - name: Show CPU
         run: |
@@ -139,17 +123,21 @@ jobs:
       - run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}pixi run -e ${{ matrix.environment }} pytest -rfEs
         env:
           MAFM_GUI_TESTS: "1"
-      # when tests fail, or on a manual run, regenerate the goldens on this platform
-      # so every field's drift can be measured offline with --compare
+      # when tests fail, on a manual run, or when the head commit message has
+      # [regen-goldens], regenerate this platform's real-file goldens (the pixi test
+      # envs pin the CPU-specific numerics) so drift can be measured with --compare
       - name: Regenerate goldens
-        if: failure() || github.event_name == 'workflow_dispatch'
+        if: >-
+          failure() || github.event_name == 'workflow_dispatch'
+          || contains(github.event.head_commit.message, '[regen-goldens]')
         run: |
-          mkdir -p goldens
-          pixi run -e ${{ matrix.environment }} python tests/goldens/make_t2_goldens.py --out goldens/t2-${{ matrix.os }}-${{ matrix.environment }}.json
-          pixi run -e ${{ matrix.environment }} python tests/goldens/make_t3_goldens.py --out goldens/t3-${{ matrix.os }}-${{ matrix.environment }}.json
+          pixi run -e ${{ matrix.environment }} python tests/goldens/make_t2_goldens.py --out-dir goldens --platform-only
+          pixi run -e ${{ matrix.environment }} python tests/goldens/make_t3_goldens.py --out-dir goldens --platform-only
         shell: bash
       - name: Upload regenerated goldens
-        if: failure() || github.event_name == 'workflow_dispatch'
+        if: >-
+          failure() || github.event_name == 'workflow_dispatch'
+          || contains(github.event.head_commit.message, '[regen-goldens]')
         uses: actions/upload-artifact@v4
         with:
           name: goldens-${{ matrix.os }}-${{ matrix.environment }}-${{ github.run_attempt }}

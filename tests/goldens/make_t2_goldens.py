@@ -1,4 +1,4 @@
-"""Write tests/goldens/t2_goldens.json from the current code (plan item T2).
+"""Write the T2 goldens from the current code (plan item T2).
 
 Run from the repository root:
 
@@ -9,15 +9,20 @@ and give the reason in the commit. The builders and fit helpers are imported
 from tests/test_goldens.py, so the test and this script compute alike. The
 stack the values were captured on is recorded under "stack" in the JSON.
 
+The synthetic values are shared by every platform and go to
+<out-dir>/t2_goldens.json. Real-file (.nid) values depend on the platform and go
+to <out-dir>/<pixi platform>/t2_goldens.json. --out-dir defaults to tests/goldens.
+--platform-only writes the platform file alone and leaves the shared one as is.
+
 Two more modes help measure spread between environments and stacks:
 
-    ... make_t2_goldens.py --out OTHER.json [--warmup-jit]
+    ... make_t2_goldens.py --out-dir OTHER [--platform-only] [--warmup-jit]
     ... make_t2_goldens.py --compare A.json B.json
 
 --warmup-jit calls calculation.warmup_jit_worker() first, the state of GUI
 workers and CLI --jit, which the tests do not run. --compare prints, per
 stored field, the largest absolute and relative difference and any change in
-the NaN pattern.
+the NaN pattern. A and B may be shared or platform files.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -50,7 +55,7 @@ sys.path[:0] = [str(REPO_ROOT), str(REPO_ROOT / "tests")]
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import test_goldens as t2  # noqa: E402
-from conftest import resolve_real_data_file  # noqa: E402
+from conftest import GOLDENS_DIR, golden_platform, resolve_real_data_file  # noqa: E402
 
 from magic_afm import calculation  # noqa: E402
 
@@ -107,7 +112,7 @@ def stack():
     }
 
 
-def generate():
+def generate_shared():
     synthetic = {}
     for case in t2.SYNTHETIC_CASES:
         curve = t2.demo_curve(**t2.SYNTHETIC_CASES[case])
@@ -123,14 +128,15 @@ def generate():
             mode.name: fields_json(t2.fit_synthetic(case, mode)) for mode in t2.MODES
         }
         synthetic[case] = entry
+    return {"stack": stack(), "synthetic": synthetic}
 
-    out = {"stack": stack(), "synthetic": synthetic}
+
+def generate_platform():
     try:
         path = Path(resolve_real_data_file(t2.NID_RELPATH))
     except pytest.skip.Exception as e:
-        # CI has no example.data; write the synthetic part alone
         print("no nid section:", e.msg)
-        return out
+        return None
     nid = {"relpath": t2.NID_RELPATH}
     for mode in t2.MODES:
         fp, maps = t2.nid_results(path, mode)
@@ -138,8 +144,7 @@ def generate():
             "resampled": fingerprint_json(fp),
             "maps": fields_json(maps),
         }
-    out["nid"] = nid
-    return out
+    return {"stack": stack(), "nid": nid}
 
 
 def dumps(obj, indent=0):
@@ -193,7 +198,8 @@ def compare(a_path, b_path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.partition("\n")[0])
-    parser.add_argument("--out", type=Path, default=t2.GOLDENS_PATH)
+    parser.add_argument("--out-dir", type=Path, default=GOLDENS_DIR)
+    parser.add_argument("--platform-only", action="store_true")
     parser.add_argument("--warmup-jit", action="store_true")
     parser.add_argument("--compare", nargs=2, metavar=("A", "B"))
     args = parser.parse_args()
@@ -202,8 +208,17 @@ def main():
         return
     if args.warmup_jit:
         calculation.warmup_jit_worker()
-    args.out.write_text(dumps(generate()) + "\n")
-    print("wrote", args.out)
+    if not args.platform_only:
+        write(args.out_dir / "t2_goldens.json", generate_shared())
+    platform_part = generate_platform()
+    if platform_part is not None:
+        write(args.out_dir / golden_platform() / "t2_goldens.json", platform_part)
+
+
+def write(path, goldens):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dumps(goldens) + "\n")
+    print("wrote", path)
 
 
 if __name__ == "__main__":
