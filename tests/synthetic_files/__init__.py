@@ -47,9 +47,10 @@ class SyntheticVolume:
     ``zext`` and ``dext`` run from far from the surface to near it, ``zret`` and
     ``dret`` from near to far. Curves may differ in length: each array is
     ``(rows, cols, n)`` with n the longest curve, padded with NaN past that
-    curve's own ``ext_points`` or ``ret_points``. ``order`` lists the pixels in
-    the order the file stores their curves, or is None when the format does not
-    fix one.
+    curve's own ``ext_points`` or ``ret_points``. NaN within a curve marks a
+    point the file does not hold, so compare only where the expected value is
+    not NaN. ``order`` lists the pixels in the order the file stores their
+    curves, or is None when the format does not fix one.
     """
 
     name: str

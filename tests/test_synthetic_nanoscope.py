@@ -73,8 +73,9 @@ SPM_CASES = {
 # Left out of the scan size test: "tall-64", as for a capture.
 SPM_SCANSIZE_CASES = [case for case in SPM_CASES if case != "tall-64"]
 # Left out everywhere: t_step. The reader takes it from PFT Freq and force/line,
-# not from the Scan rate of the ramps. The builder's stale scan list grid and
-# invalid pixels are checked only as the builder writes them.
+# the curves per line; the builder from the Scan rate of the ramps, which no real
+# file settles either. The builder's stale scan list grid and invalid pixels are
+# checked only as the builder writes them.
 
 
 def assert_float32_close(actual, expected):

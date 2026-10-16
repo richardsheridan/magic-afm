@@ -65,18 +65,21 @@ minus the height at the nearest point of each curve, the first stored point of
 its extend half.
 Every key that gives the grid agrees: ``Samps/line`` and ``Lines`` of the ``Ciao
 scan list``, ``force/line``, ``Samples / line`` and ``FV Lines`` of the ``Ciao
-force list``, and the image's ``Samps/line`` and ``Number of lines``. A ramp,
-extend and retract, takes 1 / ``Scan rate`` of the Ciao force list, whose
-``Forward vel.`` in the real file is twice the ramp size over that time.
+force list``, and the image's ``Samps/line`` and ``Number of lines``.
 
 The layout, section order, keys and channel set follow a real force volume
 (software 0x09400202, a 32 x 32 map of 512 + 512 point curves). That file ends
 with 12288 bytes no header line describes; the builder leaves them out. No real
 file settles grids that are not square (as for a capture), the meaning of the
-image's -6.021 V Z offset (written 0 V here), or the order the curves were
-taken: ``FV Line Direction`` says ``Bidirection``, but neighbouring rows of the
-real image match better as stored than with every other row reversed, so the
-builder stores every line the same way.
+image's -6.021 V Z offset (written 0 V here), how long a ramp takes, or the
+order the curves were taken. The builder's time step takes a ramp, extend and
+retract, as 1 / ``Scan rate`` of the Ciao force list (the real file's ``Forward
+vel.`` is twice the ramp size times that rate, so it says no more), while the
+ramp script lines of the real file, ``Segment Samples`` 1041, 2083 and 1041 at
+a ``Sample Period`` of 12 us, make a ramp about 50 ms, not 1 s. ``FV Line
+Direction`` says ``Bidirection``, but neighbouring rows of the real image match
+better as stored than with every other row reversed, so the builder stores every
+line the same way.
 
 Two arguments write what the real files hold and today's reader gets wrong, for
 tests of a fix: ``scan_list_grid`` writes a Ciao scan list grid unlike the rest,
