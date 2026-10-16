@@ -157,13 +157,12 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
     # per file defaults overridden here
     k = fvfile.k if co["k"] is None else co["k"]
     defl_sens = fvfile.defl_sens if co["defl_sens"] is None else co["defl_sens"]
-    sync_dist = co["sync_dist"]
-    if sync_dist is None:
-        sync_dist = getattr(fvfile, "sync_dist", None)
+    file_sync_dist = getattr(fvfile, "sync_dist", None)
+    sync_dist = file_sync_dist if co["sync_dist"] is None else co["sync_dist"]
     trace = co["trace"] is None or co["trace"]
 
     v = fvfile.volumes[not trace]
-    if sync_dist != getattr(fvfile, "sync_dist", None):
+    if sync_dist != file_sync_dist:
         v = evolve(v, sync_dist=sync_dist)
 
     imshape = v.shape
