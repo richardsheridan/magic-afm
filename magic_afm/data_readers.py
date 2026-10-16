@@ -319,8 +319,8 @@ class ARH5ForceMapVolume:
         im_r, im_c, num_segments = self.segments.shape
         self.shape = im_r, im_c
 
-        # Generally segments are [Ext, Dwell, Ret, Away] or [Ext, Ret, Away]
-        # for magic, we don't dwell. new converter ensures this
+        # Generally segments are [Ext, Dwell, Ret, Away] or [Ext, Ret, Away] for magic,
+        # we don't dwell. new converter ensures this
         if num_segments != 3:
             raise FileFormatError(
                 f"force map has {num_segments} segments per curve, expected 3"
@@ -2248,8 +2248,9 @@ class NIDFile:
         images = {image.name: image}
 
         # datasets on the map grid whose channel is a NameZ<n> placeholder hold
-        # per-curve analysis results in column 0, later columns hold the live chart's running min/max
-        # except Slope frames, which hold a fit window, slope and intercept
+        # per-curve analysis results in column 0, later columns hold the live chart's
+        # running min/max except Slope frames, which hold a fit window, slope and
+        # intercept
         n_map = volume.shape[0] * volume.shape[1]
         for d in datasets.values():
             if (

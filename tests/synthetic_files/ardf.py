@@ -29,19 +29,19 @@ Then each volume, one per captured direction: its table, with a ``NEXT`` entry p
 at the next volume if there is one and an ``NSET`` entry giving how many curves it
 holds; an empty text table; a ``VDEF`` with points per line, lines, the steps along each
 axis and in time, their units and the segment names "Ext;Ret;"; one ``VCHN`` per channel
-(``Raw``, ``Defl``, ``Drive``, in m unless the builder is told otherwise); an ``XDEF`` naming the experiment's extra values;
-a ``VTOC`` with one slot per line, filled in the order the lines were taken, each
-``VOFF`` entry giving the line's first curve; and an ``MLOV``. The curves follow, in the
-order they were taken. Each is a ``VSET`` (its index within its volume, line, point, a
-type, the offset of the previous curve of the same volume and the offset just past this
-curve's data), a ``VNAM`` "LineNNNNPointNNNN" and one ``VDAT`` per channel of float32 in its unit,
-the extend half then the retract half in time order, after the indices of where each
-segment starts and of the last point. The trace runs along a line from point 0, the
-retrace back from the last point; with both kept, each line holds its trace then its
-retrace, of types 10 and 11, while a lone direction has type 5. ``ScanDown: 1`` in the
-note puts line 0 first, ``ScanDown: 0`` the last line. After the curves come the
-thumbnails, 8-bit renderings of the images 128 pixels along the longer side of the scan,
-and the texts at the end.
+(``Raw``, ``Defl``, ``Drive``, in m unless the builder is told otherwise); an ``XDEF``
+naming the experiment's extra values; a ``VTOC`` with one slot per line, filled in the
+order the lines were taken, each ``VOFF`` entry giving the line's first curve; and an
+``MLOV``. The curves follow, in the order they were taken. Each is a ``VSET`` (its index
+within its volume, line, point, a type, the offset of the previous curve of the same
+volume and the offset just past this curve's data), a ``VNAM`` "LineNNNNPointNNNN" and
+one ``VDAT`` per channel of float32 in its unit, the extend half then the retract half
+in time order, after the indices of where each segment starts and of the last point. The
+trace runs along a line from point 0, the retrace back from the last point; with both
+kept, each line holds its trace then its retrace, of types 10 and 11, while a lone
+direction has type 5. ``ScanDown: 1`` in the note puts line 0 first, ``ScanDown: 0`` the
+last line. After the curves come the thumbnails, 8-bit renderings of the images 128
+pixels along the longer side of the scan, and the texts at the end.
 
 A scan stopped part way holds only the lines it reached: the volume's ``NSET`` counts
 those curves, the ``VTOC`` slots past them are zeros, and each ``IBOX`` has zeros where
@@ -252,15 +252,14 @@ def build_ardf(
 ) -> SyntheticFile:
     """Write a fast force map ARDF file and say what it holds.
 
-    ``shape`` is (lines, points per line): rows are the slow axis, columns the
-    fast one. ``points`` per half curve, so each curve holds twice as many;
-    ``capture`` is "trace", "retrace" or "both". ``scan_down`` is the note's
-    ScanDown: True takes line 0 first, False the last line first. With
-    ``lines_taken`` the scan stops after that many lines, a stopped scan. ``k``
-    in N/m, ``invols`` in nm/V, ``scan_size`` in nm along the fast then the slow
-    axis, ``rate`` the curves per second. The volumes are named after the
-    direction they hold. ``channel_units`` maps a channel name to the unit its
-    ``VCHN`` declares and its curves are stored in, "m" or "nm", by default m.
+    ``shape`` is (lines, points per line): rows are the slow axis, columns the fast one.
+    ``points`` per half curve, so each curve holds twice as many; ``capture`` is
+    "trace", "retrace" or "both". ``scan_down`` is the note's ScanDown: True takes line
+    0 first, False the last line first. With ``lines_taken`` the scan stops after that
+    many lines, a stopped scan. ``k`` in N/m, ``invols`` in nm/V, ``scan_size`` in nm
+    along the fast then the slow axis, ``rate`` the curves per second. The volumes are
+    named after the direction they hold. ``channel_units`` maps a channel name to the
+    unit its ``VCHN`` declares and its curves are stored in, "m" or "nm", by default m.
     """
     lines, cols = shape
     if lines < 2 or cols < 2:
