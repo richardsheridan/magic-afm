@@ -91,7 +91,7 @@ def load_platform_goldens(filename: str) -> dict:
     if plat.startswith("win-") and os.environ.get("PIXI_ENVIRONMENT_NAME") == "test":
         pytest.skip(
             "real-file values in the Windows test env depend on the CPU model"
-            " even with the pins (RELEASE_PLAN.md, M0 findings)"
+            " even with the pins in pyproject.toml (EPYC 9V45 differs from 7763)"
         )
     path = GOLDENS_DIR / plat / filename
     if not path.is_file():
