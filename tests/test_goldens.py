@@ -17,8 +17,8 @@
 
 # The values live in tests/goldens/t2_goldens.json (synthetic) and
 # tests/goldens/<pixi platform>/t2_goldens.json (the .nid), written by
-# tests/goldens/make_t2_goldens.py, which imports the builders below so the
-# two cannot diverge. Regenerate on purpose only, and say why in the commit.
+# tests/goldens/make_t2_goldens.py, which imports the builders below so the two cannot
+# diverge. Regenerate on purpose only, and say why in the commit.
 #
 # Values are stored at the calculation layer, in fit units (nm, nN, GPa), as the CLI
 # holds them in its property and parameter maps before export: no export units factor
@@ -26,9 +26,9 @@
 # tests/goldens/README.md for the golden sets.
 #
 # The model runs unjitted here, as in CLI workers at the default (no --jit).
-# warmup_jit_worker() rebinds module globals for the rest of the process, so the
-# jitted state of GUI workers and CLI --jit is fitted in a subprocess and held to
-# the same goldens and tolerances.
+# warmup_jit_worker() rebinds module globals for the rest of the process, so the jitted
+# state of GUI workers and CLI --jit is fitted in a subprocess and held to the same
+# goldens and tolerances.
 
 import importlib.util
 import json
@@ -48,8 +48,8 @@ GOLDENS_PATH = Path(__file__).resolve().parent / "goldens" / "t2_goldens.json"
 NID_RELPATH = "test_cases/20251216_141819_PVDF2_Film_U_00002.nid"
 MODES = (FitMode.EXTEND, FitMode.RETRACT, FitMode.BOTH)
 
-# Fit options at the CLI defaults (magic_afm/cli/_impl.py, main). The GUI
-# defaults are the same, except M, which is unused while RADIUS is fixed.
+# Fit options at the CLI defaults (magic_afm/cli/_impl.py, main). The GUI defaults are
+# the same, except M, which is unused while RADIUS is fixed.
 DEFAULT_OPTIONS = dict(
     fit_fix=FitFix.DEFAULTS,
     radius=20.0,
@@ -63,24 +63,23 @@ DEFAULT_OPTIONS = dict(
     k_sens=True,
 )
 
-# The maps the CLI exports at DEFAULT_OPTIONS: every property, and the
-# parameters (and their errors) that FitFix.DEFAULTS leaves free.
+# The maps the CLI exports at DEFAULT_OPTIONS: every property, and the parameters (and
+# their errors) that FitFix.DEFAULTS leaves free.
 FIELDS = {
     "properties": PROPERTY_DTYPE.names,
     "parms": ("M", "fc", "delta_shift", "force_shift", "lj_scale"),
     "parms_err": ("M", "fc", "delta_shift", "force_shift", "lj_scale"),
 }
 
-# Demo curves as DemoStub and DemoForceVolumeFile build them in
-# magic_afm/gui/_impl.py, with the force_curve parameters made variable.
+# Demo curves as DemoStub and DemoForceVolumeFile build them in magic_afm/gui/_impl.py,
+# with the force_curve parameters made variable.
 DEMO_K = 10.0
 DEMO_DELTA = -15 * (np.cos(np.linspace(0, np.pi * 2, 1000, endpoint=False)) + 0.5)
 DEMO_PARMS = dict(radius=20, tau=0, M=0.1, fc=2, delta_shift=0, force_shift=0, lj=1)
 
-# The demo_* cases are the GUI Demo itself at three of its pixels. The rest
-# move the model: stiff gives an indentation ratio above 1 (the others are
-# below), soft a ratio near 0.02, and dmt is generated at tau = 1 but fitted
-# with tau fixed at the default 0.
+# The demo_* cases are the GUI Demo itself at three of its pixels. The rest move the
+# model: stiff gives an indentation ratio above 1 (the others are below), soft a ratio
+# near 0.02, and dmt is generated at tau = 1 but fitted with tau fixed at the default 0.
 SYNTHETIC_CASES = {
     "demo_r0_c0": dict(seed=(0, 0)),
     "demo_r5_c9": dict(seed=(5, 9)),
@@ -104,11 +103,10 @@ FINGERPRINT_STRIDE = {"raw": 100, "resampled": 32}
 # (Casting the nid curves to float64 does not shrink it: the fits then differ by up to
 # 1% in M between the envs, so their agreement here depends on the float32 input path.)
 #
-# The atols cover fields whose value can sit near 0: about 8 float32 ulps at
-# the field's natural scale (shifts and fc at the 10-20 nm or nN scale of the
-# curves, lj_scale on [-6, 6]). SensIndMod_k is (M' - M) / M / 1e-3 from
-# float32 M, so one ulp of M moves it by about 1.2e-4 at any magnitude; it
-# gets atol 1e-3.
+# The atols cover fields whose value can sit near 0: about 8 float32 ulps at the field's
+# natural scale (shifts and fc at the 10-20 nm or nN scale of the curves, lj_scale on
+# [-6, 6]). SensIndMod_k is (M' - M) / M / 1e-3 from float32 M, so one ulp of M moves it
+# by about 1.2e-4 at any magnitude; it gets atol 1e-3.
 #
 # Across operating systems the spread is far larger than numba against plain. The
 # synthetic values are shared by every platform, so these tolerances span OSes: goldens
@@ -147,8 +145,8 @@ TOLERANCES: dict[tuple[str, str], tuple[float, float]] = {
 }
 # The stiff curve fitted in BOTH is ill-conditioned: across OSes its fitted M and the
 # properties that follow from it stay within the tolerances above (at most rel 1.9e-5,
-# in Indentation), but TrueHeight, SensIndMod_k, the other fitted parameters and all
-# the errors need far more. At the atols above, the rtol each of those needs is
+# in Indentation), but TrueHeight, SensIndMod_k, the other fitted parameters and all the
+# errors need far more. At the atols above, the rtol each of those needs is
 #   properties  TrueHeight 2.4e-3, SensIndMod_k 2.1e-2
 #   parms       fc 1.2e-3, delta_shift 4.4e-3, force_shift 1.6e-3, lj_scale 2.8e-3
 #   parms_err   M 1.9e-3, fc 4.9e-3, delta_shift 3.4e-3, force_shift 4.2e-3,
@@ -173,8 +171,8 @@ CASE_TOLERANCES: dict[tuple[str, str], dict[tuple[str, str], tuple[float, float]
     ("stiff", "BOTH"): TOLERANCES
     | {key: (rtol, TOLERANCES[key][1]) for key, rtol in STIFF_BOTH_RTOL.items()},
 }
-# Curve samples: spread 0 in both. raw is float64 from numpy's RNG stream and
-# the model; resampled is soxr output (float64 for Demo, float32 for the nid).
+# Curve samples: spread 0 in both. raw is float64 from numpy's RNG stream and the model;
+# resampled is soxr output (float64 for Demo, float32 for the nid).
 FINGERPRINT_TOLERANCES = {"raw": (1e-12, 1e-12), "resampled": (1e-6, 1e-6)}
 
 
@@ -336,8 +334,8 @@ def test_synthetic_fit_matches_golden(goldens, case, mode):
     assert_fields_match(actual, golden, f"{case} {mode.name}", tolerances)
 
 
-# Runs in a fresh interpreter, so the rebinding cannot reach the other tests: argv[1]
-# is this directory. The last line of stdout is the JSON of every synthetic fit.
+# Runs in a fresh interpreter, so the rebinding cannot reach the other tests: argv[1] is
+# this directory. The last line of stdout is the JSON of every synthetic fit.
 JITTED_FITS_SCRIPT = """
 import json
 import sys

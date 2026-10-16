@@ -1,55 +1,52 @@
 """Asylum Research ARDF files, the fast force maps the Asylum software saves.
 
-An ARDF file is a run of little-endian sections, each opening with a 16 byte
-header: a CRC32, the section's size in bytes, a four letter name and flags. The
-CRC (zlib's) covers the rest of the section from the size field on. A table
-(``FTOC``, ``TTOC``, ``IMAG``, ``VOLM``, ``VTOC`` and the image's ``IBOX``) has
-a 32 byte header whose size field counts only that header and whose CRC covers
-only it; after the name come the table's full size, its number of slots and
-their stride, and then the slots, each an entry section with a CRC of its own or
-zeros when unused. Tables keep spare slots: the file table 32, the file text
-table 16, an image or volume table 4 and a text table 4. Table headers carry
-flags 0x10000, those of ``IMAG`` and ``VOLM`` 0x30000, every other section 0.
+An ARDF file is a run of little-endian sections, each opening with a 16 byte header: a
+CRC32, the section's size in bytes, a four letter name and flags. The CRC (zlib's)
+covers the rest of the section from the size field on. A table (``FTOC``, ``TTOC``,
+``IMAG``, ``VOLM``, ``VTOC`` and the image's ``IBOX``) has a 32 byte header whose size
+field counts only that header and whose CRC covers only it; after the name come the
+table's full size, its number of slots and their stride, and then the slots, each an
+entry section with a CRC of its own or zeros when unused. Tables keep spare slots: the
+file table 32, the file text table 16, an image or volume table 4 and a text table 4.
+Table headers carry flags 0x10000, those of ``IMAG`` and ``VOLM`` 0x30000, every other
+section 0.
 
-The file holds, in this order: the ``ARDF`` header; the file table, with one
-entry per image and per volume pointing at its ``IMAG`` or ``VOLM``; a text
-table and the note it points at, ``Key: value`` lines (some without the space)
-ending in CR, in windows-1252. A ``TEXT`` section holds its index in its text
-table, the length of the text and the text, then at least one zero byte up to a
-multiple of 8 bytes. Then each image: its table, whose ``NEXT`` entry points at
-the next image or the first volume and whose ``THMB`` entry points at its
-thumbnail; a text table; an ``IDEF`` with points per line, lines, the steps
-between pixels in m along the fast and the slow axis, their units, the image's
-name and its units; the ``IBOX`` table with one ``IDAT`` per line of float32
-values, line 0 first; and a ``GAMI``. The first image alone has three texts, its
-own note just after its ``GAMI`` and two more at the end of the file; every
-other image has one, at the end, whose index is 1 although it fills the table's
-first slot. Every image says its units are m, whatever it holds: the maps are in
-m, N and Pa.
+The file holds, in this order: the ``ARDF`` header; the file table, with one entry per
+image and per volume pointing at its ``IMAG`` or ``VOLM``; a text table and the note it
+points at, ``Key: value`` lines (some without the space) ending in CR, in windows-1252.
+A ``TEXT`` section holds its index in its text table, the length of the text and the
+text, then at least one zero byte up to a multiple of 8 bytes. Then each image: its
+table, whose ``NEXT`` entry points at the next image or the first volume and whose
+``THMB`` entry points at its thumbnail; a text table; an ``IDEF`` with points per line,
+lines, the steps between pixels in m along the fast and the slow axis, their units, the
+image's name and its units; the ``IBOX`` table with one ``IDAT`` per line of float32
+values, line 0 first; and a ``GAMI``. The first image alone has three texts, its own
+note just after its ``GAMI`` and two more at the end of the file; every other image has
+one, at the end, whose index is 1 although it fills the table's first slot. Every image
+says its units are m, whatever it holds: the maps are in m, N and Pa.
 
-Then each volume, one per captured direction: its table, with a ``NEXT`` entry
-pointing at the next volume if there is one and an ``NSET`` entry giving how
-many curves it holds; an empty text table; a ``VDEF`` with points per line,
-lines, the steps along each axis and in time, their units and the segment names
-"Ext;Ret;"; one ``VCHN`` per channel (``Raw``, ``Defl``, ``Drive``, in m); an
-``XDEF`` naming the experiment's extra values; a ``VTOC`` with one slot per
-line, filled in the order the lines were taken, each ``VOFF`` entry giving the
-line's first curve; and an ``MLOV``. The curves follow, in the order they were
-taken. Each is a ``VSET`` (its index within its volume, line, point, a type,
-the offset of the previous curve of the same volume and the offset just past
-this curve's data), a ``VNAM`` "LineNNNNPointNNNN" and one ``VDAT`` per channel
-of float32 m, the extend half then the retract half in time order, after the
-indices of where each segment starts and of the last point. The trace runs
-along a line from point 0, the retrace back from the last point; with both kept,
-each line holds its trace then its retrace, of types 10 and 11, while a lone
-direction has type 5. ``ScanDown: 1`` in the note puts line 0 first, ``ScanDown:
-0`` the last line. After the curves come the thumbnails, 8-bit renderings of the
-images 128 pixels along the longer side of the scan, and the texts at the end.
+Then each volume, one per captured direction: its table, with a ``NEXT`` entry pointing
+at the next volume if there is one and an ``NSET`` entry giving how many curves it
+holds; an empty text table; a ``VDEF`` with points per line, lines, the steps along each
+axis and in time, their units and the segment names "Ext;Ret;"; one ``VCHN`` per channel
+(``Raw``, ``Defl``, ``Drive``, in m); an ``XDEF`` naming the experiment's extra values;
+a ``VTOC`` with one slot per line, filled in the order the lines were taken, each
+``VOFF`` entry giving the line's first curve; and an ``MLOV``. The curves follow, in the
+order they were taken. Each is a ``VSET`` (its index within its volume, line, point, a
+type, the offset of the previous curve of the same volume and the offset just past this
+curve's data), a ``VNAM`` "LineNNNNPointNNNN" and one ``VDAT`` per channel of float32 m,
+the extend half then the retract half in time order, after the indices of where each
+segment starts and of the last point. The trace runs along a line from point 0, the
+retrace back from the last point; with both kept, each line holds its trace then its
+retrace, of types 10 and 11, while a lone direction has type 5. ``ScanDown: 1`` in the
+note puts line 0 first, ``ScanDown: 0`` the last line. After the curves come the
+thumbnails, 8-bit renderings of the images 128 pixels along the longer side of the scan,
+and the texts at the end.
 
-A scan stopped part way holds only the lines it reached: the volume's ``NSET``
-counts those curves, the ``VTOC`` slots past them are zeros, and each ``IBOX``
-has zeros where the missing lines' ``IDAT`` sections would be. The expected
-images are NaN on those lines, as the file holds no value there.
+A scan stopped part way holds only the lines it reached: the volume's ``NSET`` counts
+those curves, the ``VTOC`` slots past them are zeros, and each ``IBOX`` has zeros where
+the missing lines' ``IDAT`` sections would be. The expected images are NaN on those
+lines, as the file holds no value there.
 
 The layout, field values, flags, padding and note keys follow twelve real files
 from one instrument: 32 x 32 maps of 1000 + 1000 point curves with the trace,

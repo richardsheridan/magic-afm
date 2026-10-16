@@ -15,10 +15,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# The files store float32 metres and the reader multiplies by 1e9 in float32, so
-# curves match the stored values in nm to one float32 rounding (rtol 1e-7). Images
-# are returned as stored and match exactly. Metadata parsed from decimal text match
-# to double rounding.
+# The files store float32 metres and the reader multiplies by 1e9 in float32, so curves
+# match the stored values in nm to one float32 rounding (rtol 1e-7). Images are returned
+# as stored and match exactly. Metadata parsed from decimal text match to double
+# rounding.
 
 from pathlib import Path
 
@@ -52,14 +52,14 @@ FORCE_MAP_CASES = {
         {"ext_points": RAGGED_EXT, "ret_points": RAGGED_RET},
     ),
 }
-# Cases with every curve as long as the shortest of its halves. When the shortest
-# extend and retract halves differ, as in "ragged", get_all_curves splits each
-# curve in the middle rather than where the extend half ends, and t_step counts
-# only the shortest halves' points.
+# Cases with every curve as long as the shortest of its halves. When the shortest extend
+# and retract halves differ, as in "ragged", get_all_curves splits each curve in the
+# middle rather than where the extend half ends, and t_step counts only the shortest
+# halves' points.
 UNIFORM_FORCE_MAP_CASES = ["square-32", "wide-20"]
-# Left out: iter_curves on a force map yields each curve as one (2, points) array
-# of z then deflection, both halves joined, not as (z, d) pairs of halves, which
-# the CLI's process_force_curve rejects with a TypeError.
+# Left out: iter_curves on a force map yields each curve as one (2, points) array of z
+# then deflection, both halves joined, not as (z, d) pairs of halves, which the CLI's
+# process_force_curve rejects with a TypeError.
 
 
 def assert_float32_close(actual, expected):

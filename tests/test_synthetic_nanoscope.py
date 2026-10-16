@@ -17,11 +17,11 @@
 
 # The files store scaled integers and the reader decodes them in float32: integers
 # beyond 2**24 round on the way to float32, the float32 scale rounds again, and the
-# PeakForce z is a float32 cosine added to a float32 height. Curves and maps match
-# the builder's float64 decoding to float32 rounding: rtol 1e-6 with an atol of
-# 1e-6 of the array's largest magnitude. Points the file does not hold are NaN in
-# the expected curves and are not compared. Metadata parsed from decimal text
-# match to double rounding.
+# PeakForce z is a float32 cosine added to a float32 height. Curves and maps match the
+# builder's float64 decoding to float32 rounding: rtol 1e-6 with an atol of 1e-6 of the
+# array's largest magnitude. Points the file does not hold are NaN in the expected
+# curves and are not compared. Metadata parsed from decimal text match to double
+# rounding.
 
 from pathlib import Path
 
@@ -49,19 +49,19 @@ PFC_CASES = {
     "square-64-no-lag": ((4, 4), 64, {"sync_distance": 0.0}),
     "square-64": ((4, 4), 64, {}),
 }
-# Left out of the lag and curve tests: "square-64". The reader converts Sync
-# Distance to stored points as Sync Distance * PFT Freq / 2, which holds only for
-# 128 + 128 points at 512 samples per ms; with 64 + 64 it doubles the lag.
-# "square-64-no-lag" checks that curve length with no lag to convert.
+# Left out of the lag and curve tests: "square-64". The reader converts Sync Distance to
+# stored points as Sync Distance * PFT Freq / 2, which holds only for 128 + 128 points
+# at 512 samples per ms; with 64 + 64 it doubles the lag. "square-64-no-lag" checks that
+# curve length with no lag to convert.
 LAGGED_CASES = [case for case in PFC_CASES if case != "square-64"]
-# Left out of the scan size test: "tall-128". The reader takes Scan Size as the
-# longer side, the builder as the fast axis; no real file says which.
+# Left out of the scan size test: "tall-128". The reader takes Scan Size as the longer
+# side, the builder as the fast axis; no real file says which.
 SCANSIZE_CASES = [case for case in PFC_CASES if case != "tall-128"]
-# Left out everywhere: the deflection of pixel (0, 0). The reader cuts each curve
-# from its own record and the one before, and for (0, 0) uses those of (0, 1),
-# so get_curve(0, 0) returns the deflection of (0, 1).
-# Left out everywhere: t_step. The reader divides the drive period by force/line,
-# the curves per line, not by the points per curve.
+# Left out everywhere: the deflection of pixel (0, 0). The reader cuts each curve from
+# its own record and the one before, and for (0, 0) uses those of (0, 1), so
+# get_curve(0, 0) returns the deflection of (0, 1).
+# Left out everywhere: t_step. The reader divides the drive period by force/line, the
+# curves per line, not by the points per curve.
 
 # grid (rows, cols), points per half curve
 SPM_CASES = {
@@ -72,10 +72,10 @@ SPM_CASES = {
 }
 # Left out of the scan size test: "tall-64", as for a capture.
 SPM_SCANSIZE_CASES = [case for case in SPM_CASES if case != "tall-64"]
-# Left out everywhere: t_step. The reader takes it from PFT Freq and force/line,
-# the curves per line; the builder from the Scan rate of the ramps, which no real
-# file settles either. The builder's stale scan list grid and invalid pixels are
-# checked only as the builder writes them.
+# Left out everywhere: t_step. The reader takes it from PFT Freq and force/line, the
+# curves per line; the builder from the Scan rate of the ramps, which no real file
+# settles either. The builder's stale scan list grid and invalid pixels are checked only
+# as the builder writes them.
 
 
 def assert_float32_close(actual, expected):

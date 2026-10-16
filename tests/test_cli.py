@@ -22,8 +22,8 @@
 #
 # Options live in tests/goldens/t3_goldens.json and map values in
 # tests/goldens/<pixi platform>/t3_goldens.json, written by
-# tests/goldens/make_t3_goldens.py, which imports the runs and summaries
-# below. Regenerate on purpose only, and say why in the commit.
+# tests/goldens/make_t3_goldens.py, which imports the runs and summaries below.
+# Regenerate on purpose only, and say why in the commit.
 #
 # One complete file per reader path that works through the CLI today: ARDF (both0001:
 # two volumes, so --trace matters), ARH5 (rtrace0001.h5), Nanoscope QNM
@@ -34,8 +34,8 @@
 # shape is fixed).
 #
 # Every in-process run passes --disable-progress (tqdm only) and an absolute
-# --output-path under pytest's tmp dir; nothing else is restricted. The one
-# subprocess run keeps the progress bars.
+# --output-path under pytest's tmp dir; nothing else is restricted. The one subprocess
+# run keeps the progress bars.
 
 import json
 import os
@@ -97,8 +97,8 @@ CLI_RUNS: dict[str, tuple[str, tuple[str, ...]]] = {
     },
 }
 
-# The runs whose values are stored in the goldens file, as summaries for the
-# 32 x 32 maps and in full for the 10 x 10 nid.
+# The runs whose values are stored in the goldens file, as summaries for the 32 x 32
+# maps and in full for the 10 x 10 nid.
 SUMMARY_RUNS = ("ardf", "ardf_retrace", "arh5", "qnm", "ffv")
 FULL_RUNS = ("nid",)
 
@@ -108,10 +108,9 @@ FULL_RUNS = ("nid",)
 # - 12, 3).
 EXCLUDED_PIXELS = {"ffv": ((19, 3),)}
 
-# Files written at the default options, in the order the CLI writes them:
-# every property, then the fitted parameters FitFix.DEFAULTS leaves free,
-# then their errors. M is exported as IndentationModulus, fc as
-# AdhesionForce.
+# Files written at the default options, in the order the CLI writes them: every
+# property, then the fitted parameters FitFix.DEFAULTS leaves free, then their errors. M
+# is exported as IndentationModulus, fc as AdhesionForce.
 DEFAULT_MAPS = (
     "Deflection",
     "Indentation",
@@ -294,8 +293,8 @@ def written(run):
     return sorted(p.name for p in run.out.iterdir())
 
 
-# run: (file stem, fit mode part, trace part, extension) for every run that
-# fits and writes at the default options
+# run: (file stem, fit mode part, trace part, extension) for every run that fits and
+# writes at the default options
 NAMING = {
     "ardf": ("both0001", "Ret", "", "npy"),
     "ardf_trace": ("both0001", "Ret", "Trace", "npy"),

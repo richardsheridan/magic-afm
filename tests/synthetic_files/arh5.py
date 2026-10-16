@@ -1,23 +1,22 @@
 """Asylum Research ARH5 files, the HDF5 conversions of ARDF force maps.
 
-The file keeps the instrument's settings as one text attribute ``Note`` on the
-root group: ``Key: value`` lines (some without the space), a variable-length
-string with ASCII character set that holds UTF-8 bytes such as "°C". Lengths
-are in m, forces in N, the spring constant in N/m and ``InvOLS``, the deflection
-sensitivity, in m/V. Maps sit in the ``Image`` group as float32 (rows, cols)
-datasets named by quantity and scan direction, e.g. ``HeightRetrace``.
+The file keeps the instrument's settings as one text attribute ``Note`` on the root
+group: ``Key: value`` lines (some without the space), a variable-length string with
+ASCII character set that holds UTF-8 bytes such as "°C". Lengths are in m, forces in N,
+the spring constant in N/m and ``InvOLS``, the deflection sensitivity, in m/V. Maps sit
+in the ``Image`` group as float32 (rows, cols) datasets named by quantity and scan
+direction, e.g. ``HeightRetrace``.
 
-A fast force map (``FFM``) holds one group per captured direction, numbered
-from ``0`` in capture order, so a retrace-only capture keeps its retrace in
-``FFM/0``. Each group carries ``Channels`` and ``Segments`` attributes (arrays of
-the same kind of string) and one float32 (rows, cols, points) dataset per
-channel, each curve the extend half then the retract half in time order. The
-layout, attribute types, chunking and note keys follow a real conversion of a
-32 x 32 map of 2000 point curves captured on retrace only. Being square, it
-cannot say whether the first axis of the maps and curve datasets is the slow
-one, the lines, or the fast one; the builder puts the lines first, as the
-reader does. Which value of ``FastMapCapture`` means trace only is a guess (1;
-the real files say 2 for retrace only and 3 for both).
+A fast force map (``FFM``) holds one group per captured direction, numbered from ``0``
+in capture order, so a retrace-only capture keeps its retrace in ``FFM/0``. Each group
+carries ``Channels`` and ``Segments`` attributes (arrays of the same kind of string) and
+one float32 (rows, cols, points) dataset per channel, each curve the extend half then
+the retract half in time order. The layout, attribute types, chunking and note keys
+follow a real conversion of a 32 x 32 map of 2000 point curves captured on retrace only.
+Being square, it cannot say whether the first axis of the maps and curve datasets is the
+slow one, the lines, or the fast one; the builder puts the lines first, as the reader
+does. Which value of ``FastMapCapture`` means trace only is a guess (1; the real files
+say 2 for retrace only and 3 for both).
 
 A slow force map (``ForceMap/0``) has curves of different lengths, so each is
 its own (channels, points) dataset named ``"r:c"``, beside a ``Segments``

@@ -1,13 +1,13 @@
 """Small synthetic data files in each vendor format, for the reader tests.
 
-One module per format holds a ``build_*`` function. Each takes the directory to
-write into, the grid shape ``(rows, cols)``, the points per curve and the vendor
-metadata that matter (spring constant, deflection sensitivity, scan size, units),
-writes one file laid out the way the vendor software writes it, and returns a
-SyntheticFile: the path plus what a reader should get back, as physical
-values. Curves are in nm, as the readers return them. Values the vendor stores
-as scaled integers are given as the file decodes to them, in float64, so a
-reader that computes in float32 matches to float32 rounding, not bit for bit.
+One module per format holds a ``build_*`` function. Each takes the directory to write
+into, the grid shape ``(rows, cols)``, the points per curve and the vendor metadata that
+matter (spring constant, deflection sensitivity, scan size, units), writes one file laid
+out the way the vendor software writes it, and returns a SyntheticFile: the path plus
+what a reader should get back, as physical values. Curves are in nm, as the readers
+return them. Values the vendor stores as scaled integers are given as the file decodes
+to them, in float64, so a reader that computes in float32 matches to float32 rounding,
+not bit for bit.
 
 The builders use only numpy and h5py, never magic_afm, so that they describe the
 formats rather than the readers; ``open_fvfile`` is the one helper here that
