@@ -182,7 +182,7 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
         if prepare_flag:
             prepare_flag = False
             pbar.set_description_str(f"Fitting {filename.name} force curves")
-            pbar.reset(total=imshape[0] * imshape[1])
+            pbar.reset(total=sum(1 for _ in v.iter_indices()))
             pbar.bar_format = None
 
         if co["fit_mode"] == FitMode.SKIP:
