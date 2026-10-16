@@ -26,15 +26,19 @@
 # tests/goldens/README.md for the golden sets.
 #
 # The model runs unjitted here, as in CLI workers at the default (no --jit).
-# warmup_jit_worker() rebinds module globals for the rest of the session, so
-# it is never called under pytest; the generator measures that state apart.
+# warmup_jit_worker() rebinds module globals for the rest of the process, so the
+# jitted state of GUI workers and CLI --jit is fitted in a subprocess and held to
+# the same goldens and tolerances.
 
+import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
-from conftest import load_platform_goldens
+from conftest import REPO_ROOT, load_platform_goldens
 
 from magic_afm import calculation
 from magic_afm.calculation import PROPERTY_DTYPE, FitFix, FitMode
@@ -330,6 +334,57 @@ def test_synthetic_fit_matches_golden(goldens, case, mode):
     tolerances = CASE_TOLERANCES.get((case, mode.name), TOLERANCES)
     actual = fit_synthetic(case, mode)
     assert_fields_match(actual, golden, f"{case} {mode.name}", tolerances)
+
+
+# Runs in a fresh interpreter, so the rebinding cannot reach the other tests: argv[1]
+# is this directory. The last line of stdout is the JSON of every synthetic fit.
+JITTED_FITS_SCRIPT = """
+import json
+import sys
+import types
+
+sys.path.insert(0, sys.argv[1])
+import test_goldens as t2
+
+from magic_afm import calculation
+
+calculation.warmup_jit_worker()
+fits = {
+    case: {mode.name: t2.fit_synthetic(case, mode) for mode in t2.MODES}
+    for case in t2.SYNTHETIC_CASES
+}
+jitted = not isinstance(calculation.red_retract, types.FunctionType)
+print(json.dumps({"jitted": jitted, "fits": fits}))
+"""
+
+
+@pytest.fixture(scope="module")
+def jitted_fits():
+    """Every synthetic fit, made after warmup_jit_worker() in a subprocess."""
+    if importlib.util.find_spec("numba") is None:
+        pytest.skip("numba is not installed, so warmup_jit_worker() jits nothing")
+    proc = subprocess.run(
+        [sys.executable, "-c", JITTED_FITS_SCRIPT, str(Path(__file__).parent)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=REPO_ROOT,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def test_warmup_jit_worker_jits_the_model(jitted_fits):
+    assert jitted_fits["jitted"]
+
+
+@pytest.mark.parametrize("mode", MODES, ids=lambda m: m.name)
+@pytest.mark.parametrize("case", SYNTHETIC_CASES)
+def test_jitted_synthetic_fit_matches_golden(goldens, jitted_fits, case, mode):
+    golden = goldens["synthetic"][case]["fits"][mode.name]
+    tolerances = CASE_TOLERANCES.get((case, mode.name), TOLERANCES)
+    actual = jitted_fits["fits"][case][mode.name]
+    assert_fields_match(actual, golden, f"jitted {case} {mode.name}", tolerances)
 
 
 @pytest.mark.filterwarnings("error::DeprecationWarning")
