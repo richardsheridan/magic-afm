@@ -43,6 +43,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
@@ -60,7 +62,12 @@ def generate(t3, resolve, tmp):
         if name not in t3.NAMING or t3.NAMING[name][3] != "npy":
             continue
         stem, mode, trace, _ = t3.NAMING[name]
-        path = Path(resolve(relpath))
+        try:
+            path = Path(resolve(relpath))
+        except pytest.skip.Exception as e:
+            # CI's corpus lacks the .nid; write the runs whose files exist
+            print(f"no {name} run:", e.msg)
+            continue
         out = Path(tmp) / name
         result = t3.invoke_cli(path, out, args)
         assert result.exit_code == 0, result.output
@@ -149,6 +156,9 @@ def compare(a_path, b_path):
     print(f"{'field':60} {'max abs':>10} {'max rel':>10} NaN")
     b_leaves = dict(leaves(b))
     for path, x in leaves(a):
+        if path not in b_leaves:
+            print(f"{'.'.join(path):60} {'missing in B':>21}")
+            continue
         y = b_leaves[path]
         if path[-1] in ("nan_mask", "pixels"):
             if x != y:
