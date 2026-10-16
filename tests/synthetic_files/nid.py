@@ -28,6 +28,11 @@ number of columns, the points along each serpentine row; that a short backward
 row is zero filled at its end like a forward one (every backward row of the real
 file is full); and that the scan image's backward rows run the same way as its
 forward rows. The trailing ``0;1`` of ``Map0`` is copied as found.
+
+A map stopped part way holds only the curves it reached: every dataset on the map grid
+keeps its full ``Lines``, but its ``CurLine`` is the last curve taken, its
+``LineDim{n}`` keys stop there and the rows past it are zeros. No real stopped map was
+at hand, so this follows what the reader accepts.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -185,6 +190,7 @@ def build_nid(
     *,
     ext_points=None,
     ret_points=None,
+    curves_taken: int | None = None,
     seed: int = 0,
     k: float = 25.03,
     defl_sens: float = 169.0,
@@ -201,7 +207,8 @@ def build_nid(
 
     ``points`` are the forward and backward datapoints, the width of each row;
     ``ext_points`` and ``ret_points`` (an int or a (rows, cols) array) give each
-    curve's own length up to that, all full by default. ``k`` is in N/m,
+    curve's own length up to that, all full by default. With ``curves_taken``
+    the map stops after that many curves in acquisition order. ``k`` is in N/m,
     ``defl_sens`` in nm/V, ``scan_size`` in nm along x then y, ``mod_time`` the
     seconds each ramp takes. The raw channels and the spring constant are
     written in ``z_unit``, ``defl_unit`` (a force, a length or "V") and
@@ -241,6 +248,11 @@ def build_nid(
     )
     order = map_order(shape)
     lines = len(order)
+    taken = lines if curves_taken is None else curves_taken
+    if not 0 < taken <= lines:
+        raise ValueError("curves_taken must be within the map", taken, lines)
+    acquired = np.zeros(shape, dtype=bool)
+    acquired[tuple(zip(*order[:taken]))] = True
     by_line = tuple(zip(*order))
     fw_by_line = ext_points[by_line]
     bw_by_line = ret_points[by_line]
@@ -269,7 +281,7 @@ def build_nid(
     counts_of = {0: ext_points, 1: ret_points}
     for group, frame, width, counts, z_file, reverse in spec_frames:
         # Dim0 is the Z-Axis each line ramps over; here the span of its sensor
-        line_z = [z_file[r, c, : counts_of[group][r, c]] for r, c in order]
+        line_z = [z_file[r, c, : counts_of[group][r, c]] for r, c in order[:taken]]
         mins = [float(np.min(z)) for z in line_z]
         ranges = [float(np.max(z) - np.min(z)) for z in line_z]
         dim0_min = min(mins)
@@ -283,7 +295,7 @@ def build_nid(
                 "Points": str(width),
                 "Lines": str(lines),
                 "Frame": frame,
-                "CurLine": str(lines - 1),
+                "CurLine": str(taken - 1),
                 "Dim0Name": "Z-Axis",
                 "Dim0Unit": z_unit,
                 "Dim0Range": _g(dim0_range),
@@ -295,12 +307,13 @@ def build_nid(
                 "Dim2Unit": unit,
                 "Dim2Range": dim_range,
                 "Dim2Min": dim_min,
-                **_line_dims(counts, mins, ranges),
+                **_line_dims(counts[:taken], mins, ranges),
                 **_save_keys(save_bits),
             }
             codes = _rows(
                 curve_codes[group, channel], counts_of[group], order, width, reverse
             )
+            codes[taken:] = 0
             datasets.append(_Dataset(group, channel, keys, codes))
 
     # tip-sample separation and deflection, the inputs of the slope and adhesion
@@ -326,9 +339,11 @@ def build_nid(
         width = (n_fw, n_bw)[half]
         counts = (fw_by_line, bw_by_line)[half]
         keys = _result_keys(group, frame, width, lines, name, unit, dim_range, dim_min)
-        keys.update(_line_dims(counts))
+        keys["CurLine"] = str(taken - 1)
+        keys.update(_line_dims(counts[:taken]))
         keys.update(_save_keys(save_bits))
         codes = _rows(grid_codes, counts_of[half], order, width, bool(half))
+        codes[taken:] = 0
         datasets.append(_Dataset(group, 0, keys, codes))
         group += 1
 
@@ -370,20 +385,21 @@ def build_nid(
         keys = _result_keys(
             group, frame, width, lines, f"NameZ{group - 2}", unit, dim_range, dim_min
         )
-        keys.update(_line_dims([width] * lines))
+        keys["CurLine"] = str(taken - 1)
+        keys.update(_line_dims([width] * taken))
         keys.update(_save_keys(save_bits))
         codes = grid_codes[by_line]
+        codes[taken:] = 0
         datasets.append(_Dataset(group, 0, keys, codes))
         if frame in RESULT_IMAGES:
             image_name, sign = RESULT_IMAGES[frame]
-            images[image_name] = sign * decoded[..., 0]
+            images[image_name] = np.where(acquired, sign * decoded[..., 0], np.nan)
             image_units[image_name] = unit
         group += 1
 
     # the map's height is where each extend half stopped, its highest force
-    images["MapHeight"] = np.take_along_axis(
-        zext_file, ext_points[..., None] - 1, axis=-1
-    )[..., 0]
+    height = np.take_along_axis(zext_file, ext_points[..., None] - 1, axis=-1)
+    images["MapHeight"] = np.where(acquired, height[..., 0], np.nan)
     image_units["MapHeight"] = z_unit
 
     scan_lines, scan_points = scan_shape
@@ -452,9 +468,14 @@ def build_nid(
         for dataset in datasets:
             f.write(dataset.codes.astype(dtype).tobytes())
 
-    # the reader's curves: z in nm, deflection in nm of cantilever bend
+    # the reader's curves: z in nm, deflection in nm of cantilever bend, NaN where the
+    # map never reached
     def nm(z_file, d_file):
-        return z_file * z_scale * 1e9, d_file / defl_scale
+        held = acquired[..., None]
+        return (
+            np.where(held, z_file * z_scale * 1e9, np.nan),
+            np.where(held, d_file / defl_scale, np.nan),
+        )
 
     zext_nm, dext_nm = nm(zext_file, dext_file)
     zret_nm, dret_nm = nm(zret_file, dret_file)
@@ -466,7 +487,8 @@ def build_nid(
         dret_nm,
         ext_points,
         ret_points,
-        order,
+        order[:taken],
+        None if taken == lines else acquired,
     )
     return SyntheticFile(
         path=path,

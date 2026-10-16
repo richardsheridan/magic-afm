@@ -222,3 +222,41 @@ def test_cli_progress_total_is_the_number_of_curves_the_reader_yields(
         bar for bar in RecordingProgressBar.instances if bar.desc.startswith("Fitting")
     )
     assert pbar.total == pbar.n == yielded
+
+
+def open_stopped(real_data_file, stem):
+    """The parsed file, its open data and the mask of curves the reader yields."""
+    fvfile_cls, data = t2.open_fvfile(Path(real_data_file(STOPPED_SCANS[stem])))
+    fvfile = fvfile_cls.parse(data)
+    volume = fvfile.volumes[0]
+    acquired = np.zeros(volume.shape, dtype=bool)
+    for rc in volume.iter_indices():
+        acquired[rc] = True
+    return fvfile, data, acquired
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("stem", STOPPED_SCANS)
+def test_get_curve_is_nan_of_the_curve_length_where_a_stopped_scan_never_acquired(
+    real_data_file, stem
+):
+    fvfile, data, acquired = open_stopped(real_data_file, stem)
+    with data:
+        volume = fvfile.volumes[0]
+        (azext, azret), (adext, adret) = volume.get_curve(*np.argwhere(acquired)[0])
+        for r, c in np.argwhere(~acquired).tolist():
+            (zext, zret), (dext, dret) = volume.get_curve(r, c)
+            for half, like in zip(
+                (zext, zret, dext, dret), (azext, azret, adext, adret), strict=True
+            ):
+                assert np.shape(half) == np.shape(like)
+                assert np.isnan(half).all()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("stem", STOPPED_SCANS)
+def test_images_are_nan_where_a_stopped_scan_never_acquired(real_data_file, stem):
+    fvfile, data, acquired = open_stopped(real_data_file, stem)
+    with data:
+        for name, image in fvfile.images.items():
+            assert np.isnan(image.get_image()[~acquired]).all(), name

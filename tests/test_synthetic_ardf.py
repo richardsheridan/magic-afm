@@ -53,8 +53,6 @@ STOPPED_CASES = {
     "stopped-tall-from-line-0": ((8, 6), 16, True, 5),
     "stopped-wide-from-last-line": ((6, 8), 16, False, 4),
 }
-# the reader's placeholder for a curve the file does not hold
-PLACEHOLDER_SHAPE = (2, 2, 100)
 QUANTITIES = ("Height", "ZSensor", "Adhesion", "Force", "YoungsJKR")
 DIRECTIONS = {"trace": ["Trace"], "retrace": ["Retrace"], "both": ["Trace", "Retrace"]}
 
@@ -70,6 +68,18 @@ def assert_same_curve(curve, expected):
     assert_float32_close(zret, ezret)
     assert_float32_close(dext, edext)
     assert_float32_close(dret, edret)
+
+
+def assert_nan_curve_like(curve, acquired_curve, points):
+    """Each half of curve is all NaN, shaped and typed as the acquired curve's."""
+    (zext, zret), (dext, dret) = curve
+    (azext, azret), (adext, adret) = acquired_curve
+    for half, acquired_half in zip(
+        (zext, zret, dext, dret), (azext, azret, adext, adret), strict=True
+    ):
+        assert np.shape(half) == np.shape(acquired_half) == (points,)
+        assert np.asarray(half).dtype == np.asarray(acquired_half).dtype
+        assert np.isnan(half).all()
 
 
 def assert_metadata(fvfile, synthetic):
@@ -211,14 +221,14 @@ def test_ardf_stopped_scan_get_all_curves_is_nan_where_never_acquired(stopped):
     assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
 
 
-def test_ardf_stopped_scan_get_curve_off_the_scan_is_todays_nan_placeholder(stopped):
+def test_ardf_stopped_scan_get_curve_off_the_scan_is_nan_of_the_curve_length(stopped):
     expected = stopped.volumes[0]
+    points = int(expected.ext_points.max())
     with open_fvfile(stopped.path) as fvfile:
         volume = fvfile.volumes[0]
+        acquired_curve = volume.get_curve(*expected.order[0])
         for r, c in np.argwhere(~expected.acquired).tolist():
-            curve = volume.get_curve(r, c)
-            assert np.shape(curve) == PLACEHOLDER_SHAPE
-            assert np.isnan(curve).all()
+            assert_nan_curve_like(volume.get_curve(r, c), acquired_curve, points)
 
 
 def test_ardf_stopped_scan_images_round_trip_on_the_lines_taken(stopped):
@@ -226,11 +236,11 @@ def test_ardf_stopped_scan_images_round_trip_on_the_lines_taken(stopped):
         assert_images_where_held(fvfile, stopped)
 
 
-def test_ardf_stopped_scan_images_are_zero_off_the_scan_today(stopped):
+def test_ardf_stopped_scan_images_are_nan_off_the_scan(stopped):
     missing = ~stopped.volumes[0].acquired
     with open_fvfile(stopped.path) as fvfile:
         for image in fvfile.images.values():
-            assert (image.get_image()[missing] == 0).all()
+            assert np.isnan(image.get_image()[missing]).all()
 
 
 #################################################

@@ -43,6 +43,17 @@ CASES = {
     "longer-retract": ((3, 5), (40, 48), {}),
     "16-bit": ((4, 4), (32, 32), {"save_bits": 16}),
 }
+# forward rows of 44 to 56 points, in rows of 64
+SHORT_EXT = 44 + np.arange(16).reshape(4, 4) % 4 * 4
+# grid, points per curve (extend, retract), curves taken before the map stopped, other
+# builder arguments; the last case's forward rows are ragged and all stop short of the
+# row width
+STOPPED_CASES = {
+    "stopped-mid-row": ((4, 4), (16, 16), 6, {}),
+    "stopped-at-row-end": ((3, 5), (16, 16), 10, {}),
+    "stopped-longer-retract": ((3, 5), (40, 48), 7, {}),
+    "stopped-short-forward-rows": ((4, 4), (64, 64), 6, {"ext_points": SHORT_EXT}),
+}
 # Left out: an extend half longer than the retract half, e.g. (48, 40). The reader takes
 # any dataset on the map grid shorter than a forward curve for a per-curve result, so
 # the two backward Indentation datasets come out as extra map images.
@@ -58,6 +69,12 @@ def assert_float32_close(actual, expected):
 def synthetic(request, tmp_path):
     shape, points, kwargs = CASES[request.param]
     return build_nid(tmp_path, shape, points, **kwargs)
+
+
+@pytest.fixture(params=list(STOPPED_CASES))
+def stopped(request, tmp_path):
+    shape, points, taken, kwargs = STOPPED_CASES[request.param]
+    return build_nid(tmp_path, shape, points, curves_taken=taken, **kwargs), points
 
 
 def test_nid_metadata_round_trips(synthetic):
@@ -128,6 +145,47 @@ def test_nid_images_round_trip_with_units(synthetic):
             assert image.shape == expected.shape
             assert image.units == synthetic.image_units[name]
             assert_float32_close(image.get_image(), expected)
+
+
+def test_nid_stopped_map_yields_exactly_the_acquired_curves(stopped):
+    synthetic, _ = stopped
+    expected = synthetic.volumes[0]
+    with open_fvfile(synthetic.path) as fvfile:
+        volume = fvfile.volumes[0]
+        assert list(volume.iter_indices()) == list(expected.order)
+        acquired = [tuple(rc) for rc in np.argwhere(expected.acquired).tolist()]
+        assert sorted(expected.order) == acquired
+        for r, c in expected.order:
+            n = min(expected.ext_points[r, c], expected.ret_points[r, c])
+            (zext, zret), (dext, dret) = volume.get_curve(r, c)
+            (ezext, ezret), (edext, edret) = expected.curve(r, c, n, n)
+            assert_float32_close(np.stack([zext, zret]), np.stack([ezext, ezret]))
+            assert_float32_close(np.stack([dext, dret]), np.stack([edext, edret]))
+
+
+def test_nid_stopped_map_get_curve_off_the_map_is_nan_of_the_row_length(stopped):
+    # both halves come back cut to the shorter of the forward and backward rows
+    synthetic, points = stopped
+    expected = synthetic.volumes[0]
+    with open_fvfile(synthetic.path) as fvfile:
+        volume = fvfile.volumes[0]
+        for r, c in np.argwhere(~expected.acquired).tolist():
+            (zext, zret), (dext, dret) = volume.get_curve(r, c)
+            for half in (zext, zret, dext, dret):
+                assert np.shape(half) == (min(points),)
+                assert np.asarray(half).dtype == np.float32
+                assert np.isnan(half).all()
+
+
+def test_nid_stopped_map_images_are_nan_off_the_map(stopped):
+    synthetic, _ = stopped
+    missing = ~synthetic.volumes[0].acquired
+    with open_fvfile(synthetic.path) as fvfile:
+        assert sorted(fvfile.images) == sorted(synthetic.images)
+        for name, image in fvfile.images.items():
+            values = image.get_image()
+            assert np.isnan(values[missing]).all()
+            assert_float32_close(values[~missing], synthetic.images[name][~missing])
 
 
 @pytest.mark.parametrize(
