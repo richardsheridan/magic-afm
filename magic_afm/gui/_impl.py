@@ -334,6 +334,7 @@ class DemoStub:
     k: float = field(default=10.0)
     defl_sens: float = field(default=5.0)
     sync_dist: int = field(default=0)
+    trace: int | None = field(default=None)
 
 
 @mutable
