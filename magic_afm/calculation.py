@@ -880,11 +880,16 @@ def force_curve(
 ):
     """Calculate a force curve from indentation data."""
     # Catch crazy inputs early
-    assert k > 0, k
-    assert radius > 0, radius
-    assert M > 0, M
-    assert fc > 0, fc
-    assert 0 <= tau <= 1, tau
+    if not k > 0:
+        raise ValueError("k must be positive")
+    if not radius > 0:
+        raise ValueError("radius must be positive")
+    if not M > 0:
+        raise ValueError("M must be positive")
+    if not fc > 0:
+        raise ValueError("fc must be positive")
+    if not 0 <= tau <= 1:
+        raise ValueError("tau must be between 0 and 1")
 
     # Calculate reduced/dimensionless values of inputs
     # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
@@ -918,11 +923,16 @@ def delta_curve(
 ):
     """Convenience function for inverse of force_curve, i.e. force->delta"""
     # Catch crazy inputs early
-    assert k > 0, k
-    assert radius > 0, radius
-    assert M > 0, M
-    assert fc > 0, fc
-    assert 0 <= tau <= 1, tau
+    if not k > 0:
+        raise ValueError("k must be positive")
+    if not radius > 0:
+        raise ValueError("radius must be positive")
+    if not M > 0:
+        raise ValueError("M must be positive")
+    if not fc > 0:
+        raise ValueError("fc must be positive")
+    if not 0 <= tau <= 1:
+        raise ValueError("tau must be between 0 and 1")
 
     # Calculate reduced/dimensionless values of inputs
     # tau = tau1**2 in Schwarz => ratio of short range to total surface energy

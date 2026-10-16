@@ -121,6 +121,21 @@ class FVFile(Protocol):
 ###############################################
 
 
+class FileFormatError(ValueError):
+    """A file is malformed or uses a variant this module cannot read."""
+
+
+def _check_force_bpp(length, ncurves, npts, subheader):
+    bpp, rem = divmod(length, ncurves * npts)
+    if rem or bpp not in (2, 4):
+        raise FileFormatError(
+            f"force data length {length} does not fit {ncurves} curves of {npts}"
+            " points; the capture may skip points"
+            f" (Samps/line: {subheader['Samps/line']})"
+        )
+    return bpp
+
+
 def open_h5(path):
     import h5py
 
@@ -261,7 +276,10 @@ class ARH5ForceMapVolume:
 
         # Generally segments are [Ext, Dwell, Ret, Away] or [Ext, Ret, Away]
         # for magic, we don't dwell. new converter ensures this assertion
-        assert num_segments == 3
+        if num_segments != 3:
+            raise FileFormatError(
+                f"force map has {num_segments} segments per curve, expected 3"
+            )
 
         # this is all necessary because the arrays are not of uniform length
         # We will cut all arrays down to the length of the smallest
@@ -477,8 +495,12 @@ class ARDFTableOfContents:
         data = header.data
         offset = header.offset
         size, nentries, stride = TOC_STRUCT.unpack_from(data, offset + 16)
-        assert stride == 24
-        assert size - 32 == nentries * stride, (size, nentries, stride)
+        if stride != 24:
+            raise FileFormatError(f"table of contents stride {stride}, expected 24")
+        if size - 32 != nentries * stride:
+            raise FileFormatError(
+                f"table of contents size {size} does not fit {nentries} entries"
+            )
         entries = []
         for toc_offset in range(offset + 32, offset + size, stride):
             *header, pointer = cls._entry_struct.unpack_from(data, toc_offset)
@@ -508,8 +530,12 @@ class ARDFTextTableOfContents:
         offset = header.offset
         data = header.data
         size, nentries, stride = TOC_STRUCT.unpack_from(data, offset + 16)
-        assert stride == 32, stride
-        assert size - 32 == nentries * stride, (size, nentries, stride)
+        if stride != 32:
+            raise FileFormatError(f"text table stride {stride}, expected 32")
+        if size - 32 != nentries * stride:
+            raise FileFormatError(
+                f"text table size {size} does not fit {nentries} entries"
+            )
         entries = []
         for toc_offset in range(offset + 32, offset + size, stride):
             *header, _, pointer = cls._entry_struct.unpack_from(data, toc_offset)
@@ -530,9 +556,11 @@ class ARDFTextTableOfContents:
             raise ValueError("Malformed text section.", text_header)
         text_header.validate()
         i, text_len = struct.unpack_from("<LL", self.data, pointer + 16)
-        assert i == index, (i, index)
+        if i != index:
+            raise FileFormatError(f"text entry {i} found at index {index}")
         offset = text_header.offset + 24
-        assert text_len < text_header.size - 24, (text_len, text_header)
+        if not text_len < text_header.size - 24:
+            raise FileFormatError(f"text length {text_len} overruns its section")
         text = memoryview(self.data)[offset : offset + text_len]
         return bytes(text).replace(b"\r", b"\n").decode("windows-1252")
 
@@ -553,8 +581,12 @@ class ARDFVolumeTableOfContents:
         if header.size != 32 or header.name != b"VTOC":
             raise ValueError("Malformed volume table of contents.", header)
         size, nentries, stride = TOC_STRUCT.unpack_from(data, offset + 16)
-        assert stride == 40, stride
-        assert size - 32 == nentries * stride, (size, nentries, stride)
+        if stride != 40:
+            raise FileFormatError(f"volume table stride {stride}, expected 40")
+        if size - 32 != nentries * stride:
+            raise FileFormatError(
+                f"volume table size {size} does not fit {nentries} entries"
+            )
         lines, pointers = [], []
         for i, toc_offset in enumerate(
             range(header.offset + 32, header.offset + size, stride)
@@ -603,7 +635,8 @@ class ARDFXdef:
         header.validate()
         # Experiment definition is just a string
         _, nchars = cls._struct.unpack_from(header.data, header.offset + 16)
-        assert _ == 0, _
+        if _ != 0:
+            raise FileFormatError(f"experiment definition reserved field is {_}")
         if nchars > header.size:
             raise ValueError("Experiment definition too long.", header, nchars)
         xdef = memoryview(header.data)[header.offset + 24 : header.offset + 24 + nchars]
@@ -717,7 +750,8 @@ class ARDFImage:
             idef_header.data,
             idef_header.offset + 16,
         )
-        assert not (_ or __), (_, __)
+        if _ or __:
+            raise FileFormatError(f"image definition reserved fields are {_}, {__}")
         x_unit, y_unit, name, units = list(map(decode_cstring, cstrings))
 
         return cls(
@@ -739,7 +773,10 @@ class ARDFImage:
             ibox_header.data, ibox_header.offset + 16
         )
         points = (stride - 16) // 4  # less IDAT header
-        assert (points, lines) == self.shape
+        if (points, lines) != self.shape:
+            raise FileFormatError(
+                f"image data is {points}x{lines}, definition says {self.shape}"
+            )
         # elide image data validation and map into an array directly
         with memoryview(self.data) as v:  # assert data is open, and hold it open
             arr = np.ndarray(
@@ -782,7 +819,8 @@ class ARDFFFMReader:
             line_stride = vset_stride * points
         else:
             # better be "both" setting see ARDFVset
-            assert first_vset.vtype in {10, 11}, first_vset
+            if first_vset.vtype not in {10, 11}:
+                raise FileFormatError(f"unknown volume set type {first_vset.vtype}")
             line_stride = vset_stride * points * 2
         up = first_vset.line == 0
         trace = first_vset.point == 0
@@ -980,7 +1018,8 @@ class ARDFForceMapReader:
                     x[0] = vdat  # zvdat
                 elif vdat.channel == self.channels["Defl"][0]:
                     x[1] = vdat  # dvdat
-            assert None not in x, f"missing vdat channel: {x}, {self.channels}"
+            if None in x:
+                raise FileFormatError(f"missing vdat channel: {x}, {self.channels}")
             minext = min(minext, vdat.seg_offsets[1])
         del vset, vdat, x
         minfloats = 2 * minext
@@ -1031,11 +1070,15 @@ class ARDFVolume:
         points, lines, _, x_step, y_step, t_step, *cstrings, nseg = unpack_from(
             vdef_header.data, vdef_header.offset + 16
         )
-        assert sum(_) == 0, _
+        if sum(_) != 0:
+            raise FileFormatError(f"volume definition reserved fields are {_}")
         complete = points * lines == nsets
         x_unit, y_unit, t_unit, seg_names = list(map(decode_cstring, cstrings))
         seg_names = seg_names.split(";")[:-1]
-        assert nseg == len(seg_names)
+        if nseg != len(seg_names):
+            raise FileFormatError(
+                f"volume definition has {nseg} segments but names {seg_names}"
+            )
 
         # Implicit table of channels here smh
         offset = vdef_header.offset + vdef_header.size
@@ -1047,7 +1090,10 @@ class ARDFVolume:
             vchn = ARDFVchan.unpack(header)
             offset = header.offset + header.size
             # TODO: apply NANOMETER_UNIT_CONVERSION depending on this
-            assert vchn.unit == "m"
+            if vchn.unit != "m":
+                raise FileFormatError(
+                    f"channel {vchn.name} has unit {vchn.unit!r}, expected 'm'"
+                )
             channels[vchn.name] = (i, vchn)
         else:
             raise RuntimeError("Got too many channels.", channels)
@@ -1133,7 +1179,10 @@ class ARDFFile:
         ftoc = ARDFTableOfContents.unpack(ftoc_header)
         ttoc_header = ARDFHeader.unpack(data, offset=ftoc.offset + ftoc.size)
         ttoc = ARDFTextTableOfContents.unpack(ttoc_header)
-        assert len(ttoc.entries) == 1
+        if len(ttoc.entries) != 1:
+            raise FileFormatError(
+                f"text table has {len(ttoc.entries)} entries, expected 1"
+            )
         notes = parse_ar_note(ttoc.decode_entry(0).splitlines())
         images = {}
         volumes = []
@@ -1181,7 +1230,8 @@ def parse_nanoscope_header(header_lines: Iterable[str]):
 
     header = {}
     for line in header_lines:
-        assert line.startswith("\\")
+        if not line.startswith("\\"):
+            raise FileFormatError(f"header line without backslash: {line!r}")
         line = line[1:].strip()  # strip leading slash and newline
 
         if line.startswith("*"):
@@ -1285,7 +1335,7 @@ class FFVReader:
         length = int(subheader["Data length"])
         # npts = int(subheader["Sample Points"])  # only QNM?
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
-        bpp = length // (r * c * 2 * n_ext)
+        bpp = _check_force_bpp(length, r * c, 2 * n_ext, subheader)
         ints = np.ndarray(
             shape=(r, c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
@@ -1323,7 +1373,7 @@ class QNMDReader:
         # npts = int(subheader["Sample Points"]) only at 2kHz?
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
         npts = 2 * n_ext
-        bpp = length // (r * c * npts)
+        bpp = _check_force_bpp(length, r * c, npts, subheader)
         d_ints = np.ndarray(
             shape=(r * c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
@@ -1405,7 +1455,8 @@ class NanoscopeVolume:
     def parse(cls, header, sync_dist, z_reader, d_reader):
         npts = int(header["Ciao force list"][0]["force/line"].split()[0])
         rate, unit = header["Ciao scan list"][0]["PFT Freq"].split()
-        assert unit.lower() == "khz"
+        if unit.lower() != "khz":
+            raise FileFormatError(f"PFT Freq unit is {unit!r}, expected kHz")
         rate = float(rate) * 1000
         t_step = 1 / rate / npts
 
@@ -1517,7 +1568,8 @@ class NanoscopeFile:
         slowpx = int(csl["Lines"])
         shape = slowpx, fastpx
         ratestr, unit = csl["PFT Freq"].split()
-        assert unit.lower() == "khz"
+        if unit.lower() != "khz":
+            raise FileFormatError(f"PFT Freq unit is {unit!r}, expected kHz")
         rate = float(ratestr)
 
         images = {}
