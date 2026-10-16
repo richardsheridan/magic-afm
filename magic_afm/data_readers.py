@@ -57,6 +57,40 @@ NANOMETER_UNIT_CONVERSION = (
 )
 TOC_STRUCT = struct.Struct("<QLL")
 
+# decimal exponents of the SI prefixes seen in unit strings (micro as micro sign or mu)
+SI_PREFIX_EXPONENTS = {
+    "": 0,
+    "m": -3,
+    "\u00b5": -6,
+    "\u03bc": -6,
+    "u": -6,
+    "n": -9,
+    "p": -12,
+}
+
+
+def si_prefix_exponent(unit: str, base: str) -> int | None:
+    """Decimal exponent of unit as a prefixed base, such as -6 for "µm" and "m"."""
+    if not unit.endswith(base):
+        return None
+    return SI_PREFIX_EXPONENTS.get(unit[: len(unit) - len(base)])
+
+
+def nano_factor(unit: str, base: str) -> float | None:
+    """Factor converting unit to nano-base, such as 1e3 for "µm" and "m", or None."""
+    exponent = si_prefix_exponent(unit, base)
+    if exponent is None:
+        return None
+    return 10.0 ** (9 + exponent)
+
+
+def nm_per_unit(unit: str) -> float:
+    """Factor converting a length in unit to nm, raising FileFormatError if unknown."""
+    factor = nano_factor(unit, "m")
+    if factor is None:
+        raise FileFormatError("Expected a length unit.", unit)
+    return factor
+
 
 def nan_curve(npts: int) -> np.ndarray:
     """A read-only all-NaN curve with npts points in each half."""
@@ -717,7 +751,7 @@ class ARDFVdata:
     def next_offset(self):
         return self.array_offset + self.nfloats * 4
 
-    def get_ndarray(self):
+    def get_ndarray(self, factor: float | None = None):
         with memoryview(self.data) as v:  # assert data is open, and hold it open
             x = np.ndarray(
                 shape=self.nfloats,
@@ -725,7 +759,8 @@ class ARDFVdata:
                 buffer=v,
                 offset=self.array_offset,
             ).astype("f4", copy=True)
-        x *= NANOMETER_UNIT_CONVERSION
+        if factor is not None:
+            x *= factor
         return x
 
 
@@ -812,6 +847,7 @@ class ARDFFFMReader:
     array_view: np.ndarray = field(repr=False)
     array_offset: int  # hard to recover from views
     channels: list[int]  # [z, d]
+    factors: np.ndarray = field(repr=False)  # float32 to nm, shaped to broadcast
     # seg_offsets is weird. you'd think it would contain the starting index
     # for each segment. However, it always has a trailing value of 1-nfloats,
     # and nonexistent segments get a zero. For regular/FFM data, we'll just
@@ -865,6 +901,10 @@ class ARDFFFMReader:
             )[:: 1 if up else -1, :: 1 if trace else -1],
             array_offset=first_vdat.array_offset,
             channels=[channels["Raw"][0], channels["Defl"][0]],
+            factors=np.array(
+                [nm_per_unit(channels[name][1].unit) for name in ("Raw", "Defl")],
+                dtype="f4",
+            )[:, None],
             seg_offsets=first_vdat.seg_offsets,
             up=up,
             trace=trace,
@@ -875,7 +915,7 @@ class ARDFFFMReader:
         with memoryview(self.data):  # assert data is open, and hold it open
             x = self.array_view[r, c, self.channels]  # advanced indexing copies
         x = x.astype("f4", copy=False)
-        x *= NANOMETER_UNIT_CONVERSION
+        x *= self.factors
         return x.reshape((len(self.channels), 2, -1))
 
     def iter_indices(self) -> Iterable[Index]:
@@ -904,7 +944,7 @@ class ARDFFFMReader:
             # advanced indexing triggers a copy
             loaded_data = self.array_view[:, :, self.channels, :]
         # avoid a second copy with inplace op
-        loaded_data *= NANOMETER_UNIT_CONVERSION
+        loaded_data *= self.factors
         # reshape assuming equal points on extend and retract
         loaded_data = loaded_data.reshape(loaded_data.shape[:-1] + (2, -1))
         # make it look like z, d
@@ -925,6 +965,14 @@ class ARDFForceMapReader:
     @property
     def zname(self):
         return "Raw" if "Raw" in self.channels else "ZSnsr"
+
+    @property
+    def zfactor(self) -> float:
+        return nm_per_unit(self.channels[self.zname][1].unit)
+
+    @property
+    def dfactor(self) -> float:
+        return nm_per_unit(self.channels["Defl"][1].unit)
 
     def traverse_vsets(self, pointer: int):
         while True:
@@ -985,10 +1033,10 @@ class ARDFForceMapReader:
             _, ext, *_ = vdat.seg_offsets
             ret = 2 * ext
             if vdat.channel == self.channels[self.zname][0]:
-                z = vdat.get_ndarray()
+                z = vdat.get_ndarray(self.zfactor)
                 zxr = z[:ret].reshape(2, ext)
             elif vdat.channel == self.channels["Defl"][0]:
-                d = vdat.get_ndarray()
+                d = vdat.get_ndarray(self.dfactor)
                 dxr = d[:ret].reshape(2, ext)
         return zxr, dxr
 
@@ -1010,10 +1058,10 @@ class ARDFForceMapReader:
                 _, ext, *_ = vdat.seg_offsets
                 ret = 2 * ext
                 if vdat.channel == self.channels[zname][0]:
-                    z = vdat.get_ndarray()
+                    z = vdat.get_ndarray(self.zfactor)
                     zxr = z[:ret].reshape(2, ext)
                 elif vdat.channel == self.channels["Defl"][0]:
-                    d = vdat.get_ndarray()
+                    d = vdat.get_ndarray(self.dfactor)
                     dxr = d[:ret].reshape(2, ext)
             yield (vset.line, vset.point), (zxr, dxr)
 
@@ -1043,6 +1091,8 @@ class ARDFForceMapReader:
             sl = np.s_[halfextra : minfloats + halfextra]
             # TODO: verify turnaround point against iter_curves
             x[r, c, :, :] = zvdat.get_ndarray()[sl], dvdat.get_ndarray()[sl]
+        x[:, :, 0] *= self.zfactor
+        x[:, :, 1] *= self.dfactor
         return np.moveaxis(x.reshape(x.shape[:-1] + (2, -1)), 2, 0)
 
 
@@ -1101,10 +1151,9 @@ class ARDFVolume:
                 break
             vchn = ARDFVchan.unpack(header)
             offset = header.offset + header.size
-            # TODO: apply NANOMETER_UNIT_CONVERSION depending on this
-            if vchn.unit != "m":
+            if si_prefix_exponent(vchn.unit, "m") is None:
                 raise FileFormatError(
-                    f"channel {vchn.name} has unit {vchn.unit!r}, expected 'm'"
+                    f"channel {vchn.name} has unit {vchn.unit!r}, expected a length"
                 )
             channels[vchn.name] = (i, vchn)
         else:
@@ -1359,6 +1408,19 @@ class NanoscopeImage:
         return z_floats
 
 
+def nanoscope_curve_scale(header, subheader, sens_key: str) -> float:
+    """nm per LSB of a force curve channel, checking the units the header declares."""
+    sens_string = header["Ciao scan list"][0][sens_key]
+    _, sens, sens_unit = sens_string.split()
+    if sens_unit != "nm/V":
+        raise FileFormatError(f"{sens_key} unit is {sens_unit!r}, expected nm/V")
+    value = subheader["@4:Z scale"]
+    lsb, lsb_unit = value[1 + value.find("(") : value.find(")")].split()
+    if lsb_unit != "V/LSB":
+        raise FileFormatError(f"Z scale unit is {lsb_unit!r}, expected V/LSB")
+    return float(sens) * float(lsb)
+
+
 @frozen
 class FFVReader:
     data: Buffer
@@ -1384,12 +1446,7 @@ class FFVReader:
         ints = np.ndarray(
             shape=(r, c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
-        value = subheader["@4:Z scale"]
-        soft_scale = float(
-            header["Ciao scan list"][0][cls._soft_scale_map[name]].split()[1]
-        )
-        hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
-        scale = soft_scale * hard_scale
+        scale = nanoscope_curve_scale(header, subheader, cls._soft_scale_map[name])
         return cls(data, name, ints, scale)
 
     def get_curve(self, r, c):
@@ -1423,10 +1480,7 @@ class QNMDReader:
             shape=(r * c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
 
-        value = subheader["@4:Z scale"]
-        soft_scale = float(header["Ciao scan list"][0]["@Sens. DeflSens"].split()[1])
-        hard_scale = float(value[1 + value.find("(") : value.find(")")].split()[0])
-        d_scale = soft_scale * hard_scale
+        d_scale = nanoscope_curve_scale(header, subheader, "@Sens. DeflSens")
         name = subheader["@4:Image Data"].split('"')[1]
         return cls(data, name, d_ints, shape, d_scale)
 
@@ -1964,6 +2018,8 @@ class NIDVolume:
     shape: Index
     n_lines: int
     k: float
+    _zfactors: np.ndarray = field(repr=False)  # float32 fwd and bwd to nm
+    _dfactors: np.ndarray = field(repr=False)
     _zfwd: NIDDataset
     _dfwd: NIDDataset
     _zbwd: NIDDataset
@@ -1971,17 +2027,37 @@ class NIDVolume:
     nancurve: np.ndarray = field(repr=False)
 
     @classmethod
-    def parse(cls, spec, spec_map_row, k):
+    def parse(cls, spec, spec_map_row, k, defl_sens):
+        """Volume of the spectroscopy map; k in N/m and defl_sens in nm/V."""
         zfwd = spec["Spec forward", "Z-Axis Sensor"]
         dfwd = spec["Spec forward", "Deflection"]
         zbwd = spec["Spec backward", "Z-Axis Sensor"]
         dbwd = spec["Spec backward", "Deflection"]
-        # the conversions in _get_line_curve assume Z in m and Deflection in N
-        for d, unit in ((zfwd, "m"), (dfwd, "N"), (zbwd, "m"), (dbwd, "N")):
-            if d.unit != unit:
+
+        def zfactor(d):
+            factor = nano_factor(d.unit, "m")
+            if factor is None:
                 raise FileFormatError(
-                    f"Expected curve data in {unit}.", d.frame, d.channel, d.unit
+                    "Expected curve data in a length.", d.frame, d.channel, d.unit
                 )
+            return factor
+
+        def dfactor(d):
+            if d.unit == "V":
+                return defl_sens
+            if (factor := nano_factor(d.unit, "N")) is not None:
+                return factor / k
+            if (factor := nano_factor(d.unit, "m")) is not None:
+                return factor
+            raise FileFormatError(
+                "Expected curve data in a force, a length or V.",
+                d.frame,
+                d.channel,
+                d.unit,
+            )
+
+        zfactors = np.array([[zfactor(zfwd)], [zfactor(zbwd)]], dtype="f4")
+        dfactors = np.array([[dfactor(dfwd)], [dfactor(dbwd)]], dtype="f4")
         nx, ny = int(spec_map_row[4]), int(spec_map_row[5])
         # a stopped scan leaves the lines past CurLine unwritten
         n_lines = min(
@@ -1989,7 +2065,19 @@ class NIDVolume:
             for d in (zfwd, dfwd, zbwd, dbwd)
         )
         nancurve = nan_curve(min(zfwd.points, zbwd.points))
-        return cls("SpecMap", (ny, nx), n_lines, k, zfwd, dfwd, zbwd, dbwd, nancurve)
+        return cls(
+            "SpecMap",
+            (ny, nx),
+            n_lines,
+            k,
+            zfactors,
+            dfactors,
+            zfwd,
+            dfwd,
+            zbwd,
+            dbwd,
+            nancurve,
+        )
 
     def _line_npts(self, line: int) -> tuple[int, int]:
         # rows are zero filled past LineDim{n}Points
@@ -2006,9 +2094,8 @@ class NIDVolume:
         dret = self._dbwd.get_line(line)[nb - n : nb][::-1]
         z = np.stack((zext, zret))
         d = np.stack((dext, dret))
-        z *= NANOMETER_UNIT_CONVERSION
-        # Deflection is stored in N
-        d *= NANOMETER_UNIT_CONVERSION / self.k
+        z *= self._zfactors
+        d *= self._dfactors
         return z, d
 
     def get_curve(self, r: int, c: int) -> ZDArrays:
@@ -2128,8 +2215,12 @@ class NIDFile:
             )
 
         k, k_unit = parse_nanosurf_value(header["cantilever"]["Prop0"])
-        if k_unit != "N/m":
-            raise FileFormatError("Expected spring constant in N/m.", k_unit)
+        k_exponent = si_prefix_exponent(k_unit, "N/m")
+        if k_exponent is None:
+            raise FileFormatError(
+                "Expected spring constant in a force per length.", k_unit
+            )
+        k *= 10.0**k_exponent
         defl_sens = (
             float(header["cantilever"]["Sensitivity"]) * NANOMETER_UNIT_CONVERSION
         )
@@ -2147,7 +2238,7 @@ class NIDFile:
             )
         # spectroscopy datasets are identified by frame and channel, not name
         spec = {(d.frame, d.channel): d for d in datasets.values()}
-        volume = NIDVolume.parse(spec, header["spec_map"][0], k)
+        volume = NIDVolume.parse(spec, header["spec_map"][0], k, defl_sens)
         image = NIDMapHeightImage(
             "MapHeight",
             volume.shape,

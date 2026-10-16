@@ -35,7 +35,13 @@ import pytest
 from synthetic_files import open_fvfile
 from synthetic_files.ardf import HEADER, VCHN, VDEF, build_ardf
 from synthetic_files.arh5 import build_arh5_force_map
-from synthetic_files.nanoscope import PFC_HEADER_BYTES, build_pfc
+from synthetic_files.nanoscope import (
+    PFC_HEADER_BYTES,
+    SPM_HEADER_BYTES,
+    build_pfc,
+    build_spm,
+)
+from synthetic_files.nid import build_nid
 
 from magic_afm import data_readers
 
@@ -108,15 +114,15 @@ def _section(data: bytes, name: bytes) -> int:
     return offset
 
 
-def _edit_nanoscope_header(path: Path, edit) -> None:
+def _edit_nanoscope_header(path: Path, edit, size: int = PFC_HEADER_BYTES) -> None:
     """Apply edit(lines) to the header lines of a capture, keeping its size."""
     data = path.read_bytes()
     end = data.index(b"\x1a")
     lines = data[:end].decode("windows-1252").split("\r\n")
     text = "\r\n".join(edit(lines)).encode("windows-1252")
-    assert len(text) < PFC_HEADER_BYTES
-    header = text + b"\x1a" + bytes(PFC_HEADER_BYTES - len(text) - 1)
-    path.write_bytes(header + data[PFC_HEADER_BYTES:])
+    assert len(text) < size
+    header = text + b"\x1a" + bytes(size - len(text) - 1)
+    path.write_bytes(header + data[size:])
 
 
 def _set_key(lines, section: str, key: str, value: str) -> list[str]:
@@ -133,19 +139,124 @@ def _set_key(lines, section: str, key: str, value: str) -> list[str]:
     return out
 
 
+def _replace_in_key(lines, section: str, key: str, old: str, new: str) -> list[str]:
+    """Header lines with old replaced by new in key of the first such section."""
+    value = next(
+        line.split(": ", 1)[1]
+        for line in _section_lines(lines, section)
+        if line.startswith(f"\\{key}:")
+    )
+    assert old in value, (key, value)
+    return _set_key(lines, section, key, value.replace(old, new))
+
+
+def _section_lines(lines, section: str) -> list[str]:
+    """The lines of the first section of this name."""
+    starts = [i for i, line in enumerate(lines) if line == f"\\*{section}"]
+    assert starts, section
+    out = []
+    for line in lines[starts[0] + 1 :]:
+        if line.startswith("\\*"):
+            break
+        out.append(line)
+    return out
+
+
+def _edit_nid_header(path: Path, edit) -> None:
+    """Apply edit(lines) to the header lines of a NID file, before its #! mark."""
+    data = path.read_bytes()
+    end = data.index(b"#!")
+    lines = data[:end].decode("utf-8").split("\r\n")
+    path.write_bytes("\r\n".join(edit(lines)).encode("utf-8") + data[end:])
+
+
+def _set_nid_curve_unit(lines, channel: str, unit: str) -> list[str]:
+    """Header lines with the Dim2Unit of the channel's spectroscopy curves set."""
+    out, frame, name, done = [], None, None, 0
+    for line in lines:
+        if line.startswith("["):
+            frame = name = None
+        elif line.startswith("Frame="):
+            frame = line.split("=", 1)[1]
+        elif line.startswith("Dim2Name="):
+            name = line.split("=", 1)[1]
+        elif line.startswith("Dim2Unit=") and name == channel:
+            if frame in ("Spec forward", "Spec backward"):
+                line = f"Dim2Unit={unit}"
+                done += 1
+        out.append(line)
+    assert done == 2, (channel, done)
+    return out
+
+
+def _set_nid_spring_constant_unit(lines, unit: str) -> list[str]:
+    """Header lines with the unit of the cantilever's Prop0 set."""
+    found = [i for i, line in enumerate(lines) if line.startswith("Prop0=")]
+    assert len(found) == 1, found
+    value = lines[found[0]].split("]*[")[0]
+    return lines[: found[0]] + [f"{value}]*[{unit}]"] + lines[found[0] + 1 :]
+
+
 def test_file_format_error_is_a_value_error():
     assert issubclass(data_readers.FileFormatError, ValueError)
 
 
-def test_ardf_with_a_channel_not_in_metres_raises_format_error(tmp_path):
+def test_ardf_with_a_channel_in_an_unknown_unit_raises_format_error(tmp_path):
     path = build_ardf(tmp_path).path
     data = bytearray(path.read_bytes())
     offset = _section(data, b"VCHN")
     name, _ = VCHN.unpack_from(data, offset + HEADER.size)
-    VCHN.pack_into(data, offset + HEADER.size, name, b"V")
+    VCHN.pack_into(data, offset + HEADER.size, name, b"furlong")
     _recrc(data, offset)
     path.write_bytes(data)
-    assert_format_error(path, r"(?i)unit")
+    assert_format_error(path, "furlong")
+
+
+@pytest.mark.parametrize(
+    "channel, unit", [("Z-Axis Sensor", "furlong"), ("Deflection", "lbf")]
+)
+def test_nid_curves_in_an_unknown_unit_raise_format_error(tmp_path, channel, unit):
+    path = build_nid(tmp_path).path
+    _edit_nid_header(path, lambda lines: _set_nid_curve_unit(lines, channel, unit))
+    assert_format_error(path, re.escape(unit))
+
+
+def test_nid_spring_constant_in_an_unknown_unit_raises_format_error(tmp_path):
+    path = build_nid(tmp_path).path
+    _edit_nid_header(path, lambda lines: _set_nid_spring_constant_unit(lines, "lbf/in"))
+    assert_format_error(path, re.escape("lbf/in"))
+
+
+@pytest.mark.parametrize(
+    "build, size, key",
+    [
+        (build_pfc, PFC_HEADER_BYTES, "@Sens. DeflSens"),
+        (build_spm, SPM_HEADER_BYTES, "@Sens. DeflSens"),
+        (build_spm, SPM_HEADER_BYTES, "@Sens. ZsensSens"),
+    ],
+    ids=["pfc-DeflSens", "spm-DeflSens", "spm-ZsensSens"],
+)
+def test_nanoscope_curve_sensitivity_in_an_unknown_unit_raises_format_error(
+    tmp_path, build, size, key
+):
+    path = build(tmp_path).path
+    _edit_nanoscope_header(
+        path,
+        lambda lines: _replace_in_key(lines, "Ciao scan list", key, "nm/V", "nA/V"),
+        size,
+    )
+    assert_format_error(path, re.escape("nA/V"))
+
+
+def test_nanoscope_curve_scale_in_an_unknown_unit_raises_format_error(tmp_path):
+    path = build_pfc(tmp_path).path
+    _edit_nanoscope_header(
+        path,
+        lambda lines: _replace_in_key(
+            lines, "Ciao force image list", "@4:Z scale", "V/LSB", "Arb/LSB"
+        ),
+    )
+    assert_format_error(path, re.escape("Arb/LSB"))
 
 
 def test_ardf_with_a_wrong_segment_count_raises_format_error(tmp_path):
