@@ -16,10 +16,11 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Each case builds a good synthetic file and corrupts one field of it, picked so that a
-# reader without its check would accept the file under python -O or fail with an error that is
-# not a format error. ARDF fields are corrupted with their section's CRC rewritten, so
-# the CRC check passes and the field's own check is the one that must fire. Every case
-# is read twice: in this process, and in a python -O subprocess where asserts vanish.
+# reader without its check would accept the file under python -O or fail with an error
+# that is not a format error. ARDF fields are corrupted with their section's CRC
+# rewritten, so the CRC check passes and the field's own check is the one that must
+# fire. Every case is read twice: in this process, and in a python -O subprocess where
+# asserts vanish.
 
 import json
 import re
@@ -48,8 +49,8 @@ from magic_afm import data_readers
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MAXSCANRATE_RELPATH = "test_cases/PS_PCL_SAA/QNM/maxscanrate.000.pfc"
 
-# Runs in a fresh interpreter under -O: argv[1] is this directory, argv[2] the file.
-# The last line of stdout is the JSON of what reading the file raised.
+# Runs in a fresh interpreter under -O: argv[1] is this directory, argv[2] the file. The
+# last line of stdout is the JSON of what reading the file raised.
 OPTIMIZED_READ_SCRIPT = """
 import json
 import sys
