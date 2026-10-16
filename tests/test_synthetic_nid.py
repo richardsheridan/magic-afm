@@ -190,14 +190,38 @@ def test_nid_stopped_map_images_are_nan_off_the_map(stopped):
 
 @pytest.mark.parametrize(
     "units",
-    [{"z_unit": "µm"}, {"defl_unit": "m"}, {"defl_unit": "V"}, {"k_unit": "mN/m"}],
+    [
+        {"z_unit": "µm"},
+        {"z_unit": "nm"},
+        {"defl_unit": "nN"},
+        {"defl_unit": "m"},
+        {"defl_unit": "nm"},
+        {"defl_unit": "V"},
+        {"k_unit": "mN/m"},
+        {"z_unit": "nm", "defl_unit": "nN", "k_unit": "mN/m"},
+    ],
     ids=lambda u: "-".join(f"{k}={v}" for k, v in u.items()),
 )
-def test_nid_rejects_units_other_than_m_n_and_n_per_m_today(tmp_path, units):
-    synthetic = build_nid(tmp_path, **units)
-    with pytest.raises(ValueError, match="Expected"):
-        with open_fvfile(synthetic.path):
-            pass
+def test_nid_curves_in_other_units_read_back_the_same_in_nm(tmp_path, units):
+    """Curves come back in nm from whatever units the file declares for them."""
+    shape, points = (3, 4), (32, 32)
+    (tmp_path / "si").mkdir()
+    (tmp_path / "other").mkdir()
+    si = build_nid(tmp_path / "si", shape, points)
+    other = build_nid(tmp_path / "other", shape, points, **units)
+    expected = other.volumes[0]
+    n = min(expected.ext_points.min(), expected.ret_points.min())
+    with open_fvfile(si.path) as fvfile:
+        si_z, si_d = fvfile.volumes[0].get_all_curves()
+    with open_fvfile(other.path) as fvfile:
+        np.testing.assert_allclose(fvfile.k, other.k, rtol=1e-12)
+        z, d = fvfile.volumes[0].get_all_curves()
+    for r, c in np.ndindex(shape):
+        (ezext, ezret), (edext, edret) = expected.curve(r, c, n, n)
+        assert_float32_close(z[r, c], np.stack([ezext, ezret]))
+        assert_float32_close(d[r, c], np.stack([edext, edret]))
+    assert_float32_close(z, si_z)
+    assert_float32_close(d, si_d)
 
 
 def section_keys(headers):

@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# The files store float32 metres and the reader multiplies by 1e9 in float32, so curves
+# The files store float32 in each channel's declared unit (metres unless a test says otherwise) and the reader multiplies by one factor to nm in float32, so curves
 # match the stored values in nm to one float32 rounding (rtol 1e-7). Images are returned
 # as stored and match exactly. Metadata parsed from decimal text match to double
 # rounding; the time step is stored as a double and matches exactly.
@@ -164,6 +164,36 @@ def test_ardf_get_all_curves_returns_every_curve(complete):
             assert z.shape[:2] == d.shape[:2] == volume.shape
             assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
             assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+
+
+@pytest.mark.parametrize(
+    "channel_units",
+    [{"Raw": "nm", "Defl": "nm", "Drive": "nm"}, {"Raw": "nm"}, {"Defl": "nm"}],
+    ids=lambda u: "-".join(f"{k}={v}" for k, v in u.items()),
+)
+@pytest.mark.parametrize("lines_taken", [None, 2], ids=["complete", "stopped"])
+def test_ardf_curves_in_other_units_read_back_the_same_in_nm(
+    tmp_path, channel_units, lines_taken
+):
+    """Curves come back in nm from whatever length unit each channel declares."""
+    (tmp_path / "m").mkdir()
+    (tmp_path / "other").mkdir()
+    kwargs = {"lines_taken": lines_taken}
+    metres = build_ardf(tmp_path / "m", **kwargs)
+    other = build_ardf(tmp_path / "other", channel_units=channel_units, **kwargs)
+    with open_fvfile(metres.path) as fvfile:
+        metres_z, metres_d = fvfile.volumes[0].get_all_curves()
+    with open_fvfile(other.path) as fvfile:
+        volume, expected = fvfile.volumes[0], other.volumes[0]
+        for (r, c), curve in volume.iter_curves():
+            assert_same_curve(curve, expected.curve(r, c))
+            assert_same_curve(volume.get_curve(r, c), expected.curve(r, c))
+        z, d = volume.get_all_curves()
+    assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
+    assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+    # each file holds its own float32 rounding of the same curves
+    np.testing.assert_allclose(z, metres_z, rtol=1e-6, equal_nan=True)
+    np.testing.assert_allclose(d, metres_d, rtol=1e-6, equal_nan=True)
 
 
 def test_ardf_images_round_trip_exactly(complete):
