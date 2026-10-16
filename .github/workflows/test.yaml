@@ -3,7 +3,7 @@ name: Test
 on:
   # other branches run through their pull request, so a PR commit runs once
   push:
-    branches: [master, release-m0]
+    branches: [master, "release-*"]
   pull_request:
   # also regenerates every golden set, uploaded as artifacts
   workflow_dispatch:
