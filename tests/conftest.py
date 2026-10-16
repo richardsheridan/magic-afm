@@ -23,12 +23,15 @@ import platform
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = Path(tempfile.gettempdir()) / "magic-afm-test-data"
+# unpacked entries unused for this long are deleted, once per test process
+CACHE_MAX_AGE_S = 14 * 24 * 3600
 GOLDENS_DIR = REPO_ROOT / "tests" / "goldens"
 
 _PIXI_OS = {"darwin": "osx", "linux": "linux", "win32": "win"}
@@ -39,12 +42,43 @@ def _data_root() -> Path:
     return Path(os.environ.get("MAFM_TEST_DATA") or REPO_ROOT / "example.data")
 
 
+_pruned_dirs = set()
+
+
+def _prune_cache(cache_dir: Path) -> None:
+    """Delete cache entries whose directory mtime is older than CACHE_MAX_AGE_S.
+
+    Best effort: errors are ignored, since another process may be using or
+    pruning the same cache.
+    """
+    if cache_dir in _pruned_dirs:
+        return
+    _pruned_dirs.add(cache_dir)
+    cutoff = time.time() - CACHE_MAX_AGE_S
+    try:
+        entries = list(cache_dir.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                shutil.rmtree(entry, ignore_errors=True)
+        except OSError:
+            pass
+
+
 def _unpack_cached(packed: Path, relpath: str) -> Path:
+    _prune_cache(CACHE_DIR)
     src = packed.resolve()
     st = src.stat()
     key = hashlib.sha256(f"{src}\0{st.st_size}\0{st.st_mtime_ns}".encode())
-    dest = CACHE_DIR / key.hexdigest()[:16] / relpath
+    entry = CACHE_DIR / key.hexdigest()[:16]
+    dest = entry / relpath
     if dest.exists():
+        try:
+            os.utime(entry)  # mark it used, so pruning keeps it
+        except OSError:
+            pass
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=dest.name, suffix=".part")
