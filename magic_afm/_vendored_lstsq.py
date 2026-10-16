@@ -199,8 +199,8 @@ def leastsq(
         sigma = numpy.asarray_chkfinite(sigma)
     else:
         sigma = numpy.ones(ydata.shape, dtype=float)
-    ydata.shape = -1
-    sigma.shape = -1
+    ydata = ydata.reshape(-1)
+    sigma = sigma.reshape(-1)
 
     weight = 1.0 / (sigma + numpy.equal(sigma, 0))
     weight0 = weight * weight
@@ -284,7 +284,7 @@ def leastsq(
                 newpar = _get_parameters(newpar, constraints)
             workpar = newpar[noigno]
             yfit = model(x, *workpar)
-            yfit.shape = -1
+            yfit = yfit.reshape(-1)
             function_call_counter += 1
             chisq = (weight * (y - yfit) ** 2).sum()
             absdeltachi = chisq0 - chisq
@@ -525,7 +525,7 @@ def chisq_alpha_beta(
             f2 = last_evaluation
         else:
             f2 = model(x, *parameters)
-            f2.shape = -1
+            f2 = f2.reshape(-1)
             function_calls += 1
     deriv = numpy.zeros((n_free, nr))
     for deriv_inx, i in enumerate(numpy.where(free)[0]):
@@ -553,12 +553,12 @@ def chisq_alpha_beta(
     if last_evaluation is None:
         if constraints is None:
             yfit = model(x, *fitparam)
-            yfit.shape = -1
+            yfit = yfit.reshape(-1)
         else:
             newpar = _get_parameters(pwork, constraints)
             newpar = newpar[noigno]
             yfit = model(x, *newpar)
-            yfit.shape = -1
+            yfit = yfit.reshape(-1)
         function_calls += 1
     else:
         yfit = last_evaluation

@@ -320,6 +320,38 @@ def test_synthetic_fit_matches_golden(goldens, case, mode):
     assert_fields_match(actual, golden, f"{case} {mode.name}", tolerances)
 
 
+@pytest.mark.filterwarnings("error::DeprecationWarning")
+@pytest.mark.parametrize("mode", MODES, ids=lambda m: m.name)
+def test_fitfun_raises_no_deprecation_warning(mode):
+    """One fit, with errors raised rather than turned into NaN, does not warn."""
+    curve = demo_curve(**SYNTHETIC_CASES["demo_r0_c0"])
+    z, d, split, _ = preprocess(((0, 0), curve), mode)
+    with np.errstate(all="ignore"):
+        parms, parms_err, sse, _ = calculation.fitfun(
+            z, d, k=DEMO_K, fit_mode=mode, split=split, **DEFAULT_OPTIONS
+        )
+    assert np.all(np.isfinite(parms.item()))
+    assert np.all(np.isfinite(parms_err.item()))
+    assert np.isfinite(sse)
+
+
+@pytest.mark.filterwarnings("error::DeprecationWarning")
+@pytest.mark.parametrize("mode", MODES, ids=lambda m: m.name)
+def test_synthetic_fit_with_deprecations_as_errors_matches_golden(goldens, mode):
+    """The CLI fit path gives finite golden values when deprecations are errors."""
+    case = "demo_r0_c0"
+    golden = goldens["synthetic"][case]["fits"][mode.name]
+    actual = fit_synthetic(case, mode)
+    nonfinite = [
+        f"{group}.{name}"
+        for group, values in actual.items()
+        for name, value in values.items()
+        if not np.isfinite(value)
+    ]
+    assert not nonfinite, f"fit fell back to NaN: {nonfinite}"
+    assert_fields_match(actual, golden, f"{case} {mode.name} deprecations as errors")
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("mode", MODES, ids=lambda m: m.name)
 def test_nid_property_maps_match_golden(goldens, real_data_file, mode):
