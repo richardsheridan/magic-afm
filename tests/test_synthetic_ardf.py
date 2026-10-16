@@ -15,10 +15,11 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# The files store float32 in each channel's declared unit (metres unless a test says otherwise) and the reader multiplies by one factor to nm in float32, so curves
-# match the stored values in nm to one float32 rounding (rtol 1e-7). Images are returned
-# as stored and match exactly. Metadata parsed from decimal text match to double
-# rounding; the time step is stored as a double and matches exactly.
+# The files store float32 in each channel's declared unit (metres unless a test says
+# otherwise) and the reader multiplies by one factor to nm in float32, so curves match
+# the stored values in nm to one float32 rounding (rtol 1e-7). Images are returned as
+# stored and match exactly. Metadata parsed from decimal text match to double rounding;
+# the time step is stored as a double and matches exactly.
 
 import struct
 import zlib

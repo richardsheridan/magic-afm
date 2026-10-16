@@ -206,14 +206,13 @@ def build_nid(
     """Write a NID spectroscopy map of shape (rows, cols) and say what it holds.
 
     ``points`` are the forward and backward datapoints, the width of each row;
-    ``ext_points`` and ``ret_points`` (an int or a (rows, cols) array) give each
-    curve's own length up to that, all full by default. With ``curves_taken``
-    the map stops after that many curves in acquisition order. ``k`` is in N/m,
-    ``defl_sens`` in nm/V, ``scan_size`` in nm along x then y, ``mod_time`` the
-    seconds each ramp takes. The raw channels and the spring constant are
-    written in ``z_unit``, ``defl_unit`` (a force, a length or "V") and
-    ``k_unit``. ``scan_shape`` is the (lines, points) of the scan image saved
-    with the map.
+    ``ext_points`` and ``ret_points`` (an int or a (rows, cols) array) give each curve's
+    own length up to that, all full by default. With ``curves_taken`` the map stops
+    after that many curves in acquisition order. ``k`` is in N/m, ``defl_sens`` in nm/V,
+    ``scan_size`` in nm along x then y, ``mod_time`` the seconds each ramp takes. The
+    raw channels and the spring constant are written in ``z_unit``, ``defl_unit`` (a
+    force, a length or "V") and ``k_unit``. ``scan_shape`` is the (lines, points) of the
+    scan image saved with the map.
     """
     rows, cols = shape
     if rows < 2 or cols < 2:
