@@ -131,11 +131,6 @@ def golden_platform() -> str:
 def load_platform_goldens(filename: str) -> dict:
     """Load the real-file value goldens for this platform, or skip (or fail)."""
     plat = golden_platform()
-    if plat.startswith("win-") and os.environ.get("PIXI_ENVIRONMENT_NAME") == "test":
-        pytest.skip(
-            "real-file values in the Windows test env depend on the CPU model"
-            " even with the pins in pyproject.toml (EPYC 9V45 differs from 7763)"
-        )
     path = GOLDENS_DIR / plat / filename
     if not path.is_file():
         _missing_real_data(
