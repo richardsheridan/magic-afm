@@ -29,12 +29,12 @@ Then each volume, one per captured direction: its table, with a ``NEXT`` entry p
 at the next volume if there is one and an ``NSET`` entry giving how many curves it
 holds; an empty text table; a ``VDEF`` with points per line, lines, the steps along each
 axis and in time, their units and the segment names "Ext;Ret;"; one ``VCHN`` per channel
-(``Raw``, ``Defl``, ``Drive``, in m); an ``XDEF`` naming the experiment's extra values;
+(``Raw``, ``Defl``, ``Drive``, in m unless the builder is told otherwise); an ``XDEF`` naming the experiment's extra values;
 a ``VTOC`` with one slot per line, filled in the order the lines were taken, each
 ``VOFF`` entry giving the line's first curve; and an ``MLOV``. The curves follow, in the
 order they were taken. Each is a ``VSET`` (its index within its volume, line, point, a
 type, the offset of the previous curve of the same volume and the offset just past this
-curve's data), a ``VNAM`` "LineNNNNPointNNNN" and one ``VDAT`` per channel of float32 m,
+curve's data), a ``VNAM`` "LineNNNNPointNNNN" and one ``VDAT`` per channel of float32 in its unit,
 the extend half then the retract half in time order, after the indices of where each
 segment starts and of the last point. The trace runs along a line from point 0, the
 retrace back from the last point; with both kept, each line holds its trace then its
@@ -115,6 +115,8 @@ THUMBNAIL_SIZE = 128
 XDEF_SIZE = 96
 XDEF_TEXT = b"XLVDT;YLVDT;Seconds;TriggerTime;HeaterTemperature;HeaterHumidity;"
 CHANNELS = (("Raw", "m"), ("Defl", "m"), ("Drive", "m"))
+# the lengths a channel can be written in, in m
+LENGTH_UNITS = {"m": 1.0, "nm": 1e-9}
 MAP_NAMES = ("Height", "ZSensor", "Adhesion", "Force", "YoungsJKR")
 # FastMapCapture: which scan directions a fast force map kept, one volume each
 CAPTURES = {"trace": ("Trace",), "retrace": ("Retrace",), "both": ("Trace", "Retrace")}
@@ -204,6 +206,13 @@ def _maps(raw, defl, drive, points, k, rng) -> dict[str, np.ndarray]:
     return {name: m.astype(np.float32) for name, m in maps.items()}
 
 
+def _in_unit(metres: np.ndarray, unit: str) -> np.ndarray:
+    """float32 values in m as float32 values in unit, the same array for m."""
+    if unit == "m":
+        return metres
+    return (metres.astype(np.float64) / LENGTH_UNITS[unit]).astype(np.float32)
+
+
 def _thumbnail(image: np.ndarray, scan_size: tuple[float, float]) -> bytes:
     """The image as 8-bit grey levels, nearest neighbour, in the scan's aspect.
 
@@ -238,6 +247,7 @@ def build_ardf(
     invols: float = 55.471,
     scan_size: tuple[float, float] = (1000.0, 1000.0),
     rate: float = 1000.0,
+    channel_units: dict[str, str] | None = None,
     filename: str = "synthetic.ARDF",
 ) -> SyntheticFile:
     """Write a fast force map ARDF file and say what it holds.
@@ -249,7 +259,8 @@ def build_ardf(
     ``lines_taken`` the scan stops after that many lines, a stopped scan. ``k``
     in N/m, ``invols`` in nm/V, ``scan_size`` in nm along the fast then the slow
     axis, ``rate`` the curves per second. The volumes are named after the
-    direction they hold.
+    direction they hold. ``channel_units`` maps a channel name to the unit its
+    ``VCHN`` declares and its curves are stored in, "m" or "nm", by default m.
     """
     lines, cols = shape
     if lines < 2 or cols < 2:
@@ -257,6 +268,9 @@ def build_ardf(
     lines_taken = lines if lines_taken is None else lines_taken
     if not 0 < lines_taken <= lines:
         raise ValueError("lines_taken must be within the grid", lines_taken, lines)
+    units = dict(CHANNELS) | (channel_units or {})
+    if set(units) != {name for name, _ in CHANNELS}:
+        raise ValueError("channel_units names an unknown channel", channel_units)
     rng = np.random.default_rng(seed)
     directions = CAPTURES[capture]
     vset_types = dict(zip(directions, VSET_TYPES[capture], strict=True))
@@ -308,6 +322,7 @@ def build_ardf(
 
     counts = point_counts(shape, points)
     stored = {}
+    written = {}
     volumes = []
     for direction in directions:
         zext, zret, dext, dret = force_curves(
@@ -317,9 +332,23 @@ def build_ardf(
         defl = (np.concatenate([dext, dret], axis=-1) * 1e-9).astype(np.float32)
         drive = (raw + DRIVE_OFFSET).astype(np.float32)
         stored[direction] = (raw, defl, drive)
-        # what the stored float32 metres are in nm, NaN where never taken
-        z_nm = np.where(acquired[..., None], raw.astype(np.float64) * 1e9, np.nan)
-        d_nm = np.where(acquired[..., None], defl.astype(np.float64) * 1e9, np.nan)
+        # the channels in their units, and what those float32 values are in nm, NaN
+        # where never taken
+        written[direction] = tuple(
+            _in_unit(a, units[name])
+            for a, (name, _) in zip((raw, defl, drive), CHANNELS, strict=True)
+        )
+        z_file, d_file, _ = written[direction]
+        z_nm = np.where(
+            acquired[..., None],
+            z_file.astype(np.float64) * LENGTH_UNITS[units["Raw"]] * 1e9,
+            np.nan,
+        )
+        d_nm = np.where(
+            acquired[..., None],
+            d_file.astype(np.float64) * LENGTH_UNITS[units["Defl"]] * 1e9,
+            np.nan,
+        )
         order = tuple((r, c) for r in line_order for c in point_orders[direction])
         volumes.append(
             SyntheticVolume(
@@ -376,8 +405,8 @@ def build_ardf(
         f.table(b"TTOC", 4, 32, TABLE_FLAGS)
         vdef = (cols, lines, b"", x_step, y_step, t_step, b"m", b"m", b"s")
         f.add(b"VDEF", VDEF.pack(*vdef, b"Ext;Ret;", 2))
-        for channel, unit in CHANNELS:
-            f.add(b"VCHN", VCHN.pack(_cstring(channel), _cstring(unit)))
+        for channel, _ in CHANNELS:
+            f.add(b"VCHN", VCHN.pack(_cstring(channel), _cstring(units[channel])))
         xdef = struct.pack("<LL", 0, len(XDEF_TEXT)) + XDEF_TEXT
         f.add(b"XDEF", xdef + bytes(XDEF_SIZE - HEADER.size - len(xdef)))
         vtocs[direction] = f.table(b"VTOC", lines, 40, TABLE_FLAGS)
@@ -397,7 +426,7 @@ def build_ardf(
                     f.entry(vtocs[direction], slot, b"VOFF", voff)
                 name = f"Line{line:04d}Point{p:04d}".encode()
                 f.add(b"VNAM", VNAM.pack(index, line, p, len(name), name))
-                for channel, data in enumerate(stored[direction]):
+                for channel, data in enumerate(written[direction]):
                     vdat = VDAT.pack(index, line, p, n_total, channel, *segments)
                     f.add(b"VDAT", vdat + data[line, p].astype("<f4").tobytes())
                 # the curve points on to whatever section follows it
@@ -439,5 +468,5 @@ def build_ardf(
         t_step=t_step,
         scansize=(float(fast_str) * 1e9, float(slow_str) * 1e9),
         image_units=dict.fromkeys(images, "m"),
-        units=dict(CHANNELS),
+        units=units,
     )
