@@ -104,6 +104,8 @@ jobs:
         run: |
           echo "OPENBLAS_CORETYPE=Haswell" >> "$GITHUB_ENV"
           echo "NUMBA_CPU_NAME=haswell" >> "$GITHUB_ENV"
+          # empty, or numba adds the host's own features (AVX-512 on some runners)
+          echo "NUMBA_CPU_FEATURES=" >> "$GITHUB_ENV"
         shell: bash
       # real-file fits can depend on the CPU model, not only the OS
       - name: Show CPU
