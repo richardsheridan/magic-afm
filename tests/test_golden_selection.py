@@ -60,8 +60,28 @@ def test_platform_goldens_are_the_set_for_the_running_platform(monkeypatch, tmp_
         write_set(tmp_path, plat, "t2_goldens.json", {"platform": plat})
     monkeypatch.setattr(conftest, "GOLDENS_DIR", tmp_path)
     monkeypatch.setattr(conftest, "golden_platform", lambda: "linux-64")
+    monkeypatch.setenv("PIXI_ENVIRONMENT_NAME", "test")
     got = conftest.load_platform_goldens("t2_goldens.json")
     assert got == {"platform": "linux-64"}
+
+
+@pytest.mark.parametrize("env", ["test", "test-nonumba", "test-py311"])
+def test_platform_goldens_skip_for_cpu_dependence_only_in_the_windows_test_env(
+    monkeypatch, tmp_path, env
+):
+    """The Windows check reads golden_platform(), so faking it to win-* applies."""
+    write_set(tmp_path, "win-64", "t2_goldens.json", {"platform": "win-64"})
+    monkeypatch.setattr(conftest, "GOLDENS_DIR", tmp_path)
+    monkeypatch.setattr(conftest, "golden_platform", lambda: "win-64")
+    monkeypatch.setenv("PIXI_ENVIRONMENT_NAME", env)
+    monkeypatch.setenv("MAFM_REQUIRE_REAL_DATA", "1")  # the skip must survive CI
+    if env != "test":
+        got = conftest.load_platform_goldens("t2_goldens.json")
+        assert got == {"platform": "win-64"}
+        return
+    with pytest.raises(pytest.skip.Exception) as excinfo:
+        conftest.load_platform_goldens("t2_goldens.json")
+    assert "CPU" in excinfo.value.msg
 
 
 def test_platform_goldens_skip_naming_a_platform_without_a_set(monkeypatch, tmp_path):
