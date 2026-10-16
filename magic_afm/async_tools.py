@@ -22,7 +22,6 @@ It is meant to be easy to lift individual items out into other projects.
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import os
 from contextlib import asynccontextmanager, nullcontext
 from itertools import islice
 from math import inf

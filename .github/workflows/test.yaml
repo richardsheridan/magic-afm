@@ -1,7 +1,9 @@
 name: Test
 
 on:
+  # other branches run through their pull request, so a PR commit runs once
   push:
+    branches: [master, release-m0]
   pull_request:
   # also regenerates every golden set, uploaded as artifacts
   workflow_dispatch:
@@ -120,24 +122,27 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb
       # the GUI smoke test runs under xvfb-run on Linux
-      - run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}pixi run -e ${{ matrix.environment }} pytest -rfEs
+      - id: pytest
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}pixi run -e ${{ matrix.environment }} pytest -rfEs
         env:
           MAFM_GUI_TESTS: "1"
-      # when tests fail, on a manual run, or when the head commit message has
+      # when pytest fails, on a manual run, or when a pushed head commit message has
       # [regen-goldens], regenerate this platform's real-file goldens (the pixi test
       # envs pin the CPU-specific numerics) so drift can be measured with --compare
       - name: Regenerate goldens
         if: >-
-          failure() || github.event_name == 'workflow_dispatch'
-          || contains(github.event.head_commit.message, '[regen-goldens]')
+          !cancelled() && (steps.pytest.outcome == 'failure'
+          || github.event_name == 'workflow_dispatch'
+          || contains(github.event.head_commit.message, '[regen-goldens]'))
         run: |
           pixi run -e ${{ matrix.environment }} python tests/goldens/make_t2_goldens.py --out-dir goldens --platform-only
           pixi run -e ${{ matrix.environment }} python tests/goldens/make_t3_goldens.py --out-dir goldens --platform-only
         shell: bash
       - name: Upload regenerated goldens
         if: >-
-          failure() || github.event_name == 'workflow_dispatch'
-          || contains(github.event.head_commit.message, '[regen-goldens]')
+          !cancelled() && (steps.pytest.outcome == 'failure'
+          || github.event_name == 'workflow_dispatch'
+          || contains(github.event.head_commit.message, '[regen-goldens]'))
         uses: actions/upload-artifact@v4
         with:
           name: goldens-${{ matrix.os }}-${{ matrix.environment }}-${{ github.run_attempt }}

@@ -43,7 +43,10 @@ except ImportError:
 try:
     from subprocess import STARTF_USESHOWWINDOW, STARTUPINFO
 except ImportError:
-    STARTUPINFO = lambda *a, **kw: None
+
+    def STARTUPINFO(*a, **kw):
+        return None
+
     STARTF_USESHOWWINDOW = None
 
 import numpy as np

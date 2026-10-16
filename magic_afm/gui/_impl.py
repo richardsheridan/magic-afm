@@ -428,7 +428,7 @@ class AsyncFigureCanvasTkAgg(FigureCanvasTkAgg):
                 draw_fn = None
                 # Batch rapid artist call requests if a draw is incoming
                 # spend roughly equal time building artists and drawing
-                with trio.move_on_at(deadline) as delay_scope:
+                with trio.move_on_at(deadline):
                     async for draw_fn in self.draw_recv:
                         await trio.to_thread.run_sync(draw_fn)
                         draw_fn = None
@@ -2549,28 +2549,28 @@ class ApproximateHistogram:
         self._max = -inf
 
     @staticmethod
-    def _update_costs_for_merge(costs, l, i, val):
-        """update costs array to reflect l[i:i+2] = (val, )"""
+    def _update_costs_for_merge(costs, items, i, val):
+        """update costs array to reflect items[i:i+2] = (val, )"""
         # TODO: combine with update_costs()
         if 0 < i < len(costs) - 1:
-            costs[i - 1 : i + 2] = val[0] - l[i - 1][0], l[i + 1][0] - val[0]
+            costs[i - 1 : i + 2] = val[0] - items[i - 1][0], items[i + 1][0] - val[0]
         elif i > 0:
-            costs[i - 1 : i + 1] = (val[0] - l[i - 1][0],)
+            costs[i - 1 : i + 1] = (val[0] - items[i - 1][0],)
         else:
-            costs[i : i + 2] = (l[i + 1][0] - val[0],)
+            costs[i : i + 2] = (items[i + 1][0] - val[0],)
 
     @staticmethod
-    def _insert_with_cost(costs, l, val):
-        i = bisect_right(l, val)
-        l.insert(i, val)
+    def _insert_with_cost(costs, items, val):
+        i = bisect_right(items, val)
+        items.insert(i, val)
         # update costs array to reflect insertion
         if i > 0:
-            new_cost = val[0] - l[i - 1][0]
+            new_cost = val[0] - items[i - 1][0]
             costs.insert(i - 1, new_cost)
             if i < len(costs):
-                costs[i] = l[i + 1][0] - val[0]
-        elif len(l) > 1:
-            costs.insert(0, l[1][0] - val[0])
+                costs[i] = items[i + 1][0] - val[0]
+        elif len(items) > 1:
+            costs.insert(0, items[1][0] - val[0])
 
     def add(self, point):
         """Add point to histogram"""

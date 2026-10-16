@@ -42,7 +42,7 @@ SHORT_SUMMARY_RE = re.compile(r"^=+ short test summary info =+$")
 
 
 def steps(pixi, extra):
-    run = [pixi, "run", "--frozen"]
+    run = [pixi, "run", "--locked"]
     yield "lint", [*run, "lint"], False
     for env in ("test", "test-nonumba"):
         yield f"pytest {env}", [*run, "-e", env, "test", *PYTEST_ARGS, *extra], True
