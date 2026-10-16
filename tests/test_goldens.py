@@ -15,7 +15,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# The values live in tests/goldens/t2_goldens.json, written by
+# The values live in tests/goldens/t2_goldens.json (synthetic) and
+# tests/goldens/<pixi platform>/t2_goldens.json (the .nid), written by
 # tests/goldens/make_t2_goldens.py, which imports the builders below so the
 # two cannot diverge. Regenerate on purpose only, and say why in the commit.
 #
@@ -32,13 +33,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import load_platform_goldens
 
 from magic_afm import calculation
 from magic_afm.calculation import PROPERTY_DTYPE, FitFix, FitMode
 from magic_afm.data_readers import SUFFIX_FVFILE_MAP
 
 GOLDENS_PATH = Path(__file__).resolve().parent / "goldens" / "t2_goldens.json"
-NID_RELPATH = "PVDF2_Film_U_00002/20251216_141819_PVDF2_Film_U_00002.nid"
+NID_RELPATH = "test_cases/20251216_141819_PVDF2_Film_U_00002.nid"
 MODES = (FitMode.EXTEND, FitMode.RETRACT, FitMode.BOTH)
 
 # Fit options at the CLI defaults (magic_afm/cli/_impl.py, main). The GUI
@@ -354,9 +356,9 @@ def test_synthetic_fit_with_deprecations_as_errors_matches_golden(goldens, mode)
 
 @pytest.mark.slow
 @pytest.mark.parametrize("mode", MODES, ids=lambda m: m.name)
-def test_nid_property_maps_match_golden(goldens, real_data_file, mode):
+def test_nid_property_maps_match_golden(real_data_file, mode):
+    golden = load_platform_goldens("t2_goldens.json")["nid"][mode.name]
     path = Path(real_data_file(NID_RELPATH))
-    golden = goldens["nid"][mode.name]
     fingerprint, maps = nid_results(path, mode)
     where = f"nid {mode.name}"
     assert_fingerprint_matches(fingerprint, golden["resampled"], "resampled", where)

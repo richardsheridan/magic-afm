@@ -1,4 +1,4 @@
-"""Write tests/goldens/t3_goldens.json from the current CLI (plan item T3).
+"""Write the T3 goldens from the current CLI (plan item T3).
 
 Run from the repository root:
 
@@ -10,13 +10,19 @@ summaries are imported from tests/test_cli.py, so the test and this script
 compute alike. The stack the values were captured on is recorded under
 "stack" in the JSON.
 
+The options JSONs are shared by every platform and go to
+<out-dir>/t3_goldens.json. Map values depend on the platform and go to
+<out-dir>/<pixi platform>/t3_goldens.json. --out-dir defaults to tests/goldens.
+--platform-only writes the platform file alone and leaves the shared one as is.
+
 To measure spread between environments:
 
-    ... make_t3_goldens.py --out OTHER.json
+    ... make_t3_goldens.py --out-dir OTHER [--platform-only]
     ... make_t3_goldens.py --compare A.json B.json
 
 --compare prints, per stored field, the largest absolute and relative
-difference and any change in a NaN pattern or in the sampled pixels.
+difference and any change in a NaN pattern or in the sampled pixels. A and B
+may be shared or platform files.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -43,6 +49,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
@@ -60,7 +68,12 @@ def generate(t3, resolve, tmp):
         if name not in t3.NAMING or t3.NAMING[name][3] != "npy":
             continue
         stem, mode, trace, _ = t3.NAMING[name]
-        path = Path(resolve(relpath))
+        try:
+            path = Path(resolve(relpath))
+        except pytest.skip.Exception as e:
+            # CI's corpus lacks the .nid; write the runs whose files exist
+            print(f"no {name} run:", e.msg)
+            continue
         out = Path(tmp) / name
         result = t3.invoke_cli(path, out, args)
         assert result.exit_code == 0, result.output
@@ -79,7 +92,10 @@ def generate(t3, resolve, tmp):
             full[name] = {
                 m: [[f32(x) for x in row] for row in a] for m, a in maps.items()
             }
-    return {"stack": stack(), "options": options, "summaries": summaries, "full": full}
+    return (
+        {"stack": stack(), "options": options},
+        {"stack": stack(), "summaries": summaries, "full": full},
+    )
 
 
 def summary_json(summary):
@@ -145,10 +161,14 @@ def compare(a_path, b_path):
     b = json.loads(Path(b_path).read_text())
     print("A:", a["stack"])
     print("B:", b["stack"])
-    print("options equal:", a["options"] == b["options"])
+    if "options" in a and "options" in b:
+        print("options equal:", a["options"] == b["options"])
     print(f"{'field':60} {'max abs':>10} {'max rel':>10} NaN")
     b_leaves = dict(leaves(b))
     for path, x in leaves(a):
+        if path not in b_leaves:
+            print(f"{'.'.join(path):60} {'missing in B':>21}")
+            continue
         y = b_leaves[path]
         if path[-1] in ("nan_mask", "pixels"):
             if x != y:
@@ -169,19 +189,27 @@ def compare(a_path, b_path):
 def main():
     sys.path[:0] = [str(REPO_ROOT), str(REPO_ROOT / "tests")]
     import test_cli as t3
-    from conftest import resolve_real_data_file
+    from conftest import GOLDENS_DIR, golden_platform, resolve_real_data_file
 
     parser = argparse.ArgumentParser(description=__doc__.partition("\n")[0])
-    parser.add_argument("--out", type=Path, default=t3.GOLDENS_PATH)
+    parser.add_argument("--out-dir", type=Path, default=GOLDENS_DIR)
+    parser.add_argument("--platform-only", action="store_true")
     parser.add_argument("--compare", nargs=2, metavar=("A", "B"))
     args = parser.parse_args()
     if args.compare:
         compare(*args.compare)
         return
     with tempfile.TemporaryDirectory() as tmp:
-        goldens = generate(t3, resolve_real_data_file, tmp)
-    args.out.write_text(dumps(goldens) + "\n")
-    print("wrote", args.out)
+        shared, platform_part = generate(t3, resolve_real_data_file, tmp)
+    if not args.platform_only:
+        write(args.out_dir / "t3_goldens.json", shared)
+    write(args.out_dir / golden_platform() / "t3_goldens.json", platform_part)
+
+
+def write(path, goldens):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dumps(goldens) + "\n")
+    print("wrote", path)
 
 
 if __name__ == "__main__":

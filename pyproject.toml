@@ -82,6 +82,24 @@ pytest-trio = "*"
 [tool.pixi.feature.test.tasks]
 test = { cmd = ["pytest", "tests"], default-environment = "test" }
 
+# Real-file fits depend on the CPU model through OpenBLAS kernels, numba's host
+# tuning and numpy's AVX-512 dispatch; pinned so one golden set per platform
+# holds (see tests/goldens). NUMBA_CPU_FEATURES is empty on purpose, or numba
+# adds the host's own features.
+[tool.pixi.feature.test.target.osx-arm64.activation.env]
+OPENBLAS_CORETYPE = "ARMV8"
+
+[tool.pixi.feature.test.target.linux-64.activation.env]
+OPENBLAS_CORETYPE = "Haswell"
+NUMBA_CPU_NAME = "haswell"
+NUMBA_CPU_FEATURES = ""
+NPY_DISABLE_CPU_FEATURES = "X86_V4 AVX512_ICL AVX512_SPR"
+
+[tool.pixi.feature.test.target.win-64.activation.env]
+OPENBLAS_CORETYPE = "Haswell"
+NUMBA_CPU_NAME = "haswell"
+NUMBA_CPU_FEATURES = ""
+
 # oldest supported python, for the CI matrix (T4); its own solve group so the
 # default group keeps the newest stack
 [tool.pixi.feature.py311.dependencies]
