@@ -96,6 +96,15 @@ jobs:
         with:
           environments: ${{ matrix.environment }}
           locked: true
+      # Real-file fits change with the runner's CPU model (EPYC 7763 vs 9V74/9V45),
+      # through OpenBLAS's per-CPU kernels and numba's host-tuned code. Pin both to
+      # one x86-64 target so a golden set holds on every runner of an OS.
+      - name: Pin CPU-specific numerics on x86-64
+        if: runner.arch == 'X64'
+        run: |
+          echo "OPENBLAS_CORETYPE=Haswell" >> "$GITHUB_ENV"
+          echo "NUMBA_CPU_NAME=haswell" >> "$GITHUB_ENV"
+        shell: bash
       # real-file fits can depend on the CPU model, not only the OS
       - name: Show CPU
         run: |
