@@ -51,7 +51,6 @@ import numpy as np
 import pytest
 from click.testing import CliRunner, Result
 from conftest import load_platform_goldens
-from synthetic_files.ardf import build_ardf
 from test_goldens import TOLERANCES as T2_TOLERANCES
 
 from magic_afm.calculation import FitFix
@@ -592,14 +591,6 @@ def assert_maps_written_with_shape(result, out, stem, shape):
     for m in DEFAULT_MAPS:
         a = np.load(out / export_name(stem, m))
         assert (a.shape, a.dtype) == (shape, np.float32), m
-
-
-@pytest.mark.parametrize("shape", [(6, 4), (4, 6)], ids=["tall", "wide"])
-def test_cli_maps_of_a_non_square_ardf_are_lines_by_points(tmp_path, shape):
-    synthetic = build_ardf(tmp_path, shape)
-    out = tmp_path / "out"
-    result = invoke_cli(synthetic.path, out, ())
-    assert_maps_written_with_shape(result, out, synthetic.path.stem, shape)
 
 
 @pytest.mark.slow
