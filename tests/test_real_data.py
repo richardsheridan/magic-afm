@@ -156,6 +156,7 @@ def test_missing_file_skips_naming_the_file_and_the_env_var(
     tmp_path, monkeypatch, real_data_file
 ):
     monkeypatch.setenv("MAFM_TEST_DATA", str(tmp_path))
+    monkeypatch.delenv("MAFM_REQUIRE_REAL_DATA", raising=False)
 
     with pytest.raises(pytest.skip.Exception) as excinfo:
         real_data_file(RELPATH)
@@ -164,21 +165,29 @@ def test_missing_file_skips_naming_the_file_and_the_env_var(
     assert "MAFM_TEST_DATA" in str(excinfo.value)
 
 
+def test_missing_file_fails_when_real_data_is_required(
+    tmp_path, monkeypatch, real_data_file
+):
+    monkeypatch.setenv("MAFM_TEST_DATA", str(tmp_path))
+    monkeypatch.setenv("MAFM_REQUIRE_REAL_DATA", "1")
+
+    with pytest.raises(pytest.fail.Exception) as excinfo:
+        real_data_file(RELPATH)
+
+    assert RELPATH in str(excinfo.value)
+    assert "MAFM_REQUIRE_REAL_DATA" in str(excinfo.value)
+
+
 @pytest.mark.slow
-def test_example_data_corpus_resolves_packed_and_raw_files(monkeypatch, real_data_file):
-    monkeypatch.delenv("MAFM_TEST_DATA", raising=False)
-    packed_relpath = "test_cases/PS_PCL_SAA/QNM/maxscanrate.000.pfc"
-    raw_relpath = "test_cases/DOE4_20nN_80nm.0_00012.spm"
-
-    sums = Path(real_data_file("test_cases/SHA256SUMS.txt")).read_text()
-    expected = {
-        "test_cases/" + line.split()[-1]: line.split()[0]
-        for line in sums.splitlines()
+def test_real_data_corpus_matches_the_manifest(real_data_file):
+    """Every file the manifest lists resolves to the bytes its digest names."""
+    manifest = (REPO_ROOT / "tests" / "real_data_manifest.txt").read_text()
+    entries = [
+        (line.split()[0], "test_cases/" + line.split()[-1])
+        for line in manifest.splitlines()
         if line and not line.startswith("#")
-    }
-    packed = Path(real_data_file(packed_relpath))
-    raw = Path(real_data_file(raw_relpath))
-
-    assert hashlib.sha256(packed.read_bytes()).hexdigest() == expected[packed_relpath]
-    assert raw.samefile(REPO_ROOT / "example.data" / raw_relpath)
-    assert raw.read_bytes().startswith(b"\\*Force file list")
+    ]
+    assert entries
+    for digest, relpath in entries:
+        with open(real_data_file(relpath), "rb") as f:
+            assert hashlib.file_digest(f, "sha256").hexdigest() == digest, relpath

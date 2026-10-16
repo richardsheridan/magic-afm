@@ -109,7 +109,8 @@ jobs:
           # the SIMD features numpy dispatches to and the BLAS it loaded
           pixi run -e ${{ matrix.environment }} python -c "import numpy; numpy.show_runtime()"
         shell: bash
-      # tests marked slow skip when this misses (a fork's first pull request)
+      # tests marked slow skip when this misses (a fork's pull request); runs that
+      # have the corpus set MAFM_REQUIRE_REAL_DATA below, so a miss fails there
       - name: Restore real-data cache
         uses: actions/cache/restore@v4
         with:
@@ -126,6 +127,10 @@ jobs:
         run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}pixi run -e ${{ matrix.environment }} pytest -rfEs
         env:
           MAFM_GUI_TESTS: "1"
+          MAFM_REQUIRE_REAL_DATA: >-
+            ${{ (github.event_name != 'pull_request'
+            || github.event.pull_request.head.repo.full_name == github.repository)
+            && '1' || '' }}
       # when pytest fails, on a manual run, or when a pushed head commit message has
       # [regen-goldens], regenerate this platform's real-file goldens (the pixi test
       # envs pin the CPU-specific numerics) so drift can be measured with --compare

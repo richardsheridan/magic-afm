@@ -155,7 +155,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = ["--strict-markers"]
 markers = [
-    "slow: needs real data files in example.data or MAFM_TEST_DATA; skips if absent",
+    "slow: needs real data files in example.data or MAFM_TEST_DATA; skips if absent, fails if MAFM_REQUIRE_REAL_DATA=1",
 ]
 
 [tool.pixi.environments]
