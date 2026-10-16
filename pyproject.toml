@@ -87,7 +87,7 @@ test = { cmd = ["pytest", "tests"], default-environment = "test" }
 # holds (see tests/goldens). NUMBA_CPU_FEATURES is empty on purpose, or numba
 # adds the host's own features.
 [tool.pixi.feature.test.target.osx-arm64.activation.env]
-OPENBLAS_CORETYPE = "VORTEX"
+OPENBLAS_CORETYPE = "ARMV8"
 
 [tool.pixi.feature.test.target.linux-64.activation.env]
 OPENBLAS_CORETYPE = "Haswell"
