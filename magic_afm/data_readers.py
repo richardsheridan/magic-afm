@@ -1128,23 +1128,16 @@ class ARDFVolume:
             name = "Trace" if reader.trace else "Retrace"
         else:
             first_vset = ARDFVset.unpack(first_vset_header)
-            reader = ARDFForceMapReader(
-                data,
-                vtoc,
-                lines,
-                points,
-                first_vset.vtype,
-                channels,
-                nan_curve(npts or 0),
-            )
+            args = (data, vtoc, lines, points, first_vset.vtype, channels)
             if npts is None:
                 # no usable note, so fall back on the longest acquired curve
+                probe = ARDFForceMapReader(*args, nan_curve(0))
                 npts = max(
                     vdat.seg_offsets[1]
-                    for vset in reader.traverse_vsets(vtoc.pointers[0])
-                    for vdat in reader.traverse_vdats(vset.offset + vset.size)
+                    for vset in probe.traverse_vsets(vtoc.pointers[0])
+                    for vdat in probe.traverse_vdats(vset.offset + vset.size)
                 )
-                reader = evolve(reader, nancurve=nan_curve(npts))
+            reader = ARDFForceMapReader(*args, nan_curve(npts))
             name = "FMAP"
 
         return cls(
@@ -1155,6 +1148,15 @@ class ARDFVolume:
             xdef,
             reader,
         )
+
+    def acquired_mask(self) -> np.ndarray | None:
+        """Mask of the curves the file holds, or None for a complete regular scan."""
+        if not isinstance(self._reader, ARDFForceMapReader):
+            return None
+        mask = np.zeros(self.shape, dtype=bool)
+        for rc in self.iter_indices():
+            mask[rc] = True
+        return mask
 
     def get_curve(self, r: int, c: int) -> ZDArrays:
         """Efficiently get a specific curve from disk."""
@@ -1230,10 +1232,8 @@ class ARDFFile:
         # a stopped scan leaves its images unwritten past the curves it acquired
         acquired = None
         for volume in volumes:
-            if isinstance(volume._reader, ARDFForceMapReader):
-                mask = np.zeros(volume.shape, dtype=bool)
-                for rc in volume.iter_indices():
-                    mask[rc] = True
+            mask = volume.acquired_mask()
+            if mask is not None:
                 acquired = mask if acquired is None else acquired | mask
         if acquired is not None and not acquired.all():
             acquired.setflags(write=False)
