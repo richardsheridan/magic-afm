@@ -336,23 +336,18 @@ class ARH5ForceMapVolume:
             yield r, c
 
     def iter_curves(self):
-        for index, curve in self.force_curves.items():
-            # Unfortunately they threw in segments here too, so we skip over it
-            if index == "Segments":
-                continue
-            # Because of the nonuniform arrays, each indent gets its own dataset
-            # indexed by 'row:column' e.g. '1:1'. We could start with the shape and index
-            # manually, but the string munging is easier for me to think about
-            r, c = list(map(int, index.split(":")))
-            split = self.extlens[r, c]
-            yield (r, c), self._shared_get_part(curve, split)
+        for r, c in self.iter_indices():
+            yield (r, c), self.get_curve(r, c)
 
     def get_all_curves(self):
-        im_r, im_c, num_segments = self.segments.shape
-        x = np.empty((im_r, im_c, 2, self.minext + self.minret), dtype=np.float32)
-        for index, curve in self.iter_curves():
-            x[*index, :, :] = curve
-        return np.moveaxis(x.reshape(x.shape[:-1] + (2, -1)), 2, 0)
+        # Cut both halves to one length, keeping the points nearest the surface
+        n = min(self.minext, self.minret)
+        z = np.empty(self.shape + (2, n), dtype=np.float32)
+        d = np.empty(self.shape + (2, n), dtype=np.float32)
+        for index, ((zext, zret), (dext, dret)) in self.iter_curves():
+            z[index] = zext[len(zext) - n :], zret[:n]
+            d[index] = dext[len(dext) - n :], dret[:n]
+        return z, d
 
 
 @frozen
