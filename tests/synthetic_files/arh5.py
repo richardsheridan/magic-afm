@@ -13,7 +13,11 @@ from ``0`` in capture order, so a retrace-only capture keeps its retrace in
 the same kind of string) and one float32 (rows, cols, points) dataset per
 channel, each curve the extend half then the retract half in time order. The
 layout, attribute types, chunking and note keys follow a real conversion of a
-32 x 32 map of 2000 point curves captured on retrace only.
+32 x 32 map of 2000 point curves captured on retrace only. Being square, it
+cannot say whether the first axis of the maps and curve datasets is the slow
+one, the lines, or the fast one; the builder puts the lines first, as the
+reader does. Which value of ``FastMapCapture`` means trace only is a guess (1;
+the real files say 2 for retrace only and 3 for both).
 
 A slow force map (``ForceMap/0``) has curves of different lengths, so each is
 its own (channels, points) dataset named ``"r:c"``, beside a ``Segments``

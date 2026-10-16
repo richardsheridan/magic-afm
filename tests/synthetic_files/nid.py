@@ -11,19 +11,25 @@ decode to ``int * Dim2Range / 2**SaveBits + Dim2Range / 2 + Dim2Min`` in
 A spectroscopy map stores one row per curve in the order the map was acquired,
 a serpentine over the grid: row 0 left to right, row 1 right to left, and so on,
 ``Map0`` in ``[DataSet\\SpecInfos\\SpecMapTable]`` giving the x and y extents of
-the outermost points and the number of points along x then y. ``Spec forward``
-rows hold the extend half in time order, far from the surface to near it;
-``Spec backward`` rows hold the retract half stored far to near as well, the
-reverse of time order. A row holds ``LineDim{n}Points`` points from its start
-and zeros after them, because a force-triggered ramp stops early. The spring
-constant is ``Prop0`` of the cantilever calibration and the deflection
-sensitivity is the full scale of the ``In5`` scanhead input over its 10 V.
+the outermost points and two point counts. ``Spec forward`` rows hold the extend
+half in time order, far from the surface to near it; ``Spec backward`` rows hold
+the retract half stored far to near as well, the reverse of time order. A
+forward row holds ``LineDim{n}Points`` points from its start and zeros after
+them, because a force-triggered ramp stops early. The spring constant is
+``Prop0`` of the cantilever calibration and the deflection sensitivity is the
+full scale of the ``In5`` scanhead input over its 10 V.
 
 The layout follows a real Nanosurf file (software 3.10, a 10 x 10 map of 1024
 point curves): its groups, channels, section and key names, the analysis
 results the software saves beside the curves, and a scan image taken before the
 map. Not taken from it: the SetView and ProcessorSet sections (display and
 analysis settings) and most scanhead and parameter keys, which nothing reads.
+That file cannot settle some details, so for these the builder follows the
+reader: on a map that is not square, that the first count of ``Map0`` is the
+number of columns, the points along each serpentine row; that a short backward
+row is zero filled at its end like a forward one (every backward row of the real
+file is full); and that the scan image's backward rows run the same way as its
+forward rows. The trailing ``0;1`` of ``Map0`` is copied as found.
 """
 
 # Copyright (C) Richard J. Sheridan
