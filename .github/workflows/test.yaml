@@ -96,6 +96,15 @@ jobs:
         with:
           environments: ${{ matrix.environment }}
           locked: true
+      # real-file fits can depend on the CPU model, not only the OS
+      - name: Show CPU
+        run: |
+          case "$RUNNER_OS" in
+            Linux) grep -m1 'model name' /proc/cpuinfo ;;
+            macOS) sysctl -n machdep.cpu.brand_string ;;
+            Windows) powershell -Command '(Get-CimInstance Win32_Processor).Name' ;;
+          esac
+        shell: bash
       # tests marked slow skip when this misses (a fork's first pull request)
       - name: Restore real-data cache
         uses: actions/cache/restore@v4
