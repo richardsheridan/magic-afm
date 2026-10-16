@@ -50,7 +50,10 @@ class SyntheticVolume:
     curve's own ``ext_points`` or ``ret_points``. NaN within a curve marks a
     point the file does not hold, so compare only where the expected value is
     not NaN. ``order`` lists the pixels in the order the file stores their
-    curves, or is None when the format does not fix one.
+    curves, or is None when the format does not fix one. ``acquired`` is a
+    (rows, cols) mask of the pixels whose curves the file holds, for a scan
+    stopped part way, or None when it holds them all; elsewhere the curves are
+    NaN.
     """
 
     name: str
@@ -61,6 +64,7 @@ class SyntheticVolume:
     ext_points: np.ndarray
     ret_points: np.ndarray
     order: tuple[Index, ...] | None = None
+    acquired: np.ndarray | None = None
 
     @property
     def shape(self) -> Index:
