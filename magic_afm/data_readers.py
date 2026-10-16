@@ -50,14 +50,20 @@ except ImportError:
     STARTF_USESHOWWINDOW = None
 
 import numpy as np
-from attrs import field, frozen
+from attrs import evolve, field, frozen
 
 NANOMETER_UNIT_CONVERSION = (
     1e9  # maybe we can intelligently read this from the file someday
 )
-NANCURVE = np.full(shape=(2, 2, 100), fill_value=np.nan, dtype=np.float32)
-NANCURVE.setflags(write=False)
 TOC_STRUCT = struct.Struct("<QLL")
+
+
+def nan_curve(npts: int) -> np.ndarray:
+    """A read-only all-NaN curve with npts points in each half."""
+    x = np.full(shape=(2, 2, npts), fill_value=np.nan, dtype=np.float32)
+    x.setflags(write=False)
+    return x
+
 
 ###############################################
 ############### Typing stuff ##################
@@ -732,6 +738,7 @@ class ARDFImage:
     shape: Index
     units: str
     step_info: StepInfo
+    acquired: np.ndarray | None = field(default=None, repr=False)
     _struct = struct.Struct("<LLQQdd32s32s32s32s")
 
     @classmethod
@@ -795,6 +802,8 @@ class ARDFImage:
         if gami_header.size != 16 or gami_header.name != b"GAMI":
             raise FileFormatError("Malformed image layout.", gami_header)
         gami_header.validate()
+        if self.acquired is not None:
+            arr[~self.acquired] = np.nan
         return arr
 
 
@@ -911,6 +920,7 @@ class ARDFForceMapReader:
     points: int
     vtype: int
     channels: ChanMap
+    nancurve: np.ndarray = field(repr=False)
     _seen_vsets: dict[Index, ARDFVset] = field(init=False, factory=dict)
 
     @property
@@ -958,7 +968,7 @@ class ARDFForceMapReader:
                 sl = np.s_[:]
             i = bisect_left(self.vtoc.lines[sl], r)
             if i >= len(self.vtoc.lines) or r != int(self.vtoc.lines[sl][i]):
-                return NANCURVE
+                return self.nancurve
             # read entire line of the vtoc
             for vset in self.traverse_vsets(int(self.vtoc.pointers[sl][i])):
                 if vset.line != r:
@@ -969,9 +979,9 @@ class ARDFForceMapReader:
             vset = self._seen_vsets[index]
         except KeyError:
             # index was missing from the line, probably due to "Stop"
-            return NANCURVE
+            return self.nancurve
 
-        zxr, dxr = NANCURVE
+        zxr, dxr = self.nancurve
         for vdat in self.traverse_vdats(vset.offset + vset.size):
             _, ext, *_ = vdat.seg_offsets
             ret = 2 * ext
@@ -996,7 +1006,7 @@ class ARDFForceMapReader:
         for vset in self.traverse_vsets(self.vtoc.pointers[0]):
             if vset.vtype != self.vtype:
                 continue
-            zxr, dxr = NANCURVE
+            zxr, dxr = self.nancurve
             for vdat in self.traverse_vdats(vset.offset + vset.size):
                 _, ext, *_ = vdat.seg_offsets
                 ret = 2 * ext
@@ -1048,7 +1058,7 @@ class ARDFVolume:
     _struct = struct.Struct("<LL24sddd32s32s32s32sQ")
 
     @classmethod
-    def parse_volm(cls, volm_header: ARDFHeader):
+    def parse_volm(cls, volm_header: ARDFHeader, npts: int | None = None):
         data = volm_header.data
         if volm_header.size != 32 or volm_header.name != b"VOLM":
             raise FileFormatError("Malformed volume header.", volm_header)
@@ -1118,14 +1128,16 @@ class ARDFVolume:
             name = "Trace" if reader.trace else "Retrace"
         else:
             first_vset = ARDFVset.unpack(first_vset_header)
-            reader = ARDFForceMapReader(
-                data,
-                vtoc,
-                lines,
-                points,
-                first_vset.vtype,
-                channels,
-            )
+            args = (data, vtoc, lines, points, first_vset.vtype, channels)
+            if npts is None:
+                # no usable note, so fall back on the longest acquired curve
+                probe = ARDFForceMapReader(*args, nan_curve(0))
+                npts = max(
+                    vdat.seg_offsets[1]
+                    for vset in probe.traverse_vsets(vtoc.pointers[0])
+                    for vdat in probe.traverse_vdats(vset.offset + vset.size)
+                )
+            reader = ARDFForceMapReader(*args, nan_curve(npts))
             name = "FMAP"
 
         return cls(
@@ -1136,6 +1148,15 @@ class ARDFVolume:
             xdef,
             reader,
         )
+
+    def acquired_mask(self) -> np.ndarray | None:
+        """Mask of the curves the file holds, or None for a complete regular scan."""
+        if not isinstance(self._reader, ARDFForceMapReader):
+            return None
+        mask = np.zeros(self.shape, dtype=bool)
+        for rc in self.iter_indices():
+            mask[rc] = True
+        return mask
 
     def get_curve(self, r: int, c: int) -> ZDArrays:
         """Efficiently get a specific curve from disk."""
@@ -1187,6 +1208,12 @@ class ARDFFile:
                 f"text table has {len(ttoc.entries)} entries, expected 1"
             )
         notes = parse_ar_note(ttoc.decode_entry(0).splitlines())
+        try:
+            npts = round(
+                float(notes["NumPtsPerSec"]) / float(notes["FastMapZRate"]) / 2
+            )
+        except (KeyError, ValueError, ZeroDivisionError):
+            npts = None
         images = {}
         volumes = []
         for item, pointer in ftoc.entries:
@@ -1196,11 +1223,26 @@ class ARDFFile:
                 item = ARDFImage.parse_imag(item)
                 images[item.name] = item
             elif item.name == b"VOLM":
-                item = ARDFVolume.parse_volm(item)
+                item = ARDFVolume.parse_volm(item, npts)
                 # volumes[item.name] = item
                 volumes.append(item)
             else:
                 raise FileFormatError(f"Unknown TOC entry {item.name}.", item)
+
+        # a stopped scan leaves its images unwritten past the curves it acquired
+        acquired = None
+        for volume in volumes:
+            mask = volume.acquired_mask()
+            if mask is not None:
+                acquired = mask if acquired is None else acquired | mask
+        if acquired is not None and not acquired.all():
+            acquired.setflags(write=False)
+            images = {
+                name: evolve(image, acquired=acquired)
+                if image.shape == acquired.shape
+                else image
+                for name, image in images.items()
+            }
 
         k = float(notes["SpringConstant"])
         # slight numerical differences here
@@ -1925,6 +1967,7 @@ class NIDVolume:
     _dfwd: NIDDataset
     _zbwd: NIDDataset
     _dbwd: NIDDataset
+    nancurve: np.ndarray = field(repr=False)
 
     @classmethod
     def parse(cls, spec, spec_map_row, k):
@@ -1944,7 +1987,8 @@ class NIDVolume:
             min(d.cur_line + 1, d.lines, len(d.line_points))
             for d in (zfwd, dfwd, zbwd, dbwd)
         )
-        return cls("SpecMap", (ny, nx), n_lines, k, zfwd, dfwd, zbwd, dbwd)
+        nancurve = nan_curve(min(zfwd.points, zbwd.points))
+        return cls("SpecMap", (ny, nx), n_lines, k, zfwd, dfwd, zbwd, dbwd, nancurve)
 
     def _line_npts(self, line: int) -> tuple[int, int]:
         # rows are zero filled past LineDim{n}Points
@@ -1973,7 +2017,7 @@ class NIDVolume:
             raise ValueError("Invalid index:", self.shape, (r, c))
         line = nid_map_rc_to_line(r, c, nx)
         if line >= self.n_lines:
-            return NANCURVE
+            return self.nancurve
         return self._get_line_curve(line)
 
     def iter_indices(self) -> Iterable[Index]:
