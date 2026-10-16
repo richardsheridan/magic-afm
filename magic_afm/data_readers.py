@@ -378,12 +378,11 @@ class ARH5ForceMapVolume:
     def get_all_curves(self):
         # Cut both halves to one length, keeping the points nearest the surface
         n = min(self.minext, self.minret)
-        z = np.empty(self.shape + (2, n), dtype=np.float32)
-        d = np.empty(self.shape + (2, n), dtype=np.float32)
-        for index, ((zext, zret), (dext, dret)) in self.iter_curves():
-            z[index] = zext[len(zext) - n :], zret[:n]
-            d[index] = dext[len(dext) - n :], dret[:n]
-        return z, d
+        x = np.empty((2,) + self.shape + (2, n), dtype=np.float32)
+        for (r, c), ((zext, zret), (dext, dret)) in self.iter_curves():
+            x[0, r, c] = zext[len(zext) - n :], zret[:n]
+            x[1, r, c] = dext[len(dext) - n :], dret[:n]
+        return x
 
 
 @frozen
@@ -422,7 +421,7 @@ class ARH5FFMVolume:
         d = self._dreader[:] * NANOMETER_UNIT_CONVERSION
         z = z.reshape(z.shape[:-1] + (2, -1))
         d = d.reshape(d.shape[:-1] + (2, -1))
-        return z, d
+        return np.stack((z, d))
 
 
 @frozen

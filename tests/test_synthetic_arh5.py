@@ -232,8 +232,11 @@ def test_arh5_force_map_get_all_curves_cuts_both_halves_to_the_shortest(force_ma
     n = int(min(expected.ext_points.min(), expected.ret_points.min()))
     rows, cols = expected.shape
     with open_fvfile(force_map.path) as fvfile:
-        z, d = fvfile.volumes[0].get_all_curves()
-    assert z.shape == d.shape == (rows, cols, 2, n)
+        curves = fvfile.volumes[0].get_all_curves()
+    assert isinstance(curves, np.ndarray), type(curves)
+    assert curves.dtype == np.float32
+    assert curves.shape == (2, rows, cols, 2, n)
+    z, d = curves
     for r in range(rows):
         for c in range(cols):
             (ezext, ezret), (edext, edret) = expected.curve(r, c, n, n)
