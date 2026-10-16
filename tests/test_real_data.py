@@ -18,12 +18,27 @@
 import hashlib
 import lzma
 import os
+import time
 from pathlib import Path
 
+import conftest
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RELPATH = "test_cases/SAMPLE/ffm/tiny0001.ARDF"
+
+
+@pytest.fixture(autouse=True)
+def private_cache(request, monkeypatch, tmp_path_factory):
+    """Unpack synthetic payloads into a per-test cache, never the shared one.
+
+    Tests marked slow read the real corpus and keep the shared cache.
+    """
+    if request.node.get_closest_marker("slow"):
+        return conftest.CACHE_DIR
+    cache = tmp_path_factory.mktemp("cache")
+    monkeypatch.setattr(conftest, "CACHE_DIR", cache)
+    return cache
 
 
 def _snapshot(root: Path) -> dict[str, bytes]:
@@ -108,6 +123,33 @@ def test_packed_files_at_the_same_path_in_two_roots_keep_their_own_bytes(
 
     assert path_a.read_bytes() == payload_a
     assert path_b.read_bytes() == payload_b
+
+
+def test_unpacked_copy_lands_in_the_cache_dir(tmp_path, monkeypatch, private_cache):
+    _pack(tmp_path, RELPATH, os.urandom(64))
+    monkeypatch.setenv("MAFM_TEST_DATA", str(tmp_path))
+
+    path = conftest.resolve_real_data_file(RELPATH)
+
+    assert path.resolve().is_relative_to(private_cache.resolve())
+
+
+def test_unpacking_prunes_stale_cache_entries_and_keeps_fresh_ones(
+    tmp_path, monkeypatch, private_cache
+):
+    stale = private_cache / "stale"
+    fresh = private_cache / "fresh"
+    for entry in (stale, fresh):
+        (entry / "f").mkdir(parents=True)
+    old = time.time() - conftest.CACHE_MAX_AGE_S - 3600
+    os.utime(stale, (old, old))
+    _pack(tmp_path, RELPATH, os.urandom(64))
+    monkeypatch.setenv("MAFM_TEST_DATA", str(tmp_path))
+
+    conftest.resolve_real_data_file(RELPATH)
+
+    assert not stale.exists()
+    assert fresh.exists()
 
 
 def test_missing_file_skips_naming_the_file_and_the_env_var(
