@@ -99,6 +99,7 @@ NPY_DISABLE_CPU_FEATURES = "X86_V4 AVX512_ICL AVX512_SPR"
 OPENBLAS_CORETYPE = "Haswell"
 NUMBA_CPU_NAME = "haswell"
 NUMBA_CPU_FEATURES = ""
+NPY_DISABLE_CPU_FEATURES = "X86_V4 AVX512_ICL AVX512_SPR"
 
 # oldest supported python, for the CI matrix (T4); its own solve group so the
 # default group keeps the newest stack
