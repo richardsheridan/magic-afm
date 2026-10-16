@@ -20,7 +20,8 @@
 # code without changing it. They are not a statement that today's output is
 # right: see the notes on units, trace and error handling below.
 #
-# Values live in tests/goldens/t3_goldens.json, written by
+# Options live in tests/goldens/t3_goldens.json and map values in
+# tests/goldens/<pixi platform>/t3_goldens.json, written by
 # tests/goldens/make_t3_goldens.py, which imports the runs and summaries
 # below. Regenerate on purpose only, and say why in the commit.
 #
@@ -46,13 +47,13 @@ import imageio
 import numpy as np
 import pytest
 from click.testing import CliRunner, Result
+from conftest import load_platform_goldens
 from test_goldens import TOLERANCES as T2_TOLERANCES
 
 from magic_afm.calculation import FitFix
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GOLDENS_PATH = REPO_ROOT / "tests" / "goldens" / "t3_goldens.json"
-T2_GOLDENS_PATH = REPO_ROOT / "tests" / "goldens" / "t2_goldens.json"
 
 ARDF_RELPATH = "test_cases/PDMS_SAA/ffm/both0001.ARDF"
 ARH5_RELPATH = "test_cases/PDMS_SAA/ffm/rtrace0001.h5"
@@ -280,6 +281,11 @@ def goldens():
         return json.load(f)
 
 
+@pytest.fixture(scope="module")
+def platform_goldens():
+    return load_platform_goldens("t3_goldens.json")
+
+
 def written(run):
     return sorted(p.name for p in run.out.iterdir())
 
@@ -422,16 +428,16 @@ def assert_summary_matches(actual, golden, pixels, name, where):
 
 @pytest.mark.slow
 @pytest.mark.parametrize("name", SUMMARY_RUNS)
-def test_cli_map_values_match_golden_summary(run_cli, goldens, name):
-    golden = goldens["summaries"][name]
+def test_cli_map_values_match_golden_summary(run_cli, platform_goldens, name):
+    golden = platform_goldens["summaries"][name]
     maps = run_maps(run_cli(name), name)
     for m in DEFAULT_MAPS:
         assert_summary_matches(maps[m], golden["maps"][m], golden["pixels"], m, name)
 
 
 @pytest.mark.slow
-def test_cli_nid_maps_match_golden_in_full(run_cli, goldens):
-    golden = goldens["full"]["nid"]
+def test_cli_nid_maps_match_golden_in_full(run_cli, platform_goldens):
+    golden = platform_goldens["full"]["nid"]
     maps = run_maps(run_cli("nid"), "nid")
     for m in DEFAULT_MAPS:
         want = np.array(golden[m], dtype=np.float64)
@@ -447,8 +453,7 @@ def test_cli_nid_maps_match_golden_in_full(run_cli, goldens):
 )
 def test_cli_nid_maps_are_t2_maps_scaled_and_row_flipped(run_cli, name, t2_mode):
     """Exports are the calculation-layer maps times a units factor, rows reversed."""
-    with T2_GOLDENS_PATH.open() as f:
-        t2_maps = json.load(f)["nid"][t2_mode]["maps"]
+    t2_maps = load_platform_goldens("t2_goldens.json")["nid"][t2_mode]["maps"]
     maps = run_maps(run_cli(name), name)
     for m, (group, field, factor) in EXPORT_FIELDS.items():
         want = factor * np.array(t2_maps[group][field], dtype=np.float64)[::-1]
