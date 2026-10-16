@@ -43,7 +43,7 @@ records, so the builder takes the stored order as time order and copies
 ``Capture direction`` and ``Frame direction`` as found; what point of the tap the Height
 image gives; and the ``Sync Distance QNM`` key, which no real capture has but a newer
 force volume carries beside ``Sync Distance``, so that the builder writes it the same
-way and takes it as the lag. The skipped-point capture (``Bytes/pixel: 0``) is not
+way and takes it as the lag. The skipped-point capture, whose ``force/line`` (16 0) is half the scan list's ``Samps/line`` (32) and whose force ``Data length`` is a quarter of a full capture's, is not
 built.
 
 A force volume stores z and deflection as force channels of their own, in the set and

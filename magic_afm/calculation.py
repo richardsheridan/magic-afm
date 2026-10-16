@@ -865,6 +865,20 @@ def red_both(red_delta, red_fc, red_k, lj_delta_scale, split):
     )
 
 
+def _check_force_model_inputs(k, radius, tau, M, fc):
+    """Catch crazy inputs early, naming the parameter; written to reject NaN too."""
+    if not k > 0:
+        raise ValueError("k must be positive")
+    if not radius > 0:
+        raise ValueError("radius must be positive")
+    if not M > 0:
+        raise ValueError("M must be positive")
+    if not fc > 0:
+        raise ValueError("fc must be positive")
+    if not 0 <= tau <= 1:
+        raise ValueError("tau must be between 0 and 1")
+
+
 def force_curve(
     red_curve,
     delta,
@@ -879,12 +893,7 @@ def force_curve(
     split=None,
 ):
     """Calculate a force curve from indentation data."""
-    # Catch crazy inputs early
-    assert k > 0, k
-    assert radius > 0, radius
-    assert M > 0, M
-    assert fc > 0, fc
-    assert 0 <= tau <= 1, tau
+    _check_force_model_inputs(k, radius, tau, M, fc)
 
     # Calculate reduced/dimensionless values of inputs
     # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
@@ -917,12 +926,7 @@ def delta_curve(
     split=None,
 ):
     """Convenience function for inverse of force_curve, i.e. force->delta"""
-    # Catch crazy inputs early
-    assert k > 0, k
-    assert radius > 0, radius
-    assert M > 0, M
-    assert fc > 0, fc
-    assert 0 <= tau <= 1, tau
+    _check_force_model_inputs(k, radius, tau, M, fc)
 
     # Calculate reduced/dimensionless values of inputs
     # tau = tau1**2 in Schwarz => ratio of short range to total surface energy
@@ -1276,13 +1280,14 @@ _skip_warmup = False
 def warmup_jit_worker():
     """Replace uncacheable functions with jitted versions on-demand"""
     global red_extend, red_retract, red_both, force_curve, delta_curve
-    global brentq, secant
+    global brentq, secant, _check_force_model_inputs
     global _skip_warmup
 
     if _skip_warmup:
         return
     opts = dict(nopython=True, nogil=True)
     # TODO: explicit function signatures for precompiling?
+    _check_force_model_inputs = jit(_check_force_model_inputs, **opts)
     red_extend = jit(red_extend, **opts)
     red_retract = jit(red_retract, **opts)
     red_both = jit(red_both, **opts)
