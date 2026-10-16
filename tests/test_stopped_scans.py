@@ -1,4 +1,4 @@
-"""Stopped scans: curves the file never acquired are NaN in every exported map (D4)."""
+"""Stopped scans: curves the file never acquired are NaN in every exported map."""
 
 # Copyright (C) Richard J. Sheridan
 #
@@ -15,11 +15,11 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# hard0001 was stopped scanning up (rows 0-18 acquired) and hard0003 scanning
-# down (rows 13-31), as the reader indexes them; each lacks 13 full rows of 32.
-# The missing pixels are derived from what the reader yields. Acquired pixels
-# are checked against a direct calculation-layer fit (T2's helpers), so a
-# change that blanked them too would fail.
+# hard0001 was stopped scanning up (rows 0-18 acquired) and hard0003 scanning down (rows
+# 13-31), as the reader indexes them; each lacks 13 full rows of 32. The missing pixels
+# are derived from what the reader yields. Acquired pixels are checked against a direct
+# calculation-layer fit (the helpers in tests/test_goldens.py), so a change that blanked
+# them too would fail.
 
 import contextlib
 import io

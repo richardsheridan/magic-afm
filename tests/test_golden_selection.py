@@ -15,10 +15,9 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# Real-file fits are reproducible on one platform but differ between them
-# (RELEASE_PLAN.md, M0 findings, 2026-10-16), so their goldens live in
-# tests/goldens/<pixi platform>/ under the shared files' names. These tests
-# fake the platform and need no real data.
+# Real-file fits are reproducible on one platform but differ between them (see
+# tests/goldens/README.md), so their goldens live in tests/goldens/<pixi platform>/
+# under the shared files' names. These tests fake the platform and need no real data.
 
 import json
 import platform
@@ -89,7 +88,7 @@ def test_platform_goldens_fail_without_a_set_when_real_data_is_required(
 
 
 def test_shared_goldens_hold_no_real_file_values():
-    """Synthetic T2 values and T3's options stay shared; real-file values move."""
+    """Synthetic fit values and CLI options stay shared; real-file values move."""
     t2 = json.loads((SHARED_DIR / "t2_goldens.json").read_text())
     t3 = json.loads((SHARED_DIR / "t3_goldens.json").read_text())
     assert "synthetic" in t2 and "nid" not in t2

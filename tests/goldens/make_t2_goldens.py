@@ -1,4 +1,4 @@
-"""Write the T2 goldens from the current code (plan item T2).
+"""Write the fitted-value goldens of tests/test_goldens.py from the current code.
 
 Run from the repository root:
 

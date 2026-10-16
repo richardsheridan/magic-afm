@@ -1,4 +1,4 @@
-"""Write the options JSON fixtures as the released betas wrote them (plan item T3a).
+"""Write the options JSON fixtures as the released betas wrote them.
 
 The old code runs from git worktrees checked out at the tags, on the test
 environment of this checkout. From the repository root:

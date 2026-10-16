@@ -1,12 +1,12 @@
 # Options JSONs written by the released betas
 
-Plan item T3a. Each `.json` here is byte for byte what a released beta wrote next to its
-exported results. The JSON format changed at `7469418` ("harmonize options_jsons with
-single source of truth"), between 1.0.0b2 and 1.0.0b3: before it the GUI and the CLI
-each had their own writer. `tests/test_options.py` checks that today's
-`magic_afm._options.load_options` reads each one and pins what it decodes. A3 (`fit_fix`
-as names, schema version, the `M` warning) and B2c (volumes by name, the `trace` key)
-use them as their read-compat inputs.
+Each `.json` here is byte for byte what a released beta wrote next to its exported
+results. The JSON format changed at `7469418` ("harmonize options_jsons with single
+source of truth"), between 1.0.0b2 and 1.0.0b3: before it the GUI and the CLI each had
+their own writer. `tests/test_options.py` checks that today's
+`magic_afm._options.load_options` reads each one and pins what it decodes. Later changes
+to the options JSON (`fit_fix` as names, a schema version, a warning for the old `M`
+default, volumes by name and the `trace` key) use them as their read-compat inputs.
 
 | Fixture | Tag | Front end | Input file | Options |
 | -- | -- | -- | -- | -- |
@@ -82,4 +82,4 @@ enums.
 | `k_sens` | absent | present | present |
 | key order | schema order | `ForceCurveOptions` order | schema order |
 
-Today's `load_options` reads `1e9` as 1e9 GPa; A3 adds a warning for it.
+Today's `load_options` reads `1e9` as 1e9 GPa, with no warning.
