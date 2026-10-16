@@ -28,6 +28,12 @@ mask. A set per platform, with the CPU-specific choices pinned, keeps each set
 reproducible. `tests/conftest.py` `load_platform_goldens` picks the set for the running
 platform.
 
+One exception: in the Windows `test` environment (numba with numpy 2.5.4, the stack the
+frozen Windows app ships) the real-file values are skipped, because even with every pin
+applied they differ between the Zen 3 and Zen 4 runners GitHub hands out, while the
+`test-nonumba` and `test-py311` environments agree across both. The `win-64` set was
+made on a Zen 3 runner (EPYC 7763). The synthetic goldens still run there.
+
 Treat the real-file sets as drift detectors: they say that something changed, not that
 the new values are wrong. A deliberate numerics change is expected to trip them, and the
 answer then is to regenerate them for every platform and say why in the commit.
