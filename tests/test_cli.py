@@ -39,11 +39,13 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import NamedTuple
 
+import click
 import imageio
 import numpy as np
 import pytest
@@ -79,13 +81,13 @@ CLI_RUNS: dict[str, tuple[str, tuple[str, ...]]] = {
     "nid_flags": (
         NID_RELPATH,
         (
-            "-fit-radius",
-            "-fit-tau",
-            "-fix-lj-scale",
-            "-fit-vd",
-            "-fit-li-per",
-            "-fit-li-amp",
-            "-fit-drag",
+            "--fit-radius",
+            "--fit-tau",
+            "--fix-lj-scale",
+            "--fit-vd",
+            "--fit-li-per",
+            "--fit-li-amp",
+            "--fit-drag",
             "--no-k-sens",
         ),
     ),
@@ -345,6 +347,45 @@ def test_cli_name_filter_follows_fit_fix_and_k_sens(run_cli):
     options = json.loads((run.out / options_name(stem)).read_text())
     assert options["fit_fix"] == FitFix.LJ_SCALE == 4
     assert options["k_sens"] is False
+
+
+# the CLI's fix/fit toggles, by option stem
+FIX_FIT_STEMS = ("radius", "tau", "lj-scale", "vd", "li-per", "li-amp", "drag")
+
+
+@pytest.mark.parametrize("fix", [True, False], ids=["fix", "fit"])
+@pytest.mark.parametrize("stem", FIX_FIT_STEMS)
+def test_cli_parses_double_dash_fix_fit_toggles(tmp_path, stem, fix):
+    from magic_afm.cli._impl import main
+
+    path = tmp_path / "x.nid"
+    path.touch()
+    flag = f"--{'fix' if fix else 'fit'}-{stem}"
+    ctx = main.make_context("magic-afm", [flag, str(path)])
+    assert ctx.params["fix_" + stem.replace("-", "_")] is fix
+    source = ctx.get_parameter_source("fix_" + stem.replace("-", "_"))
+    assert source == click.core.ParameterSource.COMMANDLINE
+
+
+@pytest.mark.parametrize("prefix", ["fix", "fit"])
+@pytest.mark.parametrize("stem", FIX_FIT_STEMS)
+def test_cli_rejects_single_dash_fix_fit_toggles(tmp_path, stem, prefix):
+    result = invoke_cli(
+        tmp_path / "missing.nid", tmp_path / "out", [f"-{prefix}-{stem}"]
+    )
+    assert result.exit_code == 2
+    assert "No such option" in result.output
+
+
+def test_cli_help_lists_only_double_dash_fix_fit_toggles():
+    from magic_afm.cli._impl import main
+
+    result = CliRunner().invoke(main, ["--help"], catch_exceptions=False)
+    assert result.exit_code == 0
+    for stem in FIX_FIT_STEMS:
+        assert f"--fix-{stem}" in result.output
+        assert f"--fit-{stem}" in result.output
+    assert re.search(r"(?<![-\w])-fi[xt]-", result.output) is None
 
 
 @pytest.mark.slow
