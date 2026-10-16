@@ -1,8 +1,7 @@
 # Real-data files the slow tests read, as lines of the corpus SHA256SUMS.txt:
 # sha256 of the ORIGINAL file, original and stored bytes, chain, path under
 # example.data/test_cases (stored as path.xz unless the chain is raw). CI keys
-# its data cache on this file and checks each download against it. The .nid is
-# not in the corpus bucket, so its tests skip in CI.
+# its data cache on this file and checks each download against it.
 34f24632083becf2111d311e03adb77d708b54d5cc5473af697b750cb14c432d  16874560  2041832  delta:dist=4+lzma2:dict=64MiB,lc=0,lp=2,pb=2  A1_OCSOH-PMMA21k_300421.0_300425.spm
 27cac7e9ec468cdb495ef897aff9fae56cd96180739487aa659a65ddbef20d7b  1130560  152812  delta:dist=4+lzma2:dict=64MiB,lc=0,lp=2,pb=2  DOE4_20nN_80nm.0_00012.spm
 536cb1aba82cc1ddc81b2cc45d53d5fa5d5b774332ae4252435a9846d07c3a95  49978040  14975340  delta:dist=4+lzma2:dict=64MiB,lc=0,lp=2,pb=2  PDMS_SAA/ffm/both0001.ARDF
@@ -11,3 +10,4 @@
 38c61899da68765157a031cf5080116a0aac98b423332325e8eff034a1ef5aaa  24660608  7300172  delta:dist=4+lzma2:dict=64MiB,lc=0,lp=2,pb=2  PDMS_SAA/ffm/rtrace0001.h5
 8b0c33801893a653bdaa679d18e496d92bee0783192dac57fe3cd0132c164521  174080  61132  delta:dist=4+lzma2:dict=64MiB,lc=0,lp=2,pb=2  PS_PCL_SAA/QNM/maxscanrate.000.pfc
 599ea3eea928248978f1f80c609af9b965f52fb2524d8453d201c3d4c9362926  567296  181180  delta:dist=4+lzma2:dict=64MiB,lc=0,lp=2,pb=2  PS_PCL_SAA/QNM/onekhz.000.pfc
+79cf14f85de32fa3af8fc75182a4cb904dee07fd29275418de2a31bbdd359d71  6043328  2632704  delta:dist=4+lzma2:dict=64MiB,lc=0,lp=2,pb=2  20251216_141819_PVDF2_Film_U_00002.nid

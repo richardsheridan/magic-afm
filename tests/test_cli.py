@@ -58,7 +58,7 @@ ARDF_RELPATH = "test_cases/PDMS_SAA/ffm/both0001.ARDF"
 ARH5_RELPATH = "test_cases/PDMS_SAA/ffm/rtrace0001.h5"
 QNM_RELPATH = "test_cases/PS_PCL_SAA/QNM/onekhz.000.pfc"
 FFV_RELPATH = "test_cases/A1_OCSOH-PMMA21k_300421.0_300425.spm"
-NID_RELPATH = "PVDF2_Film_U_00002/20251216_141819_PVDF2_Film_U_00002.nid"
+NID_RELPATH = "test_cases/20251216_141819_PVDF2_Film_U_00002.nid"
 NID_STEM = "20251216_141819_PVDF2_Film_U_00002"
 
 # name: (relpath, extra CLI arguments)
