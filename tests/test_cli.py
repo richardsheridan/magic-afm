@@ -30,8 +30,8 @@
 # (onekhz.000.pfc), Nanoscope force volume (A1...spm) and NID (the example .nid, also
 # the subject of tests/test_goldens.py). Excluded: DOE4 (mis-decoded), the stopped
 # hard/mellow scans (hard0001 and hard0003 are covered by test_stopped_scans.py) and the
-# non-square twoxln/twoxpt (the CLI crashes on them until the ARDF reader's transposed
-# shape is fixed).
+# non-square twoxln/twoxpt (twoxln0001, 64 lines of 32 points, is run below for the
+# shape of its maps only).
 #
 # Every in-process run passes --disable-progress (tqdm only) and an absolute
 # --output-path under pytest's tmp dir; nothing else is restricted. The one subprocess
@@ -64,6 +64,7 @@ QNM_RELPATH = "test_cases/PS_PCL_SAA/QNM/onekhz.000.pfc"
 FFV_RELPATH = "test_cases/A1_OCSOH-PMMA21k_300421.0_300425.spm"
 NID_RELPATH = "test_cases/20251216_141819_PVDF2_Film_U_00002.nid"
 NID_STEM = "20251216_141819_PVDF2_Film_U_00002"
+NON_SQUARE_ARDF_RELPATH = "test_cases/PDMS_SAA/ffm/twoxln0001.ARDF"
 
 # name: (relpath, extra CLI arguments)
 CLI_RUNS: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -581,6 +582,25 @@ def test_cli_exits_0_when_every_file_succeeds(real_data_file, tmp_path):
     assert result.exit_code == 0
     assert result.stderr == ""
     assert result.stdout.count("Skipping writing options_json") == 3
+
+
+def assert_maps_written_with_shape(result, out, stem, shape):
+    assert result.exit_code == 0, result.output
+    expected = [export_name(stem, m) for m in DEFAULT_MAPS] + [options_name(stem)]
+    assert sorted(p.name for p in out.iterdir()) == sorted(expected)
+    for m in DEFAULT_MAPS:
+        a = np.load(out / export_name(stem, m))
+        assert (a.shape, a.dtype) == (shape, np.float32), m
+
+
+@pytest.mark.slow
+def test_cli_runs_on_a_real_non_square_ardf_writing_lines_by_points_maps(
+    real_data_file, tmp_path
+):
+    path = Path(real_data_file(NON_SQUARE_ARDF_RELPATH))
+    out = tmp_path / "out"
+    result = invoke_cli(path, out, ())
+    assert_maps_written_with_shape(result, out, "twoxln0001", (64, 32))
 
 
 def test_cli_rejects_an_unknown_suffix_as_a_usage_error(tmp_path):

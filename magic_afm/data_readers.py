@@ -761,7 +761,7 @@ class ARDFImage:
             imag_header.data,
             idef_header.offset + idef_header.size,
             name,
-            (points, lines),
+            (lines, points),
             units,
             ((x_step, x_unit), (y_step, y_unit)),
         )
@@ -776,7 +776,7 @@ class ARDFImage:
             ibox_header.data, ibox_header.offset + 16
         )
         points = (stride - 16) // 4  # less IDAT header
-        if (points, lines) != self.shape:
+        if (lines, points) != self.shape:
             raise FileFormatError(
                 f"image data is {points}x{lines}, definition says {self.shape}"
             )
@@ -1131,7 +1131,7 @@ class ARDFVolume:
         return cls(
             volm_header.offset,
             name,
-            (points, lines),
+            (lines, points),
             ((x_step, x_unit), (y_step, y_unit), (t_step, t_unit)),
             xdef,
             reader,
