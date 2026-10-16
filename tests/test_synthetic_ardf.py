@@ -40,15 +40,18 @@ COMPLETE_CASES = {
     "both-16-from-line-0": ((4, 4), 16, "both", True),
     "both-100-from-last-line": ((6, 6), 100, "both", False),
     "retrace-16-from-line-0": ((4, 4), 16, "retrace", True),
+    "trace-16-tall-from-line-0": ((6, 4), 16, "trace", True),
+    "retrace-16-wide-from-last-line": ((4, 6), 16, "retrace", False),
+    "both-16-tall-from-last-line": ((6, 4), 16, "both", False),
+    "both-16-wide-from-line-0": ((4, 6), 16, "both", True),
 }
-# Left out: grids that are not square. The builder writes them as the Asylum software
-# does, but the reader gives a volume's shape as (points, lines) while its curves,
-# images and get_all_curves are (lines, points).
 
 # grid, points per half curve, ScanDown, lines taken before the scan stopped
 STOPPED_CASES = {
     "stopped-from-line-0": ((8, 8), 16, True, 5),
     "stopped-from-last-line": ((8, 8), 16, False, 5),
+    "stopped-tall-from-line-0": ((8, 6), 16, True, 5),
+    "stopped-wide-from-last-line": ((6, 8), 16, False, 4),
 }
 # the reader's placeholder for a curve the file does not hold
 PLACEHOLDER_SHAPE = (2, 2, 100)
@@ -88,6 +91,7 @@ def assert_images_where_held(fvfile, synthetic):
         assert image.shape == expected.shape
         assert image.units == synthetic.image_units[name]
         values = image.get_image()
+        assert values.shape == image.shape
         assert values.dtype == np.float32
         held = synthetic.volumes[0].acquired
         held = np.ones(expected.shape, bool) if held is None else held
@@ -128,10 +132,8 @@ def test_ardf_volumes_are_named_by_direction(complete):
 def test_ardf_get_curve_returns_the_stored_curves(complete):
     with open_fvfile(complete.path) as fvfile:
         for volume, expected in zip(fvfile.volumes, complete.volumes, strict=True):
-            lines, points = expected.shape
-            for r in range(lines):
-                for c in range(points):
-                    assert_same_curve(volume.get_curve(r, c), expected.curve(r, c))
+            for r, c in np.ndindex(volume.shape):
+                assert_same_curve(volume.get_curve(r, c), expected.curve(r, c))
 
 
 def test_ardf_iter_curves_follows_the_order_on_disk(complete):
@@ -149,6 +151,7 @@ def test_ardf_get_all_curves_returns_every_curve(complete):
     with open_fvfile(complete.path) as fvfile:
         for volume, expected in zip(fvfile.volumes, complete.volumes, strict=True):
             z, d = volume.get_all_curves()
+            assert z.shape[:2] == d.shape[:2] == volume.shape
             assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
             assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
 
@@ -203,6 +206,7 @@ def test_ardf_stopped_scan_get_all_curves_is_nan_where_never_acquired(stopped):
     expected = stopped.volumes[0]
     with open_fvfile(stopped.path) as fvfile:
         z, d = fvfile.volumes[0].get_all_curves()
+        assert z.shape[:2] == d.shape[:2] == fvfile.volumes[0].shape
     assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
     assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
 
