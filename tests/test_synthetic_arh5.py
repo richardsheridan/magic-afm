@@ -62,8 +62,8 @@ FORCE_MAP_CASES = {
     ),
 }
 # Cases with every curve as long as the shortest of its halves. When the shortest extend
-# and retract halves differ, as in "ragged", t_step counts only the shortest
-# halves' points.
+# and retract halves differ, as in "ragged", t_step counts only the shortest halves'
+# points.
 UNIFORM_FORCE_MAP_CASES = ["square-32", "wide-20"]
 
 
@@ -206,8 +206,8 @@ def test_arh5_force_map_iter_curves_yields_what_get_curve_returns(force_map):
     assert sorted(seen) == list(np.ndindex(force_map.volumes[0].shape))
 
 
-# Left out: fit mode both, and curves long enough to be resampled, which with halves
-# of different lengths process_force_curve cannot join into one array.
+# Left out: fit mode both, and curves long enough to be resampled, which with halves of
+# different lengths process_force_curve cannot join into one array.
 @pytest.mark.parametrize(
     "fit_mode", [FitMode.EXTEND, FitMode.RETRACT], ids=lambda m: m.name.lower()
 )
