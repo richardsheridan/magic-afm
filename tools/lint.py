@@ -1,6 +1,7 @@
 """Run every lint check, even after one fails, and fail if any failed.
 
-Checks: ruff import sorting, ruff format, and mdformat on tracked Markdown.
+Checks: ruff check (pyflakes, import sorting, the default pycodestyle errors),
+ruff format, and mdformat on tracked Markdown.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -24,7 +25,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CHECKS = [
-    ("ruff import sorting", ["-m", "ruff", "check", "--select", "I"]),
+    ("ruff check", ["-m", "ruff", "check"]),
     ("ruff format", ["-m", "ruff", "format", "--check"]),
     ("mdformat", [str(HERE / "mdformat_tracked.py"), "--check"]),
 ]

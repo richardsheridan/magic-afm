@@ -27,7 +27,6 @@ import traceback
 
 import numpy as np
 from numpy.linalg import lstsq
-from numpy.random import uniform
 from soxr import resample
 
 try:
