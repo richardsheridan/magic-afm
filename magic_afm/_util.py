@@ -20,14 +20,18 @@ def nice_workers():
     else:
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
+    proc = psutil.Process()
     try:
-        NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
-    except AttributeError:
-        NICE = 3
-    try:
-        psutil.Process().nice(NICE)
+        try:
+            NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
+        except AttributeError:
+            # POSIX forbids an unprivileged process from lowering its nice value,
+            # so a worker started above 3 (under nice, a batch scheduler, some
+            # agent shells) must keep its own value rather than ask for 3
+            NICE = max(3, proc.nice())
+        proc.nice(NICE)
     except psutil.AccessDenied:
-        pass  # lowering priority is best effort
+        pass  # lowering priority is best effort, e.g. in a Windows sandbox
 
 
 def cli_init(jit):

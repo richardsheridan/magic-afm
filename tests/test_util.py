@@ -64,3 +64,22 @@ def test_cli_init_returns_when_renice_is_denied(denied_nice):
     with np.errstate():
         _util.cli_init(jit=False)
     assert denied_nice
+
+
+@pytest.mark.filterwarnings(NUMPY_WARNING)
+def test_nice_workers_never_raises_priority_of_an_already_niced_process(monkeypatch):
+    """Started at nice 10 on POSIX, nice_workers asks for nothing below 10."""
+    set_calls = []
+
+    def fake_nice(self, value=None):
+        if value is None:
+            return 10
+        set_calls.append(value)
+        if value < 10:
+            raise psutil.AccessDenied(os.getpid())
+
+    monkeypatch.delattr(psutil, "BELOW_NORMAL_PRIORITY_CLASS", raising=False)
+    monkeypatch.setattr(psutil.Process, "nice", fake_nice)
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "8")
+    _util.nice_workers()
+    assert all(value >= 10 for value in set_calls)
