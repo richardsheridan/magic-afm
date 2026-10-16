@@ -76,12 +76,20 @@ def si_prefix_exponent(unit: str, base: str) -> int | None:
     return SI_PREFIX_EXPONENTS.get(unit[: len(unit) - len(base)])
 
 
+def nano_factor(unit: str, base: str) -> float | None:
+    """Factor converting unit to nano-base, such as 1e3 for "µm" and "m", or None."""
+    exponent = si_prefix_exponent(unit, base)
+    if exponent is None:
+        return None
+    return 10.0 ** (9 + exponent)
+
+
 def nm_per_unit(unit: str) -> float:
     """Factor converting a length in unit to nm, raising FileFormatError if unknown."""
-    exponent = si_prefix_exponent(unit, "m")
-    if exponent is None:
+    factor = nano_factor(unit, "m")
+    if factor is None:
         raise FileFormatError("Expected a length unit.", unit)
-    return 10.0 ** (9 + exponent)
+    return factor
 
 
 def nan_curve(npts: int) -> np.ndarray:
@@ -2027,22 +2035,20 @@ class NIDVolume:
         dbwd = spec["Spec backward", "Deflection"]
 
         def zfactor(d):
-            exponent = si_prefix_exponent(d.unit, "m")
-            if exponent is None:
+            factor = nano_factor(d.unit, "m")
+            if factor is None:
                 raise FileFormatError(
                     "Expected curve data in a length.", d.frame, d.channel, d.unit
                 )
-            return 10.0 ** (9 + exponent)
+            return factor
 
         def dfactor(d):
             if d.unit == "V":
                 return defl_sens
-            exponent = si_prefix_exponent(d.unit, "N")
-            if exponent is not None:
-                return 10.0 ** (9 + exponent) / k
-            exponent = si_prefix_exponent(d.unit, "m")
-            if exponent is not None:
-                return 10.0 ** (9 + exponent)
+            if (factor := nano_factor(d.unit, "N")) is not None:
+                return factor / k
+            if (factor := nano_factor(d.unit, "m")) is not None:
+                return factor
             raise FileFormatError(
                 "Expected curve data in a force, a length or V.",
                 d.frame,
@@ -2211,7 +2217,9 @@ class NIDFile:
         k, k_unit = parse_nanosurf_value(header["cantilever"]["Prop0"])
         k_exponent = si_prefix_exponent(k_unit, "N/m")
         if k_exponent is None:
-            raise FileFormatError("Expected spring constant in N/m.", k_unit)
+            raise FileFormatError(
+                "Expected spring constant in a force per length.", k_unit
+            )
         k *= 10.0**k_exponent
         defl_sens = (
             float(header["cantilever"]["Sensitivity"]) * NANOMETER_UNIT_CONVERSION
