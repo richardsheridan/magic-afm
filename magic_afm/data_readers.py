@@ -114,6 +114,8 @@ class FVFile(Protocol):
     defl_sens: float
     t_step: float
     scansize: tuple[float, float]
+    sync_dist: float | None
+    trace: int | None
 
     @staticmethod
     def check_type(data: Buffer): ...
@@ -398,6 +400,8 @@ class ARH5File:
     defl_sens: float
     t_step: float
     scansize: tuple[float, float]
+    sync_dist: float | None = None
+    trace: int | None = None
 
     @classmethod
     def parse(cls, h5data):
@@ -1180,6 +1184,7 @@ class ARDFFile:
     t_step: float
     scansize: tuple[float, float]
     trace: int | None
+    sync_dist: float | None = None
 
     @staticmethod
     def check_type(data: Buffer):
@@ -1573,6 +1578,7 @@ class NanoscopeFile:
     t_step: float
     scansize: tuple[float, float]
     sync_dist: float | None = None
+    trace: int | None = None
 
     @staticmethod
     def check_type(data: Buffer):
@@ -2084,6 +2090,8 @@ class NIDFile:
     defl_sens: float
     t_step: float
     scansize: tuple[float, float]
+    sync_dist: float | None = None
+    trace: int | None = None
 
     @staticmethod
     def check_type(data: Buffer):
