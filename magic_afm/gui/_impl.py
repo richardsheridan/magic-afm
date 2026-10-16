@@ -39,8 +39,6 @@ from typing import (
     ClassVar,
     Literal,
     Optional,
-    Protocol,
-    TypeAlias,
 )
 
 import imageio
@@ -235,17 +233,6 @@ class ForceVolumeParams:
     trace: int | None
 
 
-class SyncDistFVFile(data_readers.FVFile, Protocol):
-    sync_dist: float | None
-
-
-class TraceRetraceFVFile(data_readers.FVFile, Protocol):
-    trace: int | None
-
-
-ExpandedFVFile: TypeAlias = data_readers.FVFile | SyncDistFVFile | TraceRetraceFVFile
-
-
 @mutable
 class GUIFVFile:
     """Consistent interface across filetypes for Magic AFM GUI"""
@@ -271,7 +258,7 @@ class GUIFVFile:
         "Height",
     }
 
-    fvfile: ExpandedFVFile
+    fvfile: data_readers.FVFile
     _image_cache: dict[str, np.ndarray] = field(factory=dict, init=False, repr=False)
 
     @property
@@ -290,8 +277,8 @@ class GUIFVFile:
         return ForceVolumeParams(
             k=self.fvfile.k,
             defl_sens=self.fvfile.defl_sens,
-            sync_dist=getattr(self.fvfile, "sync_dist", None),
-            trace=getattr(self.fvfile, "trace", None),
+            sync_dist=self.fvfile.sync_dist,
+            trace=self.fvfile.trace,
         )
 
     @staticmethod
@@ -325,7 +312,7 @@ class GUIFVFile:
         if trace is None:
             trace = True
         v = self.fvfile.volumes[not trace]
-        if sync_dist != getattr(self.fvfile, "sync_dist", None):  # including None!=None
+        if sync_dist != self.fvfile.sync_dist:  # including None!=None
             v = evolve(v, sync_dist=sync_dist)
         return v
 
