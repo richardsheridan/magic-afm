@@ -24,7 +24,10 @@ def nice_workers():
         NICE = psutil.BELOW_NORMAL_PRIORITY_CLASS
     except AttributeError:
         NICE = 3
-    psutil.Process().nice(NICE)
+    try:
+        psutil.Process().nice(NICE)
+    except psutil.AccessDenied:
+        pass  # lowering priority is best effort
 
 
 def cli_init(jit):
