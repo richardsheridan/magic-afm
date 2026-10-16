@@ -28,6 +28,8 @@ import pytest
 from synthetic_files import open_fvfile
 from synthetic_files.arh5 import build_arh5_ffm, build_arh5_force_map
 
+from magic_afm.calculation import FitMode, process_force_curve
+
 ARH5_RELPATH = "test_cases/PDMS_SAA/ffm/rtrace0001.h5"
 
 # grid (rows, cols), points per half curve, captured directions
@@ -42,6 +44,7 @@ FFM_CASES = {
 
 RAGGED_EXT = 40 - np.arange(12).reshape(3, 4) % 3 * 2
 RAGGED_RET = 40 - np.arange(12).reshape(3, 4) % 4
+RAGGED_RET_EVEN = 40 - np.arange(12).reshape(3, 4) % 3
 # grid, extend and retract points, other builder arguments
 FORCE_MAP_CASES = {
     "square-32": ((4, 4), (32, 32), {}),
@@ -51,15 +54,17 @@ FORCE_MAP_CASES = {
         (40, 40),
         {"ext_points": RAGGED_EXT, "ret_points": RAGGED_RET},
     ),
+    # shortest halves 36 and 38, an even total that a split in the middle gets wrong
+    "ragged-even": (
+        (3, 4),
+        (40, 40),
+        {"ext_points": RAGGED_EXT, "ret_points": RAGGED_RET_EVEN},
+    ),
 }
 # Cases with every curve as long as the shortest of its halves. When the shortest extend
-# and retract halves differ, as in "ragged", get_all_curves splits each curve in the
-# middle rather than where the extend half ends, and t_step counts only the shortest
+# and retract halves differ, as in "ragged", t_step counts only the shortest
 # halves' points.
 UNIFORM_FORCE_MAP_CASES = ["square-32", "wide-20"]
-# Left out: iter_curves on a force map yields each curve as one (2, points) array of z
-# then deflection, both halves joined, not as (z, d) pairs of halves, which the CLI's
-# process_force_curve rejects with a TypeError.
 
 
 def assert_float32_close(actual, expected):
@@ -73,6 +78,11 @@ def assert_same_curve(curve, expected):
     assert_float32_close(zret, ezret)
     assert_float32_close(dext, edext)
     assert_float32_close(dret, edret)
+
+
+def half_shapes(curve):
+    """Shapes of ((zext, zret), (dext, dret)), or of whatever curve holds instead."""
+    return [[np.shape(half) for half in part] for part in curve]
 
 
 def assert_metadata(fvfile, synthetic):
@@ -182,15 +192,53 @@ def test_arh5_force_map_get_curve_cuts_to_the_shortest_halves(force_map):
                 )
 
 
-@pytest.mark.parametrize("case", UNIFORM_FORCE_MAP_CASES)
-def test_arh5_force_map_get_all_curves_returns_every_curve(tmp_path, case):
-    shape, points, kwargs = FORCE_MAP_CASES[case]
-    synthetic = build_arh5_force_map(tmp_path, shape, points, **kwargs)
-    expected = synthetic.volumes[0]
-    with open_fvfile(synthetic.path) as fvfile:
+def test_arh5_force_map_iter_curves_yields_what_get_curve_returns(force_map):
+    with open_fvfile(force_map.path) as fvfile:
+        volume = fvfile.volumes[0]
+        seen = []
+        for (r, c), curve in volume.iter_curves():
+            seen.append((r, c))
+            want = volume.get_curve(r, c)
+            assert half_shapes(curve) == half_shapes(want), (r, c)
+            for part, want_part in zip(curve, want, strict=True):
+                for half, want_half in zip(part, want_part, strict=True):
+                    np.testing.assert_array_equal(half, want_half)
+    assert sorted(seen) == list(np.ndindex(force_map.volumes[0].shape))
+
+
+# Left out: fit mode both, and curves long enough to be resampled, which with halves
+# of different lengths process_force_curve cannot join into one array.
+@pytest.mark.parametrize(
+    "fit_mode", [FitMode.EXTEND, FitMode.RETRACT], ids=lambda m: m.name.lower()
+)
+def test_arh5_force_map_iter_curves_feed_process_force_curve(force_map, fit_mode):
+    """The CLI passes each yielded curve to process_force_curve; it takes one half."""
+    expected = force_map.volumes[0]
+    n_ext, n_ret = expected.ext_points.min(), expected.ret_points.min()
+    half = 0 if fit_mode == FitMode.EXTEND else 1
+    with open_fvfile(force_map.path) as fvfile:
+        for rc, curve in fvfile.volumes[0].iter_curves():
+            z, d, split, out_rc = process_force_curve((rc, curve), fit_mode, 1.0)
+            assert out_rc == rc
+            assert split is None
+            (ezext, ezret), (edext, edret) = expected.curve(*rc, n_ext, n_ret)
+            assert_float32_close(z, (ezext, ezret)[half])
+            assert_float32_close(d, (edext, edret)[half])
+
+
+def test_arh5_force_map_get_all_curves_cuts_both_halves_to_the_shortest(force_map):
+    """Each half is cut to the shortest extend or retract half on the map."""
+    expected = force_map.volumes[0]
+    n = int(min(expected.ext_points.min(), expected.ret_points.min()))
+    rows, cols = expected.shape
+    with open_fvfile(force_map.path) as fvfile:
         z, d = fvfile.volumes[0].get_all_curves()
-    assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
-    assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+    assert z.shape == d.shape == (rows, cols, 2, n)
+    for r in range(rows):
+        for c in range(cols):
+            (ezext, ezret), (edext, edret) = expected.curve(r, c, n, n)
+            assert_float32_close(z[r, c], np.stack([ezext, ezret]))
+            assert_float32_close(d[r, c], np.stack([edext, edret]))
 
 
 def test_arh5_force_map_images_round_trip_exactly(force_map):
