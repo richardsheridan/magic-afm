@@ -96,7 +96,9 @@ class SyntheticFile:
     reader lists them. ``images`` are (rows, cols) maps in the units the file
     stores them in, named as the reader names them, with their units in
     ``image_units`` where the file states one. ``units`` holds the units the
-    file declares for its raw channels and spring constant.
+    file declares for its raw channels and spring constant. ``sync_dist`` is how
+    many stored points the deflection lags the drive, for formats that store
+    the deflection of an oscillating drive and not its z, else None.
     """
 
     path: Path
@@ -108,6 +110,7 @@ class SyntheticFile:
     scansize: tuple[float, float]
     image_units: dict[str, str] = field(default_factory=dict)
     units: dict[str, str] = field(default_factory=dict)
+    sync_dist: float | None = None
 
 
 def point_counts(shape: Index, points) -> np.ndarray:
