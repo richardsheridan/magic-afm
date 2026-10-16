@@ -125,13 +125,16 @@ class FileFormatError(ValueError):
     """A file is malformed or uses a variant this module cannot read."""
 
 
-def _check_force_bpp(length, ncurves, npts, subheader):
+def _check_force_bpp(length, ncurves, npts, header) -> int:
+    """Bytes per point of a force section that holds ncurves curves of npts points."""
     bpp, rem = divmod(length, ncurves * npts)
     if rem or bpp not in (2, 4):
+        force_line = header.get("Ciao force list", [{}])[0].get("force/line")
+        samps_line = header["Ciao scan list"][0].get("Samps/line")
         raise FileFormatError(
             f"force data length {length} does not fit {ncurves} curves of {npts}"
-            " points; the capture may skip points"
-            f" (Samps/line: {subheader['Samps/line']})"
+            f" points; the capture may skip points (force/line: {force_line}"
+            f" against Samps/line: {samps_line})"
         )
     return bpp
 
@@ -275,7 +278,7 @@ class ARH5ForceMapVolume:
         self.shape = im_r, im_c
 
         # Generally segments are [Ext, Dwell, Ret, Away] or [Ext, Ret, Away]
-        # for magic, we don't dwell. new converter ensures this assertion
+        # for magic, we don't dwell. new converter ensures this
         if num_segments != 3:
             raise FileFormatError(
                 f"force map has {num_segments} segments per curve, expected 3"
@@ -473,7 +476,7 @@ class ARDFHeader:
             memoryview(self.data)[self.offset + 4 : self.offset + self.size]
         )
         if self.crc != crc:
-            raise ValueError(
+            raise FileFormatError(
                 f"Invalid section. Expected {self.crc:X}, got {crc:X}.", self
             )
         return True
@@ -490,7 +493,7 @@ class ARDFTableOfContents:
     @classmethod
     def unpack(cls, header: ARDFHeader):
         if header.size != 32:
-            raise ValueError("Malformed table of contents", header)
+            raise FileFormatError("Malformed table of contents", header)
         header.validate()
         data = header.data
         offset = header.offset
@@ -508,7 +511,7 @@ class ARDFTableOfContents:
                 break  # rest is null padding
             entry_header = ARDFHeader(data, toc_offset, *header)
             if entry_header.name not in {b"IMAG", b"VOLM", b"NEXT", b"THMB", b"NSET"}:
-                raise ValueError("Malformed table of contents.", entry_header)
+                raise FileFormatError("Malformed table of contents.", entry_header)
             entry_header.validate()
             entries.append((entry_header, pointer))
         return cls(data, offset, size, entries)
@@ -525,7 +528,7 @@ class ARDFTextTableOfContents:
     @classmethod
     def unpack(cls, header: ARDFHeader):
         if header.size != 32 or header.name != b"TTOC":
-            raise ValueError("Malformed text table of contents.", header)
+            raise FileFormatError("Malformed text table of contents.", header)
         header.validate()
         offset = header.offset
         data = header.data
@@ -543,7 +546,7 @@ class ARDFTextTableOfContents:
                 break  # rest is null padding
             entry_header = ARDFHeader(data, toc_offset, *header)
             if entry_header.name != b"TOFF":
-                raise ValueError("Malformed text table entry.", entry_header)
+                raise FileFormatError("Malformed text table entry.", entry_header)
             entry_header.validate()
             entries.append((entry_header, pointer))
         return cls(data, offset, size, entries)
@@ -553,7 +556,7 @@ class ARDFTextTableOfContents:
         entry_header, pointer = self.entries[index]
         text_header = ARDFHeader.unpack(self.data, pointer)
         if text_header.name != b"TEXT":
-            raise ValueError("Malformed text section.", text_header)
+            raise FileFormatError("Malformed text section.", text_header)
         text_header.validate()
         i, text_len = struct.unpack_from("<LL", self.data, pointer + 16)
         if i != index:
@@ -579,7 +582,7 @@ class ARDFVolumeTableOfContents:
         data = header.data
         offset = header.offset
         if header.size != 32 or header.name != b"VTOC":
-            raise ValueError("Malformed volume table of contents.", header)
+            raise FileFormatError("Malformed volume table of contents.", header)
         size, nentries, stride = TOC_STRUCT.unpack_from(data, offset + 16)
         if stride != 40:
             raise FileFormatError(f"volume table stride {stride}, expected 40")
@@ -596,7 +599,7 @@ class ARDFVolumeTableOfContents:
                 # scan was interrupted, and vtoc is zero-filled
                 break
             if entry_header.name != b"VOFF":
-                raise ValueError("Malformed volume table entry.", entry_header)
+                raise FileFormatError("Malformed volume table entry.", entry_header)
             entry_header.validate()
             force_index, line, point, pointer = cls._voff_struct.unpack_from(
                 data, toc_offset + 16
@@ -615,7 +618,7 @@ class ARDFVchan:
     @classmethod
     def unpack(cls, header: ARDFHeader):
         if header.size != 80 or header.name != b"VCHN":
-            raise ValueError("Malformed channel definition.", header)
+            raise FileFormatError("Malformed channel definition.", header)
         header.validate()
         name, unit = cls._struct.unpack_from(header.data, header.offset + 16)
         return cls(decode_cstring(name), decode_cstring(unit))
@@ -631,14 +634,14 @@ class ARDFXdef:
     @classmethod
     def unpack(cls, header: ARDFHeader):
         if header.size != 96 or header.name != b"XDEF":
-            raise ValueError("Malformed experiment definition.", header)
+            raise FileFormatError("Malformed experiment definition.", header)
         header.validate()
         # Experiment definition is just a string
         _, nchars = cls._struct.unpack_from(header.data, header.offset + 16)
         if _ != 0:
             raise FileFormatError(f"experiment definition reserved field is {_}")
         if nchars > header.size:
-            raise ValueError("Experiment definition too long.", header, nchars)
+            raise FileFormatError("Experiment definition too long.", header, nchars)
         xdef = memoryview(header.data)[header.offset + 24 : header.offset + 24 + nchars]
         xdef = bytes(xdef).decode("windows-1252").split(";")[:-1]
         return cls(header.offset, header.size, xdef)
@@ -665,7 +668,7 @@ class ARDFVset:
     @classmethod
     def unpack(cls, vset_header: ARDFHeader):
         if vset_header.name != b"VSET":
-            raise ValueError("malformed VSET header", vset_header)
+            raise FileFormatError("malformed VSET header", vset_header)
         vset_header.validate()
         data = vset_header.data
         offset = vset_header.offset
@@ -734,7 +737,7 @@ class ARDFImage:
     @classmethod
     def parse_imag(cls, imag_header: ARDFHeader):
         if imag_header.name != b"IMAG":
-            raise ValueError("Malformed image header.", imag_header)
+            raise FileFormatError("Malformed image header.", imag_header)
         imag_toc = ARDFTableOfContents.unpack(imag_header)
 
         # don't use NEXT or THMB data, step over
@@ -744,7 +747,7 @@ class ARDFImage:
         # don't use TTOC or TOFF, step over
         idef_header = ARDFHeader.unpack(ttoc.data, ttoc.offset + ttoc.size)
         if idef_header.name != b"IDEF" or idef_header.size != cls._struct.size + 16:
-            raise ValueError("Malformed image definition.", idef_header)
+            raise FileFormatError("Malformed image definition.", idef_header)
         idef_header.validate()
         points, lines, _, __, x_step, y_step, *cstrings = cls._struct.unpack_from(
             idef_header.data,
@@ -766,7 +769,7 @@ class ARDFImage:
     def get_image(self):
         ibox_header = ARDFHeader.unpack(self.data, self.ibox_offset)
         if ibox_header.size != 32 or ibox_header.name != b"IBOX":
-            raise ValueError("Malformed image layout.", ibox_header)
+            raise FileFormatError("Malformed image layout.", ibox_header)
         ibox_header.validate()
         data_offset = ibox_header.offset + ibox_header.size + 16  # past IDAT header
         ibox_size, lines, stride = TOC_STRUCT.unpack_from(
@@ -790,7 +793,7 @@ class ARDFImage:
             ibox_header.data, ibox_header.offset + ibox_size
         )
         if gami_header.size != 16 or gami_header.name != b"GAMI":
-            raise ValueError("Malformed image layout.", gami_header)
+            raise FileFormatError("Malformed image layout.", gami_header)
         gami_header.validate()
         return arr
 
@@ -829,13 +832,13 @@ class ARDFFFMReader:
             data, first_vset_header.offset + first_vset_header.size
         )
         if first_vnam_header.name != b"VNAM":
-            raise ValueError("Malformed volume name", first_vnam_header)
+            raise FileFormatError("Malformed volume name", first_vnam_header)
         first_vnam_header.validate()
         first_vdat_header = ARDFHeader.unpack(
             data, first_vnam_header.offset + first_vnam_header.size
         )
         if first_vdat_header.name != b"VDAT":
-            raise ValueError("Malformed volume data")
+            raise FileFormatError("Malformed volume data")
         first_vdat = ARDFVdata.unpack(first_vdat_header)
         return cls(
             data=data,
@@ -929,7 +932,7 @@ class ARDFForceMapReader:
     def traverse_vdats(self, pointer):
         vnam_header = ARDFHeader.unpack(self.data, pointer)
         if vnam_header.name != b"VNAM":
-            raise ValueError("Malformed volume name", vnam_header)
+            raise FileFormatError("Malformed volume name", vnam_header)
         vnam_header.validate()
         pointer = vnam_header.offset + vnam_header.size
         while True:
@@ -1048,7 +1051,7 @@ class ARDFVolume:
     def parse_volm(cls, volm_header: ARDFHeader):
         data = volm_header.data
         if volm_header.size != 32 or volm_header.name != b"VOLM":
-            raise ValueError("Malformed volume header.", volm_header)
+            raise FileFormatError("Malformed volume header.", volm_header)
         # the next headers look a lot like VSET is a table of contents, but I've only
         # seen NEXT and NSET headers. NEXT shows up if "both" trace and retrace data
         # are inside. I'll assume the last entry is always NSET, the number of VSETs.
@@ -1064,7 +1067,7 @@ class ARDFVolume:
         # so this unpacking is intentionally inlined here.
         vdef_header = ARDFHeader.unpack(data, ttoc.offset + ttoc.size)
         if vdef_header.name != b"VDEF" or vdef_header.size != cls._struct.size + 16:
-            raise ValueError("Malformed volume definition.", vdef_header)
+            raise FileFormatError("Malformed volume definition.", vdef_header)
         vdef_header.validate()
         unpack_from = cls._struct.unpack_from  # line wrapping
         points, lines, _, x_step, y_step, t_step, *cstrings, nseg = unpack_from(
@@ -1096,7 +1099,7 @@ class ARDFVolume:
                 )
             channels[vchn.name] = (i, vchn)
         else:
-            raise RuntimeError("Got too many channels.", channels)
+            raise FileFormatError("Got too many channels.", channels)
 
         xdef = ARDFXdef.unpack(header)
         vtoc_header = ARDFHeader.unpack(data, xdef.offset + xdef.size)
@@ -1104,7 +1107,7 @@ class ARDFVolume:
 
         mlov_header = ARDFHeader.unpack(data, vtoc.offset + vtoc.size)
         if mlov_header.size != 16 or mlov_header.name != b"MLOV":
-            raise ValueError("Malformed volume table of contents.", mlov_header)
+            raise FileFormatError("Malformed volume table of contents.", mlov_header)
         mlov_header.validate()
 
         # Check if each offset is regularly spaced
@@ -1166,7 +1169,7 @@ class ARDFFile:
     def check_type(data: Buffer):
         file_header = ARDFHeader.unpack(data, 0)
         if file_header.size != 16 or file_header.name != b"ARDF":
-            raise ValueError("Not an ARDF file.", file_header)
+            raise FileFormatError("Not an ARDF file.", file_header)
         file_header.validate()
         return file_header
 
@@ -1175,7 +1178,7 @@ class ARDFFile:
         file_header = cls.check_type(data)
         ftoc_header = ARDFHeader.unpack(data, offset=file_header.size)
         if ftoc_header.name != b"FTOC":
-            raise ValueError("Malformed ARDF file table of contents.", ftoc_header)
+            raise FileFormatError("Malformed ARDF file table of contents.", ftoc_header)
         ftoc = ARDFTableOfContents.unpack(ftoc_header)
         ttoc_header = ARDFHeader.unpack(data, offset=ftoc.offset + ftoc.size)
         ttoc = ARDFTextTableOfContents.unpack(ttoc_header)
@@ -1197,7 +1200,7 @@ class ARDFFile:
                 # volumes[item.name] = item
                 volumes.append(item)
             else:
-                raise RuntimeError(f"Unknown TOC entry {item.name}.", item)
+                raise FileFormatError(f"Unknown TOC entry {item.name}.", item)
 
         k = float(notes["SpringConstant"])
         # slight numerical differences here
@@ -1254,9 +1257,9 @@ def parse_nanoscope_header(header_lines: Iterable[str]):
 
             current_section[key] = value.strip()
     else:
-        raise ValueError("File ended too soon")
+        raise FileFormatError("File ended too soon")
     if (not header) or ("" in header):
-        raise ValueError("File is empty or not a Bruker data file")
+        raise FileFormatError("File is empty or not a Bruker data file")
 
     return header
 
@@ -1335,7 +1338,7 @@ class FFVReader:
         length = int(subheader["Data length"])
         # npts = int(subheader["Sample Points"])  # only QNM?
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
-        bpp = _check_force_bpp(length, r * c, 2 * n_ext, subheader)
+        bpp = _check_force_bpp(length, r * c, 2 * n_ext, header)
         ints = np.ndarray(
             shape=(r, c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
@@ -1373,7 +1376,7 @@ class QNMDReader:
         # npts = int(subheader["Sample Points"]) only at 2kHz?
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
         npts = 2 * n_ext
-        bpp = _check_force_bpp(length, r * c, npts, subheader)
+        bpp = _check_force_bpp(length, r * c, npts, header)
         d_ints = np.ndarray(
             shape=(r * c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
@@ -1402,7 +1405,7 @@ class QNMDReader:
         d = d.reshape(-1)
         # "roll" across 2 indents (usually mostly consisting of the 2nd indent)
         npts = len(d) // 2
-        n_ext = npts // 2  # see assertion in constructor
+        n_ext = npts // 2  # halves are equal, see shape in parse
         sync_dist = (sync_dist_int - n_ext) % npts  # according to Bruker via Bede
         d = d[sync_dist : sync_dist + npts]
         return d.reshape((2, -1))
@@ -1468,7 +1471,7 @@ class NanoscopeVolume:
         elif units == "~m":  # microns?!
             factor = 1000.0
         else:
-            raise ValueError("unknown units:", units)
+            raise FileFormatError("unknown units:", units)
         scansize = float(scansize)
 
         # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
@@ -1540,7 +1543,7 @@ class NanoscopeFile:
         magic = b"\\*Force file list\r\n"
         start = bytes(memoryview(data)[: len(magic)])
         if not start == magic:
-            raise ValueError("Not a nanoscope file.", start)
+            raise FileFormatError("Not a nanoscope file.", start)
 
     @classmethod
     def parse(cls, data: Buffer):
@@ -1548,7 +1551,7 @@ class NanoscopeFile:
         # End of header is demarcated by a SUB byte (26 = 0x1A)
         header_end_pos = find_in_buffer(data, b"\x1a")
         if header_end_pos < 0:
-            raise ValueError(
+            raise FileFormatError(
                 "No stop byte found, are you sure this is a Nanoscope file?"
             )
         header = parse_nanoscope_header(
@@ -1636,7 +1639,7 @@ class NanoscopeFile:
         elif units == "~m":  # microns?!
             factor = 1000.0
         else:
-            raise ValueError("unknown units:", units)
+            raise FileFormatError("unknown units:", units)
 
         # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
         ratio = float(scansize) * factor / max(fastpx, slowpx)
@@ -1932,7 +1935,7 @@ class NIDVolume:
         # the conversions in _get_line_curve assume Z in m and Deflection in N
         for d, unit in ((zfwd, "m"), (dfwd, "N"), (zbwd, "m"), (dbwd, "N")):
             if d.unit != unit:
-                raise ValueError(
+                raise FileFormatError(
                     f"Expected curve data in {unit}.", d.frame, d.channel, d.unit
                 )
         nx, ny = int(spec_map_row[4]), int(spec_map_row[5])
@@ -2049,7 +2052,7 @@ class NIDFile:
         magic = b"[DataSet]"
         start = bytes(memoryview(data)[: len(magic)])
         if not start == magic:
-            raise ValueError("Not a Nanosurf NID file.", start)
+            raise FileFormatError("Not a Nanosurf NID file.", start)
 
     @classmethod
     def parse(cls, data: Buffer):
@@ -2057,7 +2060,9 @@ class NIDFile:
         # End of header is demarcated by the bytes b"#!"
         header_end_pos = find_in_buffer(data, b"#!")
         if header_end_pos < 0:
-            raise ValueError("No stop bytes found, are you sure this is a NID file?")
+            raise FileFormatError(
+                "No stop bytes found, are you sure this is a NID file?"
+            )
         header = parse_nanosurf_header(
             bytes(memoryview(data)[:header_end_pos]).decode("utf-8").splitlines()
         )
@@ -2071,11 +2076,13 @@ class NIDFile:
             offset += dataset.nbytes
         nbytes = memoryview(data).nbytes
         if offset > nbytes:
-            raise ValueError("Datasets overrun the end of the file.", offset, nbytes)
+            raise FileFormatError(
+                "Datasets overrun the end of the file.", offset, nbytes
+            )
 
         k, k_unit = parse_nanosurf_value(header["cantilever"]["Prop0"])
         if k_unit != "N/m":
-            raise ValueError("Expected spring constant in N/m.", k_unit)
+            raise FileFormatError("Expected spring constant in N/m.", k_unit)
         defl_sens = (
             float(header["cantilever"]["Sensitivity"]) * NANOMETER_UNIT_CONVERSION
         )
@@ -2086,7 +2093,7 @@ class NIDFile:
 
         spec_mode = header["DataSet\\SpecInfos\\SpecHeader"]["SpecMode"]
         if spec_mode != "Map" or len(header["spec_map"]) != 1:
-            raise NotImplementedError(
+            raise FileFormatError(
                 "Only single spectroscopy maps are supported.",
                 spec_mode,
                 len(header["spec_map"]),

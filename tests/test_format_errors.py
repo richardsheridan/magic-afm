@@ -15,8 +15,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# Each case builds a good synthetic file and corrupts one field of it, picked so that
-# today's reader either accepts the file under python -O or fails with an error that is
+# Each case builds a good synthetic file and corrupts one field of it, picked so that a
+# reader without its check would accept the file under python -O or fail with an error that is
 # not a format error. ARDF fields are corrupted with their section's CRC rewritten, so
 # the CRC check passes and the field's own check is the one that must fire. Every case
 # is read twice: in this process, and in a python -O subprocess where asserts vanish.
