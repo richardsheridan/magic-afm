@@ -551,17 +551,65 @@ def test_cli_text_output_types_are_npy_values_at_8_significant_digits(
 
 
 @pytest.mark.slow
-def test_cli_reports_a_missing_volume_on_stderr_and_still_exits_0(run_cli):
-    """--trace retrace on a one-volume file: message, no files, exit 0 today."""
+def test_cli_reports_a_missing_volume_on_stderr_and_exits_nonzero(run_cli):
+    """--trace retrace on a one-volume file: message, no files, nonzero exit."""
     run = run_cli("arh5_retrace")
-    assert run.result.exit_code == 0
+    assert run.result.exit_code != 0
     assert run.result.stdout == ""
-    assert run.result.stderr == (
-        f"Unhandled error processing {run.path}.\n"
-        "list index out of range\n"
-        "Continuing...\n"
-    )
+    assert f"Unhandled error processing {run.path}.\n" in run.result.stderr
     assert written(run) == []
+
+
+@pytest.mark.slow
+def test_cli_processes_the_remaining_files_after_a_failure_then_exits_nonzero(
+    real_data_file, tmp_path
+):
+    """A file that fails does not stop the next one, but the exit status says so."""
+    bad = Path(real_data_file(ARH5_RELPATH))  # one volume, so no retrace
+    good = Path(real_data_file(ARDF_RELPATH))
+    args = ["--trace", "retrace", "--fit-mode", "skip", "--verbose", str(bad)]
+    result = invoke_cli(good, tmp_path / "out", args)
+    assert result.exit_code != 0
+    assert f"Unhandled error processing {bad}.\n" in result.stderr
+    assert result.stdout.count("Skipping writing options_json") == 1  # good's
+
+
+@pytest.mark.slow
+def test_cli_exits_0_when_every_file_succeeds(real_data_file, tmp_path):
+    paths = [str(real_data_file(p)) for p in (QNM_RELPATH, ARH5_RELPATH)]
+    args = ["--fit-mode", "skip", "--verbose", *paths]
+    result = invoke_cli(real_data_file(NID_RELPATH), tmp_path / "out", args)
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert result.stdout.count("Skipping writing options_json") == 3
+
+
+def test_cli_rejects_an_unknown_suffix_as_a_usage_error(tmp_path):
+    """Exit 2 naming the file and its suffix, before any file is opened."""
+    from magic_afm.cli._impl import main
+
+    known, unknown = tmp_path / "x.nid", tmp_path / "scan.xyz"
+    known.touch()
+    unknown.touch()
+    out = tmp_path / "out"
+    argv = ["--output-path", str(out), "--disable-progress", str(known), str(unknown)]
+    result = CliRunner().invoke(main, argv)
+    assert result.exit_code == 2
+    assert "scan.xyz" in result.output
+    assert ".xyz" in result.output.replace("scan.xyz", "")
+    assert not out.exists()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("option", ["k", "defl_sens", "sync_dist"])
+def test_cli_override_of_0_replaces_the_file_value(real_data_file, tmp_path, option):
+    """--k 0, --defl-sens 0 and --sync-dist 0 are recorded, not the file's values."""
+    path = Path(real_data_file(QNM_RELPATH))  # k, defl_sens, sync_dist all nonzero
+    out = tmp_path / "out"
+    result = invoke_cli(path, out, ["--" + option.replace("_", "-"), "0"])
+    assert result.exit_code == 0, result.output
+    options = json.loads((out / options_name(path.stem)).read_text())
+    assert options[option] == 0.0
 
 
 @pytest.mark.slow
