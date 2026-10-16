@@ -73,3 +73,16 @@ def test_fvfile_protocol_declares_sync_dist_and_trace():
     hints = typing.get_type_hints(FVFile)
     assert hints["sync_dist"] == float | None
     assert hints["trace"] == int | None
+
+
+@pytest.mark.parametrize("case", BUILDERS)
+def test_get_all_curves_returns_one_float32_array_z_d_by_grid_by_halves(tmp_path, case):
+    """Each volume's get_all_curves is one float32 (2, rows, cols, 2, n) array."""
+    builder, _, _ = BUILDERS[case]
+    synthetic = builder(tmp_path)
+    with open_fvfile(synthetic.path) as fvfile:
+        for volume in fvfile.volumes:
+            result = volume.get_all_curves()
+            assert isinstance(result, np.ndarray), type(result)
+            assert result.dtype == np.float32
+            assert result.shape[:4] == (2, *volume.shape, 2)
