@@ -38,6 +38,13 @@ _PIXI_OS = {"darwin": "osx", "linux": "linux", "win32": "win"}
 _PIXI_ARCH = {"x86_64": "64", "amd64": "64", "arm64": "arm64", "aarch64": "aarch64"}
 
 
+def _missing_real_data(msg: str):
+    """Skip, or fail when MAFM_REQUIRE_REAL_DATA=1 (CI with the corpus)."""
+    if os.environ.get("MAFM_REQUIRE_REAL_DATA") == "1":
+        pytest.fail(f"{msg} (MAFM_REQUIRE_REAL_DATA=1)", pytrace=False)
+    pytest.skip(msg)
+
+
 def _data_root() -> Path:
     return Path(os.environ.get("MAFM_TEST_DATA") or REPO_ROOT / "example.data")
 
@@ -101,7 +108,9 @@ def resolve_real_data_file(relpath: str) -> Path:
     packed = root / (relpath + ".xz")
     if packed.is_file():
         return _unpack_cached(packed, relpath)
-    pytest.skip(f"real data file {relpath} not found under {root}; set MAFM_TEST_DATA")
+    _missing_real_data(
+        f"real data file {relpath} not found under {root}; set MAFM_TEST_DATA"
+    )
 
 
 @pytest.fixture
@@ -120,7 +129,7 @@ def golden_platform() -> str:
 
 
 def load_platform_goldens(filename: str) -> dict:
-    """Load the real-file value goldens for this platform, or skip."""
+    """Load the real-file value goldens for this platform, or skip (or fail)."""
     plat = golden_platform()
     if plat.startswith("win-") and os.environ.get("PIXI_ENVIRONMENT_NAME") == "test":
         pytest.skip(
@@ -129,7 +138,7 @@ def load_platform_goldens(filename: str) -> dict:
         )
     path = GOLDENS_DIR / plat / filename
     if not path.is_file():
-        pytest.skip(
+        _missing_real_data(
             f"no real-file goldens for platform {plat}; write them with"
             " tests/goldens/make_t2_goldens.py and make_t3_goldens.py --platform-only"
         )
