@@ -35,8 +35,15 @@ jobs:
         with:
           environments: ${{ matrix.environment }}
           locked: true
-      # tests marked slow skip here: CI has no example.data until T5b publishes it
-      - run: pixi run -e ${{ matrix.environment }} pytest -rfEs
+      # the GUI smoke test needs a display: Xvfb on Linux, the desktop elsewhere
+      - name: Install Xvfb
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      # tests marked slow skip here: CI has no example.data until T5b publishes it;
+      # the GUI smoke test runs under xvfb-run on Linux
+      - run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}pixi run -e ${{ matrix.environment }} pytest -rfEs
+        env:
+          MAFM_GUI_TESTS: "1"
       # when tests fail, regenerate the T2 goldens on this platform so every field's
       # drift can be measured offline with make_t2_goldens.py --compare
       - name: Regenerate T2 goldens
