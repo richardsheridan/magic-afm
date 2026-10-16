@@ -91,9 +91,9 @@ def suffix(c, p, filenames):
     for filename in filenames:
         lower_suffix = filename.suffix.lower()
         if lower_suffix not in SUFFIX_FVFILE_MAP:
-            unknown.append(filename.name)
+            unknown.append(f"{filename.name} ({filename.suffix})")
     if unknown:
-        raise ValueError(f"Unknown filetypes for {unknown}")
+        raise click.BadParameter(f"unknown file types: {', '.join(unknown)}", c, p)
     return filenames
 
 
@@ -155,13 +155,14 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
     prepare_flag = True
 
     # per file defaults overridden here
-    k = co["k"] or fvfile.k
-    defl_sens = co["defl_sens"] or fvfile.defl_sens
-    sync_dist = co["sync_dist"] or getattr(fvfile, "sync_dist", None)
+    k = fvfile.k if co["k"] is None else co["k"]
+    defl_sens = fvfile.defl_sens if co["defl_sens"] is None else co["defl_sens"]
+    file_sync_dist = getattr(fvfile, "sync_dist", None)
+    sync_dist = file_sync_dist if co["sync_dist"] is None else co["sync_dist"]
     trace = co["trace"] is None or co["trace"]
 
     v = fvfile.volumes[not trace]
-    if sync_dist != getattr(fvfile, "sync_dist", None):
+    if sync_dist != file_sync_dist:
         v = evolve(v, sync_dist=sync_dist)
 
     imshape = v.shape
@@ -450,6 +451,7 @@ def main(
         mp_context=get_context("spawn"),
     )
 
+    any_failed = False
     for fvfile, filename in tqdm(
         threaded_opener(filenames),
         total=len(filenames),
@@ -480,4 +482,7 @@ def main(
             if stop_on_error:
                 raise RuntimeError(message) from e
             else:
+                any_failed = True
                 echo("\n".join((message, str(e), "Continuing...")), err=True)
+    if any_failed:
+        raise click.exceptions.Exit(1)
