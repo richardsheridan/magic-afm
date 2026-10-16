@@ -312,7 +312,6 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
     "Fit parameters",
     click.option("--fix-radius/--fit-radius"),
     click.option("--radius", type=float, callback=abs_cb, default=20.0),
-    # click.option("-fix-M/-fit-M"), # TODO: implement with constraint
     click.option(
         "--M",
         "M",
