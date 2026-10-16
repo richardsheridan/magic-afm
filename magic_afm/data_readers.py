@@ -2148,17 +2148,16 @@ class NIDFile:
         )
         images = {image.name: image}
 
-        # datasets on the map grid shorter than a curve hold per-curve analysis results
-        # in column 0, later columns hold the live chart's running min/max
+        # datasets on the map grid whose channel is a NameZ<n> placeholder hold
+        # per-curve analysis results in column 0, later columns hold the live chart's running min/max
         # except Slope frames, which hold a fit window, slope and intercept
-        spec_points = spec["Spec forward", "Deflection"].points
         n_map = volume.shape[0] * volume.shape[1]
         for d in datasets.values():
             if (
                 d.frame not in NANOSURF_RAW_FRAMES
                 and not d.frame.startswith("Slope")
                 and d.lines == n_map
-                and d.points < spec_points
+                and re.fullmatch(r"NameZ\d+", d.channel)
             ):
                 name, sign = NANOSURF_RESULT_IMAGES.get(d.frame, (d.frame, 1.0))
                 images[name] = NIDMapImage(name, volume.shape, volume.n_lines, sign, d)

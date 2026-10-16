@@ -41,6 +41,8 @@ CASES = {
     "wide-100": ((3, 5), (100, 100), {}),
     "tall-ragged": ((5, 3), (64, 64), {"ext_points": RAGGED_EXT}),
     "longer-retract": ((3, 5), (40, 48), {}),
+    "longer-extend": ((3, 5), (48, 40), {}),
+    "tall-ragged-longer-extend": ((5, 3), (64, 40), {"ext_points": RAGGED_EXT}),
     "16-bit": ((4, 4), (32, 32), {"save_bits": 16}),
 }
 # forward rows of 44 to 56 points, in rows of 64
@@ -52,11 +54,9 @@ STOPPED_CASES = {
     "stopped-mid-row": ((4, 4), (16, 16), 6, {}),
     "stopped-at-row-end": ((3, 5), (16, 16), 10, {}),
     "stopped-longer-retract": ((3, 5), (40, 48), 7, {}),
+    "stopped-longer-extend": ((3, 5), (48, 40), 7, {}),
     "stopped-short-forward-rows": ((4, 4), (64, 64), 6, {"ext_points": SHORT_EXT}),
 }
-# Left out: an extend half longer than the retract half, e.g. (48, 40). The reader takes
-# any dataset on the map grid shorter than a forward curve for a per-curve result, so
-# the two backward Indentation datasets come out as extra map images.
 
 
 def assert_float32_close(actual, expected):
