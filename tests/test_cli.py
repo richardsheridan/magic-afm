@@ -1,4 +1,4 @@
-"""Characterisation of what the CLI writes today, captured from the code at T3."""
+"""Characterisation of what the CLI writes today."""
 
 # Copyright (C) Richard J. Sheridan
 #
@@ -15,10 +15,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# These tests pin the CLI's observable output (file names, array shapes and
-# dtypes, units, the options JSON, and values) so that B3 can move the export
-# code without changing it. They are not a statement that today's output is
-# right: see the notes on units, trace and error handling below.
+# These tests pin the CLI's observable output (file names, array shapes and dtypes,
+# units, the options JSON, and values) so that the export code can move into a module
+# shared with the GUI without changing it. They are not a statement that today's output
+# is right: see the notes on units, trace and error handling below.
 #
 # Options live in tests/goldens/t3_goldens.json and map values in
 # tests/goldens/<pixi platform>/t3_goldens.json, written by
@@ -28,9 +28,10 @@
 # One complete file per reader path that works through the CLI today: ARDF (both0001:
 # two volumes, so --trace matters), ARH5 (rtrace0001.h5), Nanoscope QNM
 # (onekhz.000.pfc), Nanoscope force volume (A1...spm) and NID (the example .nid, also
-# the subject of T2). Excluded, per the plan: DOE4 (mis-decoded), the stopped
-# hard/mellow scans (hard0001 and hard0003 are covered by test_stopped_scans.py since
-# D4) and the non-square twoxln/twoxpt (the CLI crashes until B2a).
+# the subject of tests/test_goldens.py). Excluded: DOE4 (mis-decoded), the stopped
+# hard/mellow scans (hard0001 and hard0003 are covered by test_stopped_scans.py) and the
+# non-square twoxln/twoxpt (the CLI crashes on them until the ARDF reader's transposed
+# shape is fixed).
 #
 # Every in-process run passes --disable-progress (tqdm only) and an absolute
 # --output-path under pytest's tmp dir; nothing else is restricted. The one
@@ -99,10 +100,10 @@ CLI_RUNS: dict[str, tuple[str, tuple[str, ...]]] = {
 SUMMARY_RUNS = ("ardf", "ardf_retrace", "arh5", "qnm", "ffv")
 FULL_RUNS = ("nid",)
 
-# Pixels left out of every value comparison, in exported (row-flipped)
-# coordinates. A1 pixel (12, 3) as the reader indexes it has an INT32_MIN
-# extend half that the reader scales to -10,324 nm; B2f makes it NaN. The
-# export flips rows, so it lands at (31 - 12, 3).
+# Pixels left out of every value comparison, in exported (row-flipped) coordinates. A1
+# pixel (12, 3) as the reader indexes it has an INT32_MIN extend half that the reader
+# scales to -10,324 nm instead of masking it. The export flips rows, so it lands at (31
+# - 12, 3).
 EXCLUDED_PIXELS = {"ffv": ((19, 3),)}
 
 # Files written at the default options, in the order the CLI writes them:
@@ -129,11 +130,11 @@ DEFAULT_MAPS = (
     "lj_scaleErr",
 )
 
-# Units as written: fit units (nm, nN) for everything except the two maps
-# with a factor, IndentationModulus in Pa (M is GPa in the fit) and
-# AdhesionForce in N (fc is nN). So force_shift stays in nN although
-# PARMS_UNITS_DICT says N, and lengths are nm although it says m (A1).
-# exported map: (T2 goldens group, field, factor from fit units)
+# Units as written: fit units (nm, nN) for everything except the two maps with a factor,
+# IndentationModulus in Pa (M is GPa in the fit) and AdhesionForce in N (fc is nN). So
+# force_shift stays in nN although PARMS_UNITS_DICT says N, and lengths are nm although
+# it says m.
+# exported map: (t2_goldens.json group, field, factor from fit units)
 EXPORT_FIELDS = {
     "Deflection": ("properties", "Deflection", 1.0),
     "Indentation": ("properties", "Indentation", 1.0),
@@ -154,20 +155,21 @@ EXPORT_FIELDS = {
     "lj_scaleErr": ("parms_err", "lj_scale", 1.0),
 }
 
-# Tolerances per exported map, (rtol, atol) in exported units: T2's fit-unit
-# tolerances (tests/test_goldens.py) with atol scaled by the export factor,
-# except Indentation and IndentationRatio.
+# Tolerances per exported map, (rtol, atol) in exported units: the fit-unit tolerances
+# of tests/test_goldens.py with atol scaled by the export factor, except Indentation and
+# IndentationRatio.
 #
-# Measured spread on every pixel of every run stored here, env test (numba
-# 0.67.0) against env test-nonumba, osx-arm64: bitwise equal, NaN patterns
-# included, except Indentation and IndentationRatio, as in T2. Their max rel
-# is 5.4e-5 on onekhz.000.pfc, 2.6e-5 on A1...spm, 3.2e-5 on the nid and
-# 1.5e-6 on both0001.ARDF and rtrace0001.h5. T2's rtol 1e-4 would leave less
-# than 2x on the .pfc, so these two get 2e-4 here, about 3.7x the spread.
+# Measured spread on every pixel of every run stored here, env test against env
+# test-nonumba, osx-arm64: bitwise equal, NaN patterns included, except Indentation and
+# IndentationRatio, as in tests/test_goldens.py. Their max rel is 5.4e-5 on
+# onekhz.000.pfc, 2.1e-5 on A1...spm, 2.5e-5 on the nid and under 1e-6 on both0001.ARDF
+# and rtrace0001.h5. The rtol 1e-4 there would leave less than 2x on the .pfc, so these
+# two get 2e-4 here, about 3.7x the spread.
 #
-# The other fields take T2's cross-OS tolerances (see the comment above
-# TOLERANCES in tests/test_goldens.py). These real-file maps skip in CI, so
-# their own cross-OS spread is not measured yet.
+# The other fields take the cross-OS tolerances of tests/test_goldens.py (see the
+# comment above TOLERANCES there). These real-file maps are compared with a set per
+# platform (tests/goldens/README.md), so the tolerances need only cover the spread
+# between environments on one platform.
 FIT_TOLERANCES = {
     **T2_TOLERANCES,
     ("properties", "Indentation"): (2e-4, 0.0),
@@ -509,7 +511,7 @@ def test_cli_text_output_types_are_npy_values_at_8_significant_digits(
 
 @pytest.mark.slow
 def test_cli_reports_a_missing_volume_on_stderr_and_still_exits_0(run_cli):
-    """--trace retrace on a one-volume file: message, no files, exit 0 (A5)."""
+    """--trace retrace on a one-volume file: message, no files, exit 0 today."""
     run = run_cli("arh5_retrace")
     assert run.result.exit_code == 0
     assert run.result.stdout == ""

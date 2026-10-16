@@ -1,4 +1,4 @@
-"""Golden baselines of fitted values, captured from the code as it stood at T2."""
+"""Golden baselines of fitted values, so that a numerics change shows as drift."""
 
 # Copyright (C) Richard J. Sheridan
 #
@@ -20,9 +20,10 @@
 # tests/goldens/make_t2_goldens.py, which imports the builders below so the
 # two cannot diverge. Regenerate on purpose only, and say why in the commit.
 #
-# Values are stored at the calculation layer, in fit units (nm, nN, GPa), as
-# the CLI holds them in its property and parameter maps before export: no
-# export units factor and no row flip. What the CLI writes to disk is T3's.
+# Values are stored at the calculation layer, in fit units (nm, nN, GPa), as the CLI
+# holds them in its property and parameter maps before export: no export units factor
+# and no row flip. What the CLI writes to disk is pinned in tests/test_cli.py. See
+# tests/goldens/README.md for the golden sets.
 #
 # The model runs unjitted here, as in CLI workers at the default (no --jit).
 # warmup_jit_worker() rebinds module globals for the rest of the session, so
@@ -88,18 +89,16 @@ FINGERPRINT_STRIDE = {"raw": 100, "resampled": 32}
 
 # Tolerances per stored field, (rtol, atol), in fit units.
 #
-# Measured spread, env test (numba 0.67.0, model unjitted) against env
-# test-nonumba, osx-arm64, on every value in the goldens file: bitwise equal,
-# NaN patterns included, except
-#   Indentation       nid: max rel 3.21e-5 (abs 2.5e-4 nm); synthetic: 0
-#   IndentationRatio  nid: max rel 3.21e-5 (abs 2.2e-4); synthetic: 0
+# Measured spread, env test (model unjitted) against env test-nonumba, osx-arm64, on
+# every value in the goldens files: bitwise equal, NaN patterns included, except
+#   Indentation       nid: max rel 2.44e-5 (abs 2.4e-4 nm); synthetic: 0
+#   IndentationRatio  nid: max rel 2.45e-5 (abs 1.3e-4); synthetic: 0
 #   parms.delta_shift synthetic soft BOTH: rel 9.9e-8 (abs 3e-10 nm, 1 ulp)
-# The nid fitted parameters are bitwise equal, so the Indentation spread
-# arises after the fit, in calc_def_ind_ztru_ac (delta_curve over
-# schwarz_wrap, jitted only with numba), on float32 parameters. Those two
-# fields get rtol 1e-4, about 3x the spread. (Casting the nid curves to
-# float64 does not shrink it: the fits then differ by up to 1% in M between
-# the envs, so their agreement here depends on the float32 input path.)
+# The nid fitted parameters are bitwise equal, so the Indentation spread arises after
+# the fit, in calc_def_ind_ztru_ac (delta_curve over schwarz_wrap, jitted only with
+# numba), on float32 parameters. Those two fields get rtol 1e-4, about 4x the spread.
+# (Casting the nid curves to float64 does not shrink it: the fits then differ by up to
+# 1% in M between the envs, so their agreement here depends on the float32 input path.)
 #
 # The atols cover fields whose value can sit near 0: about 8 float32 ulps at
 # the field's natural scale (shifts and fc at the 10-20 nm or nN scale of the
@@ -107,21 +106,20 @@ FINGERPRINT_STRIDE = {"raw": 100, "resampled": 32}
 # float32 M, so one ulp of M moves it by about 1.2e-4 at any magnitude; it
 # gets atol 1e-3.
 #
-# Across operating systems the spread is far larger than numba against plain.
-# T4's CI goldens (2026-10-15, C7's lock, all six Linux and Windows x86-64
-# envs against these osx-arm64 values) keep every NaN pattern, but the
-# resampled curves already differ by up to rel 3.2e-6 and the fits amplify
-# that. At the atols here, the rtol each field needs is at most 2.2e-5
-# (parms_err.lj_scale) and 9e-5 for SensIndMod_k, so every field gets rtol
-# 1e-4 (4.5x) and SensIndMod_k 1e-3. Within one OS, numba against plain and
-# 3.11 against 3.14 agree to 4e-7. One case is ill-conditioned and gets its
-# own tolerances (CASE_TOLERANCES). Tightening these again is for the
-# numerics freeze (RELEASE_PLAN.md: C3, C2b, C2e, T6).
+# Across operating systems the spread is far larger than numba against plain. The
+# synthetic values are shared by every platform, so these tolerances span OSes: goldens
+# written in CI by every Linux and Windows x86-64 env, against these osx-arm64 values,
+# keep every NaN pattern, but the resampled curves already differ by up to rel 3.2e-6
+# and the fits amplify that. At the atols here, the rtol each field needs is at most
+# 2.2e-5 (parms_err.lj_scale) and 9e-5 for SensIndMod_k, so every field gets rtol 1e-4
+# (4.5x) and SensIndMod_k 1e-3. Within one OS, numba against plain and 3.11 against 3.14
+# agree to 4e-7. One case is ill-conditioned and gets its own tolerances
+# (CASE_TOLERANCES). Tightening these is for a deliberate re-baseline after the planned
+# numerics changes (resampling, the numba and plain paths).
 #
-# For C2b: with warmup_jit_worker() (GUI workers, CLI --jit) the spread
+# For the jitted model: with warmup_jit_worker() (GUI workers, CLI --jit) the spread
 # against the unjitted numba state is at most rel 3.2e-7 in Indentation and
-# IndentationRatio, and about 1e-7 (1 ulp) in synthetic delta_shift and
-# force_shift, so that state passes too.
+# IndentationRatio and nothing in the fitted parameters, so that state passes too.
 SHIFT_ATOL = 1e-5
 CROSS_OS_RTOL = 1e-4
 TOLERANCES: dict[tuple[str, str], tuple[float, float]] = {

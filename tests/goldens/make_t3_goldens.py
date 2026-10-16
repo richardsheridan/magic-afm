@@ -1,4 +1,4 @@
-"""Write the T3 goldens from the current CLI (plan item T3).
+"""Write the CLI output goldens of tests/test_cli.py from the current CLI.
 
 Run from the repository root:
 

@@ -103,9 +103,9 @@ def test_cli_bad_options_json_shape_is_usage_error(tmp_path, case):
     assert len(_error_lines(result.output)) == 1, result.output
 
 
-# What today's load_options decodes from the JSONs the betas wrote (T3a, see
-# tests/fixtures/options_json/README.md). These pin current behaviour,
-# including the read-compat findings left for A3 and B2c:
+# What today's load_options decodes from the JSONs the betas wrote (see
+# tests/fixtures/options_json/README.md). These pin current behaviour, including the
+# read-compat cases a later options schema change must handle:
 # - fit_fix is an int in every fixture (123, FitFix.DEFAULTS).
 # - trace is an int from the GUI (1) but a name from the CLI ("TRACE").
 # - the 1.0.0b2 CLI default M is 1e9 (meant as Pa) and now reads as 1e9 GPa;
