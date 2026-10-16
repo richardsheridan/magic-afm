@@ -1,4 +1,4 @@
-"""Bruker Nanoscope force files: PeakForce capture (.pfc).
+"""Bruker Nanoscope force files: PeakForce capture (.pfc) and force volume (.spm).
 
 A Nanoscope file opens with a text header in windows-1252 with CRLF line endings:
 ``\\*Section`` lines each followed by ``\\Key: value`` lines, ending with
@@ -48,6 +48,43 @@ what point of the tap the Height image gives; and the ``Sync Distance QNM`` key,
 which no real capture has but a newer force volume carries beside ``Sync
 Distance``, so that the builder writes it the same way and takes it as the lag.
 The skipped-point capture (``Bytes/pixel: 0``) is not built.
+
+A force volume stores z and deflection as force channels of their own, in the set
+and order of the real file: ``Deflection Error``, ``Peak Force Error``,
+``Deflection Error`` again and ``Height Sensor``, then a ``Height Sensor`` image.
+Each force channel holds per pixel, lines one after another, the extend half
+from the surface outward, the reverse of time order, then the retract half from
+the surface outward, in time order. Every channel is int32 in the file, but
+``Bytes/pixel`` says 2 on the deflection and peak force error channels and 4 on
+the heights: in both real force volumes it gives the step the values sit on (a
+volts per LSB of the input's full scale over 2**16 or 2**32, so the 2 byte
+channels hold values that fit in int16), not their width. The two Deflection
+Error channels hold the same values and differ only in the full scale on their Z
+scale line (0.5 V and 2.5 V); Peak Force Error holds small noise. The image is
+minus the height at the nearest point of each curve, the first stored point of
+its extend half.
+Every key that gives the grid agrees: ``Samps/line`` and ``Lines`` of the ``Ciao
+scan list``, ``force/line``, ``Samples / line`` and ``FV Lines`` of the ``Ciao
+force list``, and the image's ``Samps/line`` and ``Number of lines``. A ramp,
+extend and retract, takes 1 / ``Scan rate`` of the Ciao force list, whose
+``Forward vel.`` in the real file is twice the ramp size over that time.
+
+The layout, section order, keys and channel set follow a real force volume
+(software 0x09400202, a 32 x 32 map of 512 + 512 point curves). That file ends
+with 12288 bytes no header line describes; the builder leaves them out. No real
+file settles grids that are not square (as for a capture), the meaning of the
+image's -6.021 V Z offset (written 0 V here), or the order the curves were
+taken: ``FV Line Direction`` says ``Bidirection``, but neighbouring rows of the
+real image match better as stored than with every other row reversed, so the
+builder stores every line the same way.
+
+Two arguments write what the real files hold and today's reader gets wrong, for
+tests of a fix: ``scan_list_grid`` writes a Ciao scan list grid unlike the rest,
+as a second real force volume has (16 x 8 where every other key says 8 x 8), and
+``invalid_pixels`` writes INT32_MIN over the extend half of Peak Force Error,
+the second Deflection Error and Height Sensor and into the image, as the real
+file does at one pixel while its header says ``Invalid Data Flag: None``. The
+expected extend halves and image are NaN at those pixels.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -66,6 +103,7 @@ The skipped-point capture (``Bytes/pixel: 0``) is not built.
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import math
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -73,13 +111,15 @@ import numpy as np
 from . import Index, SyntheticFile, SyntheticVolume, force_curves, point_counts
 
 INT16_MIN = -(2**15)
-# the deflection input spans 24.576 V
+INT32_MIN = -(2**31)
+# the deflection and height sensor inputs span 24.576 V
 INPUT_VOLTS = 24.576
 # full scale of the Height image's Z scale line in the real captures, in V
 HEIGHT_FULL_SCALE = 354.4026
 # Sample Points times PFT Freq in every real capture
 PFC_SAMPLE_RATE_KHZ = 512.0
 PFC_HEADER_BYTES = 40960
+SPM_HEADER_BYTES = 80960
 
 
 def _g(x: float) -> str:
@@ -97,6 +137,11 @@ def _fixed(x: float, digits: int = 7) -> str:
 
 def _z_scale(sens: str, v_per_lsb: str, value: str) -> str:
     return f"V [{sens}] ({v_per_lsb} V/LSB) {value} V"
+
+
+def _v_per_lsb(bytes_per_pixel: int) -> str:
+    """Volts per LSB of a 24.576 V input with values of the given size."""
+    return _fixed(INPUT_VOLTS / 2 ** (8 * bytes_per_pixel))
 
 
 def _aspect(shape: Index) -> str:
@@ -328,4 +373,203 @@ def build_pfc(
         scansize=(fast, slow),
         image_units={"Height": "nm"},
         sync_dist=lag,
+    )
+
+
+def build_spm(
+    directory: Path,
+    shape: Index = (4, 4),
+    points: int = 512,
+    *,
+    seed: int = 0,
+    k: float = 1.9,
+    defl_sens: float = 115.1046,
+    z_sens: float = 840.1727,
+    scan_size: float = 50.0,
+    ramp_rate: float = 1.00469,
+    scan_list_grid: Index | None = None,
+    invalid_pixels: Iterable[Index] = (),
+    filename: str = "synthetic.0_00000.spm",
+) -> SyntheticFile:
+    """Write a force volume of shape (rows, cols) and say what it holds.
+
+    ``points`` per half curve, so each curve holds twice as many. ``k`` in N/m,
+    ``defl_sens`` and ``z_sens`` (of the Height Sensor) in nm/V, ``scan_size``
+    the fast axis in nm, ``ramp_rate`` the ramps per second. ``scan_list_grid``
+    (rows, cols) replaces the grid of the Ciao scan list alone; ``invalid_pixels``
+    lists the (row, col) of pixels marked invalid. Both write what the reader
+    gets wrong today; see the module docstring.
+    """
+    rows, cols = shape
+    scan_rows, scan_cols = shape if scan_list_grid is None else scan_list_grid
+    invalid = list(invalid_pixels)
+    k_str = _g(k)
+    sens_str = _fixed(defl_sens)
+    z_sens_str = _fixed(z_sens)
+    force_sens_str = _fixed(float(k_str) * float(sens_str))
+    rate_str = _g(ramp_rate)
+    full_scale = _fixed(INPUT_VOLTS)
+    fast = float(_g(scan_size))
+    slow = fast * rows / cols
+
+    rng = np.random.default_rng(seed)
+    counts = point_counts(shape, points)
+    zext, zret, dext, dret = force_curves(rng, counts, counts, z_far=-275.0, ramp=65.0)
+    # values on the step their Bytes/pixel says, as in the real force volumes
+    z_lsb = float(_v_per_lsb(4)) * float(z_sens_str)
+    d_lsb = float(_v_per_lsb(2)) * float(sens_str)
+    zext_codes, zext = _quantize(zext, z_lsb, np.int32)
+    zret_codes, zret = _quantize(zret, z_lsb, np.int32)
+    dext_codes, dext = _quantize(dext, d_lsb, np.int16)
+    dret_codes, dret = _quantize(dret, d_lsb, np.int16)
+
+    def stored(ext, ret):
+        """(rows, cols, 2, points) int32 as stored: both halves from the surface."""
+        return np.stack([ext[..., ::-1], ret], axis=2).astype("<i4")
+
+    height = stored(zext_codes, zret_codes)
+    deflection = stored(dext_codes, dret_codes)
+    error = rng.integers(-5, 6, deflection.shape).astype("<i4")
+    image_codes = -height[:, :, 0, 0]
+    image_lsb = float(full_scale) / 2**32 * float(z_sens_str)
+    image = image_codes * image_lsb
+    deflection_2v5 = deflection.copy()
+    for r, c in invalid:
+        for channel in (error, deflection_2v5, height):
+            channel[r, c, 0] = INT32_MIN
+        image_codes[r, c] = INT32_MIN
+        zext[r, c] = dext[r, c] = image[r, c] = np.nan
+
+    # Image Data, sensitivity, Bytes/pixel, full scale of the Z scale and FV scale
+    # lines, values
+    defl = 'S [DeflectionError] "Deflection Error"'
+    full = full_scale
+    channels = [
+        (defl, "Sens. DeflSens", 2, "0.5000000", "2.500000", deflection),
+        ('S [] "Peak Force Error"', "Sens. ForceDeflSens", 2, full, full, error),
+        (defl, "Sens. DeflSens", 2, "2.500000", "2.500000", deflection_2v5),
+        ('S [ZSensor] "Height Sensor"', "Sens. ZsensSens", 4, full, full, height),
+    ]
+    offset = SPM_HEADER_BYTES
+    force_sections = []
+    for image_data, sens, bytes_per_pixel, value, fv_value, data in channels:
+        lsb = _v_per_lsb(bytes_per_pixel)
+        force_sections.append(
+            (
+                "Ciao force image list",
+                {
+                    "Data offset": str(offset),
+                    "Data length": str(data.nbytes),
+                    "Bytes/pixel": str(bytes_per_pixel),
+                    "Start context": "FOL",
+                    "Data type": "AFM",
+                    "Frame direction": "Up",
+                    "Invalid Data Flag": "None",
+                    "Invalid Data Fill": "None",
+                    "Samps/line": f"{points} {points}",
+                    "Z direction": "Retract",
+                    "Spring Constant": k_str,
+                    "@4:Image Data": image_data,
+                    "@4:Z scale": _z_scale(sens, lsb, value),
+                    "@4:Z offset": _z_scale(sens, lsb, "0"),
+                    "@4:FV scale": _z_scale(sens, lsb, fv_value),
+                },
+            )
+        )
+        offset += data.nbytes
+    image_codes = image_codes.astype("<i4")
+    sections = [
+        (
+            "Force file list",
+            {
+                "Version": "0x09400202",
+                "Date": "05:50:40 PM Fri Apr 30 2021",
+                "Start context": "FVOL",
+                "Data length": str(SPM_HEADER_BYTES),
+            },
+        ),
+        ("Equipment list", {"Description": "PF-TUNA Dimension Icon"}),
+        ("Scanner list", {"Scanner type": "Dim 4000"}),
+        (
+            "Ciao scan list",
+            {
+                "Parameter select": "Main",
+                "Operating mode": "Force Volume",
+                "Scan Size": f"{_g(fast)} nm",
+                "Samps/line": str(scan_cols),
+                "Lines": str(scan_rows),
+                "Aspect Ratio": _aspect(shape),
+                "Capture direction": "Up",
+                "PFT Freq": "1 kHz",
+                "@MicroscopeList": 'S [SoftHarmoniX] "PeakForce QNM"',
+                "@Sens. DeflSens": f"V {sens_str} nm/V",
+                "@Sens. ZsensSens": f"V {z_sens_str} nm/V",
+                "@Sens. ForceDeflSens": f"V {force_sens_str} nN/V",
+            },
+        ),
+        (
+            "Ciao force list",
+            {
+                "Scan rate": rate_str,
+                "Samps/line": f"{points} {points}",
+                "force/line": str(cols),
+                "Samples / line": str(cols),
+                "Z direction": "Retract",
+                "X Type": "Height Sensor",
+                "FV Line Direction": "Bidirection",
+                "FV Lines": str(rows),
+                "FV Aspect Ratio": _aspect(shape),
+                "@4:Image Data": 'S [DeflectionError] "Deflection Error"',
+            },
+        ),
+        ("Probe List", {"Save/Load Tip Model": "Spherical"}),
+        *force_sections,
+        (
+            "Ciao image list",
+            {
+                "Data offset": str(offset),
+                "Data length": str(image_codes.nbytes),
+                "Bytes/pixel": "4",
+                "Start context": "OL1BIG",
+                "Data type": "AFM",
+                "Frame direction": "Up",
+                "Invalid Data Flag": "None",
+                "Invalid Data Fill": "None",
+                "Samps/line": str(cols),
+                "Number of lines": str(rows),
+                "Aspect Ratio": _aspect(shape),
+                "Scan Size": _image_scan_size(fast, slow),
+                "Line Direction": "Retrace",
+                "@2:Image Data": 'S [ZSensor] "Height Sensor"',
+                "@2:Z scale": _z_scale("Sens. ZsensSens", _v_per_lsb(4), full_scale),
+                "@2:Z offset": _z_scale("Sens. ZsensSens", _v_per_lsb(4), "0"),
+            },
+        ),
+    ]
+    path = Path(directory) / filename
+    with path.open("wb") as f:
+        f.write(_header(sections, SPM_HEADER_BYTES))
+        for *_, data in channels:
+            f.write(data.tobytes())
+        f.write(image_codes.tobytes())
+
+    volume = SyntheticVolume(
+        "Deflection Error",
+        zext,
+        zret,
+        dext,
+        dret,
+        counts,
+        counts,
+        tuple(np.ndindex(shape)),
+    )
+    return SyntheticFile(
+        path=path,
+        volumes=[volume],
+        images={"Height Sensor": image},
+        k=float(k_str),
+        defl_sens=float(sens_str),
+        t_step=1 / (float(rate_str) * 2 * points),
+        scansize=(fast, slow),
+        image_units={"Height Sensor": "nm"},
     )

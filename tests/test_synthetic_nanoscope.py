@@ -28,9 +28,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 from synthetic_files import open_fvfile
-from synthetic_files.nanoscope import build_pfc
+from synthetic_files.nanoscope import INT32_MIN, build_pfc, build_spm
 
 PFC_RELPATH = "test_cases/PS_PCL_SAA/QNM/onekhz.000.pfc"
+SPM_RELPATH = "test_cases/A1_OCSOH-PMMA21k_300421.0_300425.spm"
 
 # grid (rows, cols), points per half curve, other builder arguments
 PFC_CASES = {
@@ -61,6 +62,19 @@ SCANSIZE_CASES = [case for case in PFC_CASES if case != "tall-128"]
 # so get_curve(0, 0) returns the deflection of (0, 1).
 # Left out everywhere: t_step. The reader divides the drive period by force/line,
 # the curves per line, not by the points per curve.
+
+# grid (rows, cols), points per half curve
+SPM_CASES = {
+    "square-512": ((4, 4), 512),
+    "square-64": ((4, 4), 64),
+    "wide-64": ((3, 6), 64),
+    "tall-64": ((6, 3), 64),
+}
+# Left out of the scan size test: "tall-64", as for a capture.
+SPM_SCANSIZE_CASES = [case for case in SPM_CASES if case != "tall-64"]
+# Left out everywhere: t_step. The reader takes it from PFT Freq and force/line,
+# not from the Scan rate of the ramps. The builder's stale scan list grid and
+# invalid pixels are checked only as the builder writes them.
 
 
 def assert_float32_close(actual, expected):
@@ -160,6 +174,144 @@ def test_pfc_height_image_round_trips(pfc):
             # the reader gives maps in m
             assert pfc.image_units[name] == "nm"
             assert_float32_close(image.get_image(), pfc.images[name] * 1e-9)
+
+
+@pytest.fixture(params=list(SPM_CASES))
+def spm(request, tmp_path):
+    shape, points = SPM_CASES[request.param]
+    return build_spm(tmp_path, shape, points)
+
+
+def test_spm_metadata_round_trips(spm):
+    with open_fvfile(spm.path) as fvfile:
+        assert [v.name for v in fvfile.volumes] == ["Deflection Error"]
+        assert [v.shape for v in fvfile.volumes] == [spm.volumes[0].shape]
+        assert fvfile.sync_dist is None
+        np.testing.assert_allclose(fvfile.k, spm.k, rtol=1e-12)
+        np.testing.assert_allclose(fvfile.defl_sens, spm.defl_sens, rtol=1e-12)
+
+
+@pytest.mark.parametrize("case", SPM_SCANSIZE_CASES)
+def test_spm_scansize_round_trips(tmp_path, case):
+    synthetic = build_spm(tmp_path, *SPM_CASES[case])
+    with open_fvfile(synthetic.path) as fvfile:
+        np.testing.assert_allclose(fvfile.scansize, synthetic.scansize, rtol=1e-12)
+
+
+def test_spm_get_curve_returns_the_known_curves(spm):
+    expected = spm.volumes[0]
+    with open_fvfile(spm.path) as fvfile:
+        volume = fvfile.volumes[0]
+        for r, c in np.ndindex(expected.shape):
+            assert_same_curve(volume.get_curve(r, c), expected.curve(r, c))
+
+
+def test_spm_iter_curves_goes_row_by_row(spm):
+    expected = spm.volumes[0]
+    with open_fvfile(spm.path) as fvfile:
+        volume = fvfile.volumes[0]
+        assert list(volume.iter_indices()) == list(expected.order)
+        seen = []
+        for (r, c), curve in volume.iter_curves():
+            seen.append((r, c))
+            assert_same_curve(curve, expected.curve(r, c))
+    assert seen == list(expected.order)
+
+
+def test_spm_get_all_curves_returns_every_curve(spm):
+    expected = spm.volumes[0]
+    with open_fvfile(spm.path) as fvfile:
+        z, d = fvfile.volumes[0].get_all_curves()
+    assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
+    assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+
+
+def test_spm_height_sensor_image_round_trips(spm):
+    with open_fvfile(spm.path) as fvfile:
+        assert sorted(fvfile.images) == sorted(spm.images)
+        for name, image in fvfile.images.items():
+            assert image.shape == spm.images[name].shape
+            # the reader gives maps in m
+            assert spm.image_units[name] == "nm"
+            assert_float32_close(image.get_image(), spm.images[name] * 1e-9)
+
+
+def read_header(path):
+    """The file's bytes and its header as (section, {key: value}), without a reader."""
+    data = path.read_bytes()
+    sections = []
+    for line in data[: data.index(b"\x1a")].decode("windows-1252").split("\r\n"):
+        if line.startswith("\\*"):
+            sections.append((line[2:], {}))
+        elif line:
+            key, _, value = line[1:].partition(": ")
+            sections[-1][1][key] = value
+    return data, sections
+
+
+def test_spm_builder_marks_invalid_pixels_as_the_real_file_does(tmp_path):
+    shape, points = (4, 4), 16
+    synthetic = build_spm(tmp_path, shape, points, invalid_pixels=[(1, 2)])
+    invalid = np.zeros(shape, dtype=bool)
+    invalid[1, 2] = True
+    data, sections = read_header(synthetic.path)
+
+    def stored(keys, stored_shape):
+        count = int(np.prod(stored_shape))
+        offset = int(keys["Data offset"])
+        return np.frombuffer(data, "<i4", count, offset).reshape(stored_shape)
+
+    marked = []
+    for name, keys in sections:
+        if name == "Ciao force image list":
+            values = stored(keys, (*shape, 2, points))
+            is_min = values == INT32_MIN
+            marked.append(is_min[:, :, 0].all(axis=-1).tolist())
+            assert is_min.sum() == points * is_min[:, :, 0].all(axis=-1).sum()
+        elif name == "Ciao image list":
+            np.testing.assert_array_equal(stored(keys, shape) == INT32_MIN, invalid)
+        if "Invalid Data Flag" in keys:
+            assert keys["Invalid Data Flag"] == "None"
+    # all but the first deflection channel, over the whole extend half
+    none = np.zeros(shape, dtype=bool).tolist()
+    assert marked == [none, invalid.tolist(), invalid.tolist(), invalid.tolist()]
+    expected = synthetic.volumes[0]
+    for half, nan in (
+        (expected.zext, True),
+        (expected.dext, True),
+        (expected.zret, False),
+        (expected.dret, False),
+    ):
+        unheld = np.broadcast_to((invalid & nan)[..., None], half.shape)
+        np.testing.assert_array_equal(np.isnan(half), unheld)
+    np.testing.assert_array_equal(np.isnan(synthetic.images["Height Sensor"]), invalid)
+
+
+def test_spm_builder_can_write_a_stale_scan_list_grid(tmp_path):
+    points = 16
+    synthetic = build_spm(tmp_path, (8, 8), points, scan_list_grid=(8, 16))
+    _, sections = read_header(synthetic.path)
+    grid_values = {
+        (name, key): keys[key]
+        for name, keys in sections
+        for key in GRID_KEYS.get(name, ())
+    }
+    assert grid_values == {
+        ("Ciao scan list", "Samps/line"): "16",
+        ("Ciao scan list", "Lines"): "8",
+        ("Ciao force list", "force/line"): "8",
+        ("Ciao force list", "Samples / line"): "8",
+        ("Ciao force list", "FV Lines"): "8",
+        ("Ciao image list", "Samps/line"): "8",
+        ("Ciao image list", "Number of lines"): "8",
+    }
+    lengths = [
+        int(keys["Data length"])
+        for name, keys in sections
+        if name == "Ciao force image list"
+    ]
+    assert lengths == [8 * 8 * 2 * points * 4] * 4
+    assert synthetic.volumes[0].shape == (8, 8)
 
 
 def header_layout(headers):
@@ -269,3 +421,16 @@ def test_synthetic_pfc_has_the_structure_of_the_real_file(real_data_file, tmp_pa
         assert_keys_in_real_file(fvfile.headers, real_headers)
         for key in ("Sample Points", "PFT Freq"):
             assert fvfile.headers["Ciao scan list"][0][key] == scan_list[key]
+
+
+@pytest.mark.slow
+def test_synthetic_spm_has_the_structure_of_the_real_file(real_data_file, tmp_path):
+    with open_fvfile(Path(real_data_file(SPM_RELPATH))) as real:
+        real_structure = structure(real)
+        real_headers = real.headers
+        shape = real.volumes[0].shape
+    force = real_headers["Ciao force image list"][0]
+    synthetic = build_spm(tmp_path, shape, int(force["Samps/line"].split()[0]))
+    with open_fvfile(synthetic.path) as fvfile:
+        assert structure(fvfile) == real_structure
+        assert_keys_in_real_file(fvfile.headers, real_headers)
