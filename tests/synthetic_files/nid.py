@@ -1,23 +1,21 @@
 """Nanosurf NID files holding one spectroscopy map.
 
-A NID file is an INI-like header of ``[section]`` lines each followed by
-``key=value`` lines, with CRLF line endings and UTF-8 text, then the two bytes
-``#!`` and the datasets back to back in the order the ``[DataSet]`` section lists
-them (group by group, channel by channel). Each dataset is a block of ``Lines``
-rows of ``Points`` little-endian signed integers of ``SaveBits`` bits, which
-decode to ``int * Dim2Range / 2**SaveBits + Dim2Range / 2 + Dim2Min`` in
-``Dim2Unit``.
+A NID file is an INI-like header of ``[section]`` lines each followed by ``key=value``
+lines, with CRLF line endings and UTF-8 text, then the two bytes ``#!`` and the datasets
+back to back in the order the ``[DataSet]`` section lists them (group by group, channel
+by channel). Each dataset is a block of ``Lines`` rows of ``Points`` little-endian
+signed integers of ``SaveBits`` bits, which decode to
+``int * Dim2Range / 2**SaveBits + Dim2Range / 2 + Dim2Min`` in ``Dim2Unit``.
 
-A spectroscopy map stores one row per curve in the order the map was acquired,
-a serpentine over the grid: row 0 left to right, row 1 right to left, and so on,
-``Map0`` in ``[DataSet\\SpecInfos\\SpecMapTable]`` giving the x and y extents of
-the outermost points and two point counts. ``Spec forward`` rows hold the extend
-half in time order, far from the surface to near it; ``Spec backward`` rows hold
-the retract half stored far to near as well, the reverse of time order. A
-forward row holds ``LineDim{n}Points`` points from its start and zeros after
-them, because a force-triggered ramp stops early. The spring constant is
-``Prop0`` of the cantilever calibration and the deflection sensitivity is the
-full scale of the ``In5`` scanhead input over its 10 V.
+A spectroscopy map stores one row per curve in the order the map was acquired, a
+serpentine over the grid: row 0 left to right, row 1 right to left, and so on, ``Map0``
+in ``[DataSet\\SpecInfos\\SpecMapTable]`` giving the x and y extents of the outermost
+points and two point counts. ``Spec forward`` rows hold the extend half in time order,
+far from the surface to near it; ``Spec backward`` rows hold the retract half stored far
+to near as well, the reverse of time order. A forward row holds ``LineDim{n}Points``
+points from its start and zeros after them, because a force-triggered ramp stops early.
+The spring constant is ``Prop0`` of the cantilever calibration and the deflection
+sensitivity is the full scale of the ``In5`` scanhead input over its 10 V.
 
 The layout follows a real Nanosurf file (software 3.10, a 10 x 10 map of 1024
 point curves): its groups, channels, section and key names, the analysis
@@ -64,9 +62,9 @@ Z_SENSOR_FULL_SCALE = 1.282e-05
 # full scale of the Z-Axis output, in m
 Z_AXIS_FULL_SCALE = 4.92e-06
 
-# per-curve analysis results the software saves for a map: frame, points per curve,
-# what the values are (each column 0 is the result; later columns are the running
-# minimum and maximum, a guess at what the real file's chart columns hold)
+# per-curve analysis results the software saves for a map: frame, points per curve, what
+# the values are (each column 0 is the result; later columns are the running minimum and
+# maximum, a guess at what the real file's chart columns hold)
 RESULT_FRAMES = (
     ("SlopeOut00", 2, "ext window"),
     ("SlopeOut10", 3, "ext slope"),
@@ -79,8 +77,8 @@ RESULT_FRAMES = (
     ("SnapInOut00", 3, "ext adhesion force"),
     ("SnapInOut10", 1, "ext adhesion height"),
 )
-# result frames shown as maps: the file stores adhesion as a negative force and the
-# map shows its magnitude; the extend half's adhesion is the snap-in
+# result frames shown as maps: the file stores adhesion as a negative force and the map
+# shows its magnitude; the extend half's adhesion is the snap-in
 RESULT_IMAGES = {
     "MaxAdhesionOut00": ("MaxRetAdhesionForce", -1.0),
     "MaxAdhesionOut10": ("MaxRetAdhesionHeight", 1.0),

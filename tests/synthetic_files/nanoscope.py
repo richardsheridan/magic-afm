@@ -2,83 +2,77 @@
 
 A Nanoscope file opens with a text header in windows-1252 with CRLF line endings:
 ``\\*Section`` lines each followed by ``\\Key: value`` lines, ending with
-``\\*File list end``, a SUB byte (0x1A) and zeros up to the ``Data length`` of
-the ``Force file list`` section, where the data begin. A section repeats once per
-channel: one ``Ciao image list`` per image and one ``Ciao force image list`` per
-force channel, each giving the ``Data offset`` and ``Data length`` of its
-little-endian signed integers. Values decode through a ``Z scale`` line such as
-``V [Sens. DeflSens] (0.0003750000 V/LSB) 2.500000 V``: the integer times a
-volts per LSB times the sensitivity named in brackets, a ``@Sens. DeflSens: V
-35.00000 nm/V`` line of the ``Ciao scan list`` (``Sens. Zsens`` is in the
-``Scanner list``). For a force channel the volts per LSB is the number in
-parentheses; for an image it is the last number, the full scale, over 2**(8 *
-Bytes/pixel). The builder prints the one as the other, so the two readings
-agree; in the real captures they differ in the fifth significant digit. ``Z
-offset`` lines are written as 0 V: no real file says whether or how a nonzero
-offset applies (the real captures have 0 V on the image and -0.776 V on the
-force channel).
+``\\*File list end``, a SUB byte (0x1A) and zeros up to the ``Data length`` of the
+``Force file list`` section, where the data begin. A section repeats once per channel:
+one ``Ciao image list`` per image and one ``Ciao force image list`` per force channel,
+each giving the ``Data offset`` and ``Data length`` of its little-endian signed
+integers. Values decode through a ``Z scale`` line such as
+``V [Sens. DeflSens] (0.0003750000 V/LSB) 2.500000 V``: the integer times a volts per
+LSB times the sensitivity named in brackets, a ``@Sens. DeflSens: V 35.00000 nm/V`` line
+of the ``Ciao scan list`` (``Sens. Zsens`` is in the ``Scanner list``). For a force
+channel the volts per LSB is the number in parentheses; for an image it is the last
+number, the full scale, over 2**(8 * Bytes/pixel). The builder prints the one as the
+other, so the two readings agree; in the real captures they differ in the fifth
+significant digit. ``Z offset`` lines are written as 0 V: no real file says whether or
+how a nonzero offset applies (the real captures have 0 V on the image and -0.776 V on
+the force channel).
 
 A PeakForce capture stores no z, only the deflection: per pixel, one record of
-``Samps/line`` points per half, lines one after another. A record is one period
-of the oscillating drive and holds its first half in reverse time order, then
-its second half in time order. The deflection lags the drive by ``Sync
-Distance`` samples of ``Sample Points`` per period, and each tap peaks that far
-into its record: at 68, 70 and 75 of 256 points in the real captures at 0.5, 1
-and 2 kHz, whose Sample Points times PFT Freq is always 512 kHz. So a record
-starts where the drive is nearest the surface, and the curve of a pixel, from
-the farthest point of the drive to the farthest, runs from the end of the
-record before its own into its own. The first pixel's curve starts before the
-first record; the expected curves are NaN where the file does not hold them.
-The first sample in time of every real record, the last stored point of its
-first half, is INT16_MIN: a marker in place of a sample, so the expected curves
-are NaN there too. The z of a curve is a model, not data: the drive is a cosine
-of ``Peak Force Amplitude`` about the pixel's ``Height`` image value, nearest the
-surface in the middle of the curve once shifted by the lag's fraction of a
-point.
+``Samps/line`` points per half, lines one after another. A record is one period of the
+oscillating drive and holds its first half in reverse time order, then its second half
+in time order. The deflection lags the drive by ``Sync Distance`` samples of
+``Sample Points`` per period, and each tap peaks that far into its record: at 68, 70 and
+75 of 256 points in the real captures at 0.5, 1 and 2 kHz, whose Sample Points times PFT
+Freq is always 512 kHz. So a record starts where the drive is nearest the surface, and
+the curve of a pixel, from the farthest point of the drive to the farthest, runs from
+the end of the record before its own into its own. The first pixel's curve starts before
+the first record; the expected curves are NaN where the file does not hold them. The
+first sample in time of every real record, the last stored point of its first half, is
+INT16_MIN: a marker in place of a sample, so the expected curves are NaN there too. The
+z of a curve is a model, not data: the drive is a cosine of ``Peak Force Amplitude``
+about the pixel's ``Height`` image value, nearest the surface in the middle of the curve
+once shifted by the lag's fraction of a point.
 
 The layout, section order, keys and channel set follow a real capture (software
-0x09000103, a 32 x 32 map of 128 + 128 point curves at 1 kHz). No real file
-settles: whether ``Sample Points`` stays at 512 kHz over PFT Freq when a curve
-has other than 128 + 128 points; on a grid that is not square, that the lines
-come first, that ``Scan Size`` is the fast axis and ``Aspect Ratio`` fast to slow
-(the builder's pixels are square); in what order the records were taken, beyond
-running on across neighbouring records, so the builder takes the stored order as
-time order and copies ``Capture direction`` and ``Frame direction`` as found;
-what point of the tap the Height image gives; and the ``Sync Distance QNM`` key,
-which no real capture has but a newer force volume carries beside ``Sync
-Distance``, so that the builder writes it the same way and takes it as the lag.
-The skipped-point capture (``Bytes/pixel: 0``) is not built.
+0x09000103, a 32 x 32 map of 128 + 128 point curves at 1 kHz). No real file settles:
+whether ``Sample Points`` stays at 512 kHz over PFT Freq when a curve has other than 128
++ 128 points; on a grid that is not square, that the lines come first, that
+``Scan Size`` is the fast axis and ``Aspect Ratio`` fast to slow (the builder's pixels
+are square); in what order the records were taken, beyond running on across neighbouring
+records, so the builder takes the stored order as time order and copies
+``Capture direction`` and ``Frame direction`` as found; what point of the tap the Height
+image gives; and the ``Sync Distance QNM`` key, which no real capture has but a newer
+force volume carries beside ``Sync Distance``, so that the builder writes it the same
+way and takes it as the lag. The skipped-point capture (``Bytes/pixel: 0``) is not
+built.
 
-A force volume stores z and deflection as force channels of their own, in the set
-and order of the real file: ``Deflection Error``, ``Peak Force Error``,
-``Deflection Error`` again and ``Height Sensor``, then a ``Height Sensor`` image.
-Each force channel holds per pixel, lines one after another, the extend half
-from the surface outward, the reverse of time order, then the retract half from
-the surface outward, in time order. Every channel is int32 in the file, but
-``Bytes/pixel`` says 2 on the deflection and peak force error channels and 4 on
-the heights: in both real force volumes it gives the step the values sit on (a
-volts per LSB of the input's full scale over 2**16 or 2**32, so the 2 byte
-channels hold values that fit in int16), not their width. The two Deflection
-Error channels hold the same values and differ only in the full scale on their Z
-scale line (0.5 V and 2.5 V); Peak Force Error holds small noise. The image is
-minus the height at the nearest point of each curve, the first stored point of
-its extend half.
-Every key that gives the grid agrees: ``Samps/line`` and ``Lines`` of the ``Ciao
-scan list``, ``force/line``, ``Samples / line`` and ``FV Lines`` of the ``Ciao
-force list``, and the image's ``Samps/line`` and ``Number of lines``.
+A force volume stores z and deflection as force channels of their own, in the set and
+order of the real file: ``Deflection Error``, ``Peak Force Error``, ``Deflection Error``
+again and ``Height Sensor``, then a ``Height Sensor`` image. Each force channel holds
+per pixel, lines one after another, the extend half from the surface outward, the
+reverse of time order, then the retract half from the surface outward, in time order.
+Every channel is int32 in the file, but ``Bytes/pixel`` says 2 on the deflection and
+peak force error channels and 4 on the heights: in both real force volumes it gives the
+step the values sit on (a volts per LSB of the input's full scale over 2**16 or 2**32,
+so the 2 byte channels hold values that fit in int16), not their width. The two
+Deflection Error channels hold the same values and differ only in the full scale on
+their Z scale line (0.5 V and 2.5 V); Peak Force Error holds small noise. The image is
+minus the height at the nearest point of each curve, the first stored point of its
+extend half. Every key that gives the grid agrees: ``Samps/line`` and ``Lines`` of the
+``Ciao scan list``, ``force/line``, ``Samples / line`` and ``FV Lines`` of the
+``Ciao force list``, and the image's ``Samps/line`` and ``Number of lines``.
 
-The layout, section order, keys and channel set follow a real force volume
-(software 0x09400202, a 32 x 32 map of 512 + 512 point curves). That file ends
-with 12288 bytes no header line describes; the builder leaves them out. No real
-file settles grids that are not square (as for a capture), the meaning of the
-image's -6.021 V Z offset (written 0 V here), how long a ramp takes, or the
-order the curves were taken. The builder's time step takes a ramp, extend and
-retract, as 1 / ``Scan rate`` of the Ciao force list (the real file's ``Forward
-vel.`` is twice the ramp size times that rate, so it says no more), while the
-ramp script lines of the real file, ``Segment Samples`` 1041, 2083 and 1041 at
-a ``Sample Period`` of 12 us, make a ramp about 50 ms, not 1 s. ``FV Line
-Direction`` says ``Bidirection``, but neighbouring rows of the real image match
-better as stored than with every other row reversed, so the builder stores every
+The layout, section order, keys and channel set follow a real force volume (software
+0x09400202, a 32 x 32 map of 512 + 512 point curves). That file ends with 12288 bytes no
+header line describes; the builder leaves them out. No real file settles grids that are
+not square (as for a capture), the meaning of the image's -6.021 V Z offset (written 0 V
+here), how long a ramp takes, or the order the curves were taken. The builder's time
+step takes a ramp, extend and retract, as 1 / ``Scan rate`` of the Ciao force list (the
+real file's ``Forward vel.`` is twice the ramp size times that rate, so it says no
+more), while the ramp script lines of the real file, ``Segment Samples`` 1041, 2083 and
+1041 at a ``Sample Period`` of 12 us, make a ramp about 50 ms, not 1 s.
+``FV Line Direction`` says ``Bidirection``, but neighbouring rows of the real image
+match better as stored than with every other row reversed, so the builder stores every
 line the same way.
 
 Two arguments write what the real files hold and today's reader gets wrong, for
@@ -242,9 +236,9 @@ def build_pfc(
         rng, counts, counts, z_far=-amplitude, ramp=2 * amplitude
     )
     curves = np.concatenate([dext, dret], axis=-1).reshape(n_curves, npts)
-    # Lay the curves end to end, each starting half a period before its tap peaks
-    # lag points into its own record. The tip taps on at the last pixel after the
-    # map, which fills the end of the last record.
+    # Lay the curves end to end, each starting half a period before its tap peaks lag
+    # points into its own record. The tip taps on at the last pixel after the map, which
+    # fills the end of the last record.
     first = points - lag_points  # where the first record starts in curve 0
     stream = np.concatenate([curves, curves[-1:]]).ravel()
     stored = stream[first : first + n_curves * npts]

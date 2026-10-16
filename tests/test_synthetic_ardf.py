@@ -15,10 +15,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# The files store float32 metres and the reader multiplies by 1e9 in float32, so
-# curves match the stored values in nm to one float32 rounding (rtol 1e-7). Images
-# are returned as stored and match exactly. Metadata parsed from decimal text match
-# to double rounding; the time step is stored as a double and matches exactly.
+# The files store float32 metres and the reader multiplies by 1e9 in float32, so curves
+# match the stored values in nm to one float32 rounding (rtol 1e-7). Images are returned
+# as stored and match exactly. Metadata parsed from decimal text match to double
+# rounding; the time step is stored as a double and matches exactly.
 
 import struct
 import zlib
@@ -32,8 +32,8 @@ from synthetic_files.ardf import build_ardf
 COMPLETE_RELPATH = "test_cases/PDMS_SAA/ffm/both0001.ARDF"
 STOPPED_RELPATH = "test_cases/PDMS_SAA/ffm/hard0001.ARDF"
 
-# grid (lines, points per line), points per half curve, captured directions,
-# ScanDown (True takes line 0 first, False the last line)
+# grid (lines, points per line), points per half curve, captured directions, ScanDown
+# (True takes line 0 first, False the last line)
 COMPLETE_CASES = {
     "trace-16-from-last-line": ((4, 4), 16, "trace", False),
     "trace-100-from-line-0": ((6, 6), 100, "trace", True),
@@ -41,9 +41,9 @@ COMPLETE_CASES = {
     "both-100-from-last-line": ((6, 6), 100, "both", False),
     "retrace-16-from-line-0": ((4, 4), 16, "retrace", True),
 }
-# Left out: grids that are not square. The builder writes them as the Asylum
-# software does, but the reader gives a volume's shape as (points, lines) while its
-# curves, images and get_all_curves are (lines, points).
+# Left out: grids that are not square. The builder writes them as the Asylum software
+# does, but the reader gives a volume's shape as (points, lines) while its curves,
+# images and get_all_curves are (lines, points).
 
 # grid, points per half curve, ScanDown, lines taken before the scan stopped
 STOPPED_CASES = {
@@ -353,9 +353,9 @@ def structure(fvfile):
 
 @pytest.mark.parametrize("case", [*COMPLETE_CASES, *STOPPED_CASES])
 def test_ardf_every_section_has_a_valid_crc(tmp_path, case):
-    # the reader checks most CRCs, but not those of the VTOC header, the image
-    # data, the thumbnails or the image texts, and for a complete scan only the
-    # first curve's VSET and VNAM, none of its VDAT sections
+    # the reader checks most CRCs, but not those of the VTOC header, the image data, the
+    # thumbnails or the image texts, and for a complete scan only the first curve's VSET
+    # and VNAM, none of its VDAT sections
     sections(build_case(tmp_path, case).path.read_bytes())
 
 

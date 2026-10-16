@@ -15,10 +15,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# The files store curves as scaled integers and the reader decodes them in float32,
-# so curves and maps match the builder's float64 decoding to float32 rounding:
-# rtol 1e-6 with an atol of 1e-6 of the array's largest magnitude. Metadata parsed
-# from decimal text match to double rounding.
+# The files store curves as scaled integers and the reader decodes them in float32, so
+# curves and maps match the builder's float64 decoding to float32 rounding: rtol 1e-6
+# with an atol of 1e-6 of the array's largest magnitude. Metadata parsed from decimal
+# text match to double rounding.
 
 from pathlib import Path
 
@@ -29,8 +29,8 @@ from synthetic_files.nid import build_nid
 
 NID_RELPATH = "test_cases/20251216_141819_PVDF2_Film_U_00002.nid"
 
-# forward rows of a force-triggered map stop early; backward rows stay full, as
-# in the real file
+# forward rows of a force-triggered map stop early; backward rows stay full, as in the
+# real file
 RAGGED_EXT = 64 - np.arange(15).reshape(5, 3) % 5 * 4
 
 # grid (rows, cols), points per curve (extend, retract), other builder arguments
@@ -43,9 +43,9 @@ CASES = {
     "longer-retract": ((3, 5), (40, 48), {}),
     "16-bit": ((4, 4), (32, 32), {"save_bits": 16}),
 }
-# Left out: an extend half longer than the retract half, e.g. (48, 40). The reader
-# takes any dataset on the map grid shorter than a forward curve for a per-curve
-# result, so the two backward Indentation datasets come out as extra map images.
+# Left out: an extend half longer than the retract half, e.g. (48, 40). The reader takes
+# any dataset on the map grid shorter than a forward curve for a per-curve result, so
+# the two backward Indentation datasets come out as extra map images.
 
 
 def assert_float32_close(actual, expected):
