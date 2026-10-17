@@ -13,6 +13,7 @@
  },
  "options": {
   "ardf": {
+   "schema_version": 1,
    "k": 0.462,
    "defl_sens": 55.471000000000004,
    "sync_dist": null,
@@ -26,10 +27,19 @@
    "li_per": 0.0,
    "li_amp": 0.0,
    "drag": 0.0,
-   "fit_fix": 123,
-   "fit_mode": "RETRACT"
+   "fit_fix": [
+    "RADIUS",
+    "TAU",
+    "VD",
+    "LI_PER",
+    "LI_AMP",
+    "DRAG"
+   ],
+   "fit_mode": "RETRACT",
+   "resample_npts": 512
   },
   "ardf_trace": {
+   "schema_version": 1,
    "k": 0.462,
    "defl_sens": 55.471000000000004,
    "sync_dist": null,
@@ -43,10 +53,19 @@
    "li_per": 0.0,
    "li_amp": 0.0,
    "drag": 0.0,
-   "fit_fix": 123,
-   "fit_mode": "RETRACT"
+   "fit_fix": [
+    "RADIUS",
+    "TAU",
+    "VD",
+    "LI_PER",
+    "LI_AMP",
+    "DRAG"
+   ],
+   "fit_mode": "RETRACT",
+   "resample_npts": 512
   },
   "ardf_retrace": {
+   "schema_version": 1,
    "k": 0.462,
    "defl_sens": 55.471000000000004,
    "sync_dist": null,
@@ -60,10 +79,19 @@
    "li_per": 0.0,
    "li_amp": 0.0,
    "drag": 0.0,
-   "fit_fix": 123,
-   "fit_mode": "RETRACT"
+   "fit_fix": [
+    "RADIUS",
+    "TAU",
+    "VD",
+    "LI_PER",
+    "LI_AMP",
+    "DRAG"
+   ],
+   "fit_mode": "RETRACT",
+   "resample_npts": 512
   },
   "arh5": {
+   "schema_version": 1,
    "k": 0.462,
    "defl_sens": 55.471000000000004,
    "sync_dist": null,
@@ -77,10 +105,19 @@
    "li_per": 0.0,
    "li_amp": 0.0,
    "drag": 0.0,
-   "fit_fix": 123,
-   "fit_mode": "RETRACT"
+   "fit_fix": [
+    "RADIUS",
+    "TAU",
+    "VD",
+    "LI_PER",
+    "LI_AMP",
+    "DRAG"
+   ],
+   "fit_mode": "RETRACT",
+   "resample_npts": 512
   },
   "qnm": {
+   "schema_version": 1,
    "k": 0.46,
    "defl_sens": 35.0,
    "sync_dist": 69.6625,
@@ -94,10 +131,19 @@
    "li_per": 0.0,
    "li_amp": 0.0,
    "drag": 0.0,
-   "fit_fix": 123,
-   "fit_mode": "RETRACT"
+   "fit_fix": [
+    "RADIUS",
+    "TAU",
+    "VD",
+    "LI_PER",
+    "LI_AMP",
+    "DRAG"
+   ],
+   "fit_mode": "RETRACT",
+   "resample_npts": 512
   },
   "ffv": {
+   "schema_version": 1,
    "k": 1.9,
    "defl_sens": 115.1046,
    "sync_dist": null,
@@ -111,10 +157,19 @@
    "li_per": 0.0,
    "li_amp": 0.0,
    "drag": 0.0,
-   "fit_fix": 123,
-   "fit_mode": "RETRACT"
+   "fit_fix": [
+    "RADIUS",
+    "TAU",
+    "VD",
+    "LI_PER",
+    "LI_AMP",
+    "DRAG"
+   ],
+   "fit_mode": "RETRACT",
+   "resample_npts": 512
   },
   "nid": {
+   "schema_version": 1,
    "k": 25.03,
    "defl_sens": 169.0,
    "sync_dist": null,
@@ -128,10 +183,19 @@
    "li_per": 0.0,
    "li_amp": 0.0,
    "drag": 0.0,
-   "fit_fix": 123,
-   "fit_mode": "RETRACT"
+   "fit_fix": [
+    "RADIUS",
+    "TAU",
+    "VD",
+    "LI_PER",
+    "LI_AMP",
+    "DRAG"
+   ],
+   "fit_mode": "RETRACT",
+   "resample_npts": 512
   },
   "nid_extend": {
+   "schema_version": 1,
    "k": 25.03,
    "defl_sens": 169.0,
    "sync_dist": null,
@@ -145,10 +209,19 @@
    "li_per": 0.0,
    "li_amp": 0.0,
    "drag": 0.0,
-   "fit_fix": 123,
-   "fit_mode": "EXTEND"
+   "fit_fix": [
+    "RADIUS",
+    "TAU",
+    "VD",
+    "LI_PER",
+    "LI_AMP",
+    "DRAG"
+   ],
+   "fit_mode": "EXTEND",
+   "resample_npts": 512
   },
   "nid_both": {
+   "schema_version": 1,
    "k": 25.03,
    "defl_sens": 169.0,
    "sync_dist": null,
@@ -162,8 +235,16 @@
    "li_per": 0.0,
    "li_amp": 0.0,
    "drag": 0.0,
-   "fit_fix": 123,
-   "fit_mode": "BOTH"
+   "fit_fix": [
+    "RADIUS",
+    "TAU",
+    "VD",
+    "LI_PER",
+    "LI_AMP",
+    "DRAG"
+   ],
+   "fit_mode": "BOTH",
+   "resample_npts": 512
   }
  }
 }

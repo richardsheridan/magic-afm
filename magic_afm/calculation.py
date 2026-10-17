@@ -1299,11 +1299,11 @@ def _resample_halves(zxr, dxr, npts=RESAMPLE_NPTS):
     return (zd[0, :split], zd[0, split:]), (zd[1, :split], zd[1, split:])
 
 
-def prepare_force_curve(x, fit_mode, s_ratio):
+def prepare_force_curve(x, fit_mode, s_ratio, resample_npts=RESAMPLE_NPTS):
     rc, (zxr, dxr) = x
     npts = sum(map(len, zxr))
-    if npts > RESAMPLE_NPTS:
-        zxr, dxr = _resample_halves(zxr, dxr)
+    if npts > resample_npts:
+        zxr, dxr = _resample_halves(zxr, dxr, resample_npts)
 
     if fit_mode == FitMode.EXTEND:
         z, d, split = zxr[0], dxr[0], None
