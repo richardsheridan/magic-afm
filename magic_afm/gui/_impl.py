@@ -75,7 +75,7 @@ SI_PREFIXABLE_UNITS = frozenset({"m", "N", "Pa", "V", "A", "s", "Hz", "rad"})
 
 
 def colourbar_formatter(unit):
-    """Label ticks with an SI prefix only when the unit is an SI symbol that takes one."""
+    """Label ticks with an SI prefix only for unit symbols that take one."""
     if unit in SI_PREFIXABLE_UNITS:
         return EngFormatter(unit, places=1)
     suffix = f" {unit}" if unit else ""
