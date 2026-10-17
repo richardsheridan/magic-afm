@@ -77,7 +77,7 @@ def generate(t3, resolve, tmp):
         out = Path(tmp) / name
         result = t3.invoke_cli(path, out, args)
         assert result.exit_code == 0, result.output
-        options_path = out / t3.options_name(stem, mode=mode, trace=trace)
+        options_path = out / t3.options_name(stem)
         options[name] = json.loads(options_path.read_text())
         maps = t3.run_maps(t3.CliRun(path, out, result), name)
         if name in t3.SUMMARY_RUNS:

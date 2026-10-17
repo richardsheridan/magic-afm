@@ -202,8 +202,8 @@ def export_name(stem, name, *, mode="Ret", trace="", ext="npy"):
     return f"{stem}_{mode}{name}{trace}.{ext}"
 
 
-def options_name(stem, *, mode="Ret", trace=""):
-    return f"{stem}_options{mode}{trace}.json"
+def options_name(stem):
+    return f"{stem}_options.json"
 
 
 class CliRun(NamedTuple):
@@ -304,9 +304,10 @@ def written(run):
 
 
 # run: (file stem, fit mode part, trace part, extension) for every run that fits and
-# writes at the default options
+# writes at the default options. The trace part is the fitted volume's name on a file
+# holding both directions, however it was selected, and empty on any other file.
 NAMING = {
-    "ardf": ("both0001", "Ret", "", "npy"),
+    "ardf": ("both0001", "Ret", "Trace", "npy"),
     "ardf_trace": ("both0001", "Ret", "Trace", "npy"),
     "ardf_retrace": ("both0001", "Ret", "Retrace", "npy"),
     "arh5": ("rtrace0001", "Ret", "", "npy"),
@@ -332,7 +333,7 @@ def test_cli_writes_options_json_and_one_file_per_default_map(run_cli, name):
     expected = [
         export_name(stem, m, mode=mode, trace=trace, ext=ext) for m in DEFAULT_MAPS
     ]
-    expected.append(options_name(stem, mode=mode, trace=trace))
+    expected.append(options_name(stem))
     assert written(run) == sorted(expected)
 
 
@@ -415,11 +416,11 @@ def test_cli_options_json_matches_golden(run_cli, goldens, name):
 
     stem, mode, trace, _ = NAMING[name]
     run = run_cli(name)
-    text = (run.out / options_name(stem, mode=mode, trace=trace)).read_text()
+    text = (run.out / options_name(stem)).read_text()
     options = json.loads(text)
     assert list(options) == ["schema_version", *OPTIONS_JSON_SCHEMA]
     assert options == goldens["options"][name]
-    with (run.out / options_name(stem, mode=mode, trace=trace)).open() as f:
+    with (run.out / options_name(stem)).open() as f:
         assert load_options(f).keys() == OPTIONS_JSON_SCHEMA.keys()
 
 
@@ -517,8 +518,8 @@ def test_cli_nid_maps_are_t2_maps_scaled_and_row_flipped(run_cli, name, t2_mode)
 
 
 @pytest.mark.slow
-def test_cli_trace_option_picks_the_volume_and_only_renames_for_trace(run_cli):
-    """On a two-volume ARDF, --trace trace is the default volume, renamed."""
+def test_cli_trace_option_picks_the_volume_the_suffix_names(run_cli):
+    """On a two-volume ARDF, the default volume and --trace trace are both Trace."""
     stem = NAMING["ardf"][0]
     default, trace, retrace = (
         run_cli("ardf"),
@@ -526,7 +527,7 @@ def test_cli_trace_option_picks_the_volume_and_only_renames_for_trace(run_cli):
         run_cli("ardf_retrace"),
     )
     for m in DEFAULT_MAPS:
-        a = np.load(default.out / export_name(stem, m))
+        a = np.load(default.out / export_name(stem, m, trace="Trace"))
         b = np.load(trace.out / export_name(stem, m, trace="Trace"))
         c = np.load(retrace.out / export_name(stem, m, trace="Retrace"))
         np.testing.assert_array_equal(a, b, err_msg=m)
@@ -586,23 +587,15 @@ def test_cli_processes_the_remaining_files_after_a_failure_then_exits_nonzero(
     assert result.stdout.count("Skipping writing options_json") == 1  # good's
 
 
-def load_map_with_or_without_direction(out, stem, m):
-    """Map m of a retrace-only file, its name with or without the Retrace suffix."""
-    paths = [out / export_name(stem, m, trace=t) for t in ("", "Retrace")]
-    found = [path for path in paths if path.exists()]
-    assert len(found) == 1, (m, found)
-    return np.load(found[0])
-
-
 @pytest.mark.slow
 def test_cli_retrace_on_a_retrace_only_file_fits_the_volume_the_default_fits(run_cli):
-    """--trace retrace on rtrace0001.h5 selects its one volume, named Retrace."""
+    """--trace retrace on rtrace0001.h5 selects its one volume, with no suffix."""
     stem = NAMING["arh5"][0]
     default, retrace = run_cli("arh5"), run_cli("arh5_retrace")
     assert retrace.result.exit_code == 0, retrace.result.output
     for m in DEFAULT_MAPS:
         a = np.load(default.out / export_name(stem, m))
-        b = load_map_with_or_without_direction(retrace.out, stem, m)
+        b = np.load(retrace.out / export_name(stem, m))
         np.testing.assert_array_equal(a, b, err_msg=m)
 
 
