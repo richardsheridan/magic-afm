@@ -24,7 +24,10 @@ in time order. The deflection lags the drive by ``Sync Distance`` samples of
 ``Sample Points`` per period, and each tap peaks that far into its record: at 68, 70 and
 75 of 256 points in the real captures at 0.5, 1 and 2 kHz, whose Sample Points times PFT
 Freq is always 512 kHz. So a record starts where the drive is nearest the surface, and
-the curve of a pixel, from the farthest point of the drive to the farthest, is its own record rotated, the samples before the tap wrapped from the end of that record. The records are not one signal running on from pixel to pixel: the first sample of a real record lies nearer the last of its own record than the last of the record before. The
+the curve of a pixel, from the farthest point of the drive to the farthest, is its own
+record rotated, the samples before the tap wrapped from the end of that record. The
+records are not one signal running on from pixel to pixel: the first sample of a real
+record lies nearer the last of its own record than the last of the record before. The
 first sample in time of every real record, the last stored point of its first half, is
 INT16_MIN: a marker in place of a sample, so the expected curves are NaN there too. The
 z of a curve is a model, not data: the drive is a cosine of ``Peak Force Amplitude``
@@ -36,13 +39,13 @@ The layout, section order, keys and channel set follow a real capture (software
 whether ``Sample Points`` stays at 512 kHz over PFT Freq when a curve has other than 128
 + 128 points; on a grid that is not square, that the lines come first, that
 ``Scan Size`` is the fast axis and ``Aspect Ratio`` fast to slow (the builder's pixels
-are square); in what order the records were taken, so the builder takes the stored order as time order and copies
-``Capture direction`` and ``Frame direction`` as found; what point of the tap the Height
-image gives; and the ``Sync Distance QNM`` key, which no real capture has but a newer
-force volume carries beside ``Sync Distance``, so that the builder writes it the same
-way and takes it as the lag. The skipped-point capture, whose ``force/line`` (16 0) is
-half the scan list's ``Samps/line`` (32) and whose force ``Data length`` is a quarter of
-a full capture's, is not built.
+are square); in what order the records were taken, so the builder takes the stored order
+as time order and copies ``Capture direction`` and ``Frame direction`` as found; what
+point of the tap the Height image gives; and the ``Sync Distance QNM`` key, which no
+real capture has but a newer force volume carries beside ``Sync Distance``, so that the
+builder writes it the same way and takes it as the lag. The skipped-point capture, whose
+``force/line`` (16 0) is half the scan list's ``Samps/line`` (32) and whose force
+``Data length`` is a quarter of a full capture's, is not built.
 
 A force volume stores z and deflection as force channels of their own, in the set and
 order of the real file: ``Deflection Error``, ``Peak Force Error``, ``Deflection Error``
