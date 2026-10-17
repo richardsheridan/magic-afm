@@ -654,10 +654,15 @@ def test_cli_reports_an_unreadable_file_and_still_fits_the_others(
     paths = [*good]
     paths.insert(position, bad)
     out = tmp_path / "out"
-    result = invoke_cli(paths[0], out, [str(p) for p in paths[1:]])
+    # invoke_cli puts its path argument last on the command line
+    result = invoke_cli(paths[-1], out, ["--verbose", *map(str, paths[:-1])])
     assert result.exit_code == 1, result.output
     assert str(bad) in result.stderr
     assert error_text in result.stderr
+    # the bad file is reported in its turn: after the good files before it
+    before_bad = result.output[: result.output.index(str(bad))]
+    written_before = [g.stem for g in good if g.stem + "_options" in before_bad]
+    assert written_before == [g.stem for g in good[:position]]
     assert sorted(p.name for p in out.iterdir()) == sorted(
         written_maps("good0.000") + written_maps("good1.000")
     )
@@ -671,7 +676,7 @@ def test_cli_stop_on_error_raises_on_a_file_that_fails_to_parse(tmp_path):
     good = build_pfc(tmp_path, (2, 2), filename="good.000.pfc").path
     out = tmp_path / "out"
     with pytest.raises(RuntimeError, match=re.escape(str(bad))) as excinfo:
-        invoke_cli(bad, out, ["--stop-on-error", str(good)])
+        invoke_cli(good, out, ["--stop-on-error", str(bad)])  # bad comes first
     assert isinstance(excinfo.value.__cause__, FileFormatError)
     assert list(out.iterdir()) == []
 
