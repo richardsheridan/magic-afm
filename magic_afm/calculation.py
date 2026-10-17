@@ -1037,6 +1037,8 @@ def fit_force_curve(
     nan_on_error=False,
     verbose_nans=False,
 ):
+    if fit_mode == FitMode.BOTH and split is None:
+        raise ValueError("fit_mode BOTH requires split")
     delta = z - d
     force = d * k
     d0 = d
@@ -1201,6 +1203,8 @@ def max_load_quantities(d, params, k, fit_mode, split=None):
     """Calculate deflection, indentation and contact radius at maximum load."""
 
     assert fit_mode
+    if fit_mode == FitMode.BOTH and split is None:
+        raise ValueError("fit_mode BOTH requires split")
     force = d * k
     n_pts_max = len(force) // 25
     if fit_mode == FitMode.EXTEND:
