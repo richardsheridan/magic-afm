@@ -182,3 +182,26 @@ def test_gui_readout_fit_matches_a_direct_fit(mode):
         data.parms_err.item(), parms_err.item(), rtol=0, atol=0, equal_nan=True
     )
     np.testing.assert_allclose(data.sse, sse, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("given", ["missing", "None"])
+def test_fit_force_curve_in_both_mode_requires_split(given):
+    """BOTH without a split would fit the whole curve twice; it raises instead."""
+    z, d, kwargs = fit_args(FitMode.BOTH)
+    if given == "missing":
+        del kwargs["split"]
+    else:
+        kwargs["split"] = None
+    with pytest.raises(ValueError, match="split"):
+        calculation.fit_force_curve(z, d, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "mode", [FitMode.EXTEND, FitMode.RETRACT], ids=lambda m: m.name
+)
+def test_fit_force_curve_in_one_segment_mode_needs_no_split(mode):
+    z, d, kwargs = fit_args(mode)
+    del kwargs["split"]
+    with np.errstate(all="ignore"):
+        parms, *_ = calculation.fit_force_curve(z, d, **kwargs)
+    assert np.all(np.isfinite(parms.item()))

@@ -296,3 +296,9 @@ def test_map_worker_properties_come_from_the_split_functions(case, mode):
             atol=0,
             err_msg=f"{case} {mode.name} {name}",
         )
+
+
+def test_max_load_quantities_in_both_mode_requires_split():
+    d, parms, _ = fitted_inputs("demo_r0_c0", FitMode.BOTH)
+    with pytest.raises(ValueError, match="split"):
+        calculation.max_load_quantities(d, parms, t2.DEMO_K, FitMode.BOTH)
