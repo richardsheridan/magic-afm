@@ -145,6 +145,7 @@ _StepInfo: TypeAlias = tuple[tuple[float, str], ...]
 class Image(Protocol):
     name: str
     shape: Index
+    units: str
 
     def get_image(self) -> np.ndarray:
         """Get the image from disk."""
@@ -423,11 +424,27 @@ class ARH5ForceMapVolume:
         return x
 
 
+_ASYLUM_BASE_UNITS = {
+    "Height": "m",
+    "ZSensor": "m",
+    "Adhesion": "N",
+    "Force": "N",
+    "YoungsJKR": "Pa",
+}
+
+
+def _asylum_units(name: str) -> str:
+    """Unit of an Asylum image's values by its base name, or "V" when unknown."""
+    base = name.removesuffix("Retrace").removesuffix("Trace")
+    return _ASYLUM_BASE_UNITS.get(base, "V")
+
+
 @frozen
 class ARH5Image:
     data: dict
     name: str
     shape: Index
+    units: str
 
     def get_image(self) -> np.ndarray:
         """Get the image from disk."""
@@ -478,7 +495,7 @@ class ARH5File:
     def parse(cls, h5data):
         notes = _parse_ar_note(h5data.attrs["Note"].splitlines())
         images = {
-            name: ARH5Image(img, name, img.shape)
+            name: ARH5Image(img, name, img.shape, _asylum_units(name))
             for name, img in h5data["Image"].items()
         }
 
@@ -823,6 +840,9 @@ class ARDFImage:
         if _ or __:
             raise FileFormatError(f"image definition reserved fields are {_}, {__}")
         x_unit, y_unit, name, units = list(map(_decode_cstring, cstrings))
+        # IDEF says m for every image, so trust it only for length maps
+        if (known := _asylum_units(name)) != "m":
+            units = known
 
         return cls(
             imag_header.data,
@@ -1391,6 +1411,7 @@ class NanoscopeImage:
     unit_scale: float
     unit_offset: float
     shape: Index
+    units: str
 
     @classmethod
     def parse_image(cls, data, header, h, name):
@@ -1410,6 +1431,8 @@ class NanoscopeImage:
         soft_scale = float(soft_scale_string.split()[1]) / _NANOMETER_UNIT_CONVERSION
         unit_scale = hard_scale * soft_scale
         unit_offset = hard_offset * soft_scale
+        # the soft scale is in n<unit>/V and the division above takes off the n
+        units = soft_scale_string.split()[2].split("/")[0].removeprefix("n")
         return cls(
             data=data,
             name=name,
@@ -1419,6 +1442,7 @@ class NanoscopeImage:
             unit_scale=unit_scale,
             unit_offset=unit_offset,
             shape=(r, c),
+            units=units,
         )
 
     def get_image(self) -> np.ndarray:
