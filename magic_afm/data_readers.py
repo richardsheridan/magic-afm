@@ -199,6 +199,21 @@ class FileFormatError(ValueError):
     """A file is malformed or uses a variant this module cannot read."""
 
 
+_DIRECTION_NAMES = {0: "Retrace", 1: "Trace"}
+
+
+def _select_volume(fvfile: FVFile, trace: int | None) -> Volume:
+    """The volume named for trace, else the first if trace or directions are absent."""
+    names = [v.name for v in fvfile.volumes]
+    directions = [n for n in names if n in _DIRECTION_NAMES.values()]
+    if trace is None or not directions:
+        return fvfile.volumes[0]
+    wanted = _DIRECTION_NAMES[int(trace)]
+    if wanted not in names:
+        raise ValueError(f"Requested {wanted} but the file holds only {directions}")
+    return fvfile.volumes[names.index(wanted)]
+
+
 def _check_force_bpp(length, ncurves, npts, header) -> int:
     """Bytes per point of a force section that holds ncurves curves of npts points."""
     bpp, rem = divmod(length, ncurves * npts)
@@ -479,31 +494,19 @@ class ARH5File:
         volumes = []
         if "FFM" in h5data:
             # self.scandown = bool(self.notes["ScanDown"])
-            if "0" in h5data["FFM"]:
+            # FastMapCapture: 1 trace (a guess), 2 retrace, 3 both. No note or group
+            # attribute says which group is which, so assume FFM/0 and FFM/1 follow
+            # capture order, trace first.
+            capture = int(notes.get("FastMapCapture", 3))
+            names = {1: ["Trace"], 2: ["Retrace"]}.get(capture, ["Trace", "Retrace"])
+            ffm = h5data["FFM"]
+            groups = [(ffm[g], name) for g, name in zip("01", names) if g in ffm]
+            if "Raw" in ffm:
+                groups.append((ffm, names[0]))
+            for group, name in groups:
                 volumes.append(
                     ARH5FFMVolume(
-                        "Trace",
-                        h5data["FFM"]["0"]["Raw"].shape[:2],
-                        h5data["FFM"]["0"]["Raw"],
-                        h5data["FFM"]["0"]["Defl"],
-                    )
-                )
-            if "1" in h5data["FFM"]:
-                volumes.append(
-                    ARH5FFMVolume(
-                        "Retrace",
-                        h5data["FFM"]["1"]["Raw"].shape[:2],
-                        h5data["FFM"]["1"]["Raw"],
-                        h5data["FFM"]["1"]["Defl"],
-                    )
-                )
-            if "Raw" in h5data["FFM"]:
-                volumes.append(
-                    ARH5FFMVolume(
-                        "Trace",
-                        h5data["FFM"]["Raw"].shape[:2],
-                        h5data["FFM"]["Raw"],
-                        h5data["FFM"]["Defl"],
+                        name, group["Raw"].shape[:2], group["Raw"], group["Defl"]
                     )
                 )
             npts = volumes[0]._zreader.shape[-1]
@@ -512,7 +515,8 @@ class ARH5File:
             volumes.append(ARH5ForceMapVolume(h5data))
             npts = volumes[0].npts
         t_step = 1 / rate / npts
-        return cls(notes, images, volumes, k, defl_sens, t_step, scansize)
+        trace = 1 if len(volumes) > 1 else None
+        return cls(notes, images, volumes, k, defl_sens, t_step, scansize, trace=trace)
 
 
 @frozen

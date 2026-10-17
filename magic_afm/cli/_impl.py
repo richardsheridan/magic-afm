@@ -46,7 +46,7 @@ from magic_afm.calculation import (
     fit_curve_properties,
     prepare_force_curve,
 )
-from magic_afm.data_readers import SUFFIX_FVFILE_MAP, FVFile
+from magic_afm.data_readers import SUFFIX_FVFILE_MAP, FVFile, _select_volume
 
 # must take two positional arguments, fname and array
 EXPORTER_MAP = {
@@ -170,7 +170,7 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
     sync_dist = file_sync_dist if co["sync_dist"] is None else co["sync_dist"]
     trace = co["trace"] is None or co["trace"]
 
-    v = fvfile.volumes[not trace]
+    v = _select_volume(fvfile, co["trace"])
     if sync_dist != file_sync_dist:
         v = evolve(v, sync_dist=sync_dist)
 

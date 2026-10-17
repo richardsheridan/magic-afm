@@ -51,7 +51,10 @@ import numpy as np
 import pytest
 from click.testing import CliRunner, Result
 from conftest import load_platform_goldens
-from synthetic_files.nanoscope import build_pfc, edit_nanoscope_header
+from synthetic_files.ardf import build_ardf
+from synthetic_files.arh5 import build_arh5_ffm, build_arh5_force_map
+from synthetic_files.nanoscope import build_pfc, build_spm, edit_nanoscope_header
+from synthetic_files.nid import build_nid
 from test_goldens import TOLERANCES as T2_TOLERANCES
 
 from magic_afm import calculation
@@ -67,6 +70,8 @@ FFV_RELPATH = "test_cases/A1_OCSOH-PMMA21k_300421.0_300425.spm"
 NID_RELPATH = "test_cases/20251216_141819_PVDF2_Film_U_00002.nid"
 NID_STEM = "20251216_141819_PVDF2_Film_U_00002"
 NON_SQUARE_ARDF_RELPATH = "test_cases/PDMS_SAA/ffm/twoxln0001.ARDF"
+TRACE_ONLY_ARDF_RELPATH = "test_cases/PDMS_SAA/ffm/onekhz0001.ARDF"
+DOE4_RELPATH = "test_cases/DOE4_20nN_80nm.0_00012.spm"
 
 # name: (relpath, extra CLI arguments)
 CLI_RUNS: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -75,6 +80,8 @@ CLI_RUNS: dict[str, tuple[str, tuple[str, ...]]] = {
     "ardf_retrace": (ARDF_RELPATH, ("--trace", "retrace")),
     "arh5": (ARH5_RELPATH, ()),
     "arh5_retrace": (ARH5_RELPATH, ("--trace", "retrace")),
+    "arh5_trace": (ARH5_RELPATH, ("--trace", "trace")),
+    "trace_only_ardf_retrace": (TRACE_ONLY_ARDF_RELPATH, ("--trace", "retrace")),
     "qnm": (QNM_RELPATH, ()),
     "ffv": (FFV_RELPATH, ()),
     "nid": (NID_RELPATH, ()),
@@ -555,10 +562,11 @@ def test_cli_text_output_types_are_npy_values_at_8_significant_digits(
 
 
 @pytest.mark.slow
-def test_cli_reports_a_missing_volume_on_stderr_and_exits_nonzero(run_cli):
-    """--trace retrace on a one-volume file: message, no files, nonzero exit."""
-    run = run_cli("arh5_retrace")
-    assert run.result.exit_code != 0
+@pytest.mark.parametrize("name", ["arh5_trace", "trace_only_ardf_retrace"])
+def test_cli_reports_a_missing_direction_on_stderr_and_exits_1(run_cli, name):
+    """--trace for a direction the file lacks: message, no files, exit 1."""
+    run = run_cli(name)
+    assert run.result.exit_code == 1
     assert run.result.stdout == ""
     assert f"Unhandled error processing {run.path}.\n" in run.result.stderr
     assert written(run) == []
@@ -569,13 +577,122 @@ def test_cli_processes_the_remaining_files_after_a_failure_then_exits_nonzero(
     real_data_file, tmp_path
 ):
     """A file that fails does not stop the next one, but the exit status says so."""
-    bad = Path(real_data_file(ARH5_RELPATH))  # one volume, so no retrace
+    bad = Path(real_data_file(ARH5_RELPATH))  # retrace only, so no trace
     good = Path(real_data_file(ARDF_RELPATH))
-    args = ["--trace", "retrace", "--fit-mode", "skip", "--verbose", str(bad)]
+    args = ["--trace", "trace", "--fit-mode", "skip", "--verbose", str(bad)]
     result = invoke_cli(good, tmp_path / "out", args)
-    assert result.exit_code != 0
+    assert result.exit_code == 1
     assert f"Unhandled error processing {bad}.\n" in result.stderr
     assert result.stdout.count("Skipping writing options_json") == 1  # good's
+
+
+def load_map_with_or_without_direction(out, stem, m):
+    """Map m of a retrace-only file, its name with or without the Retrace suffix."""
+    paths = [out / export_name(stem, m, trace=t) for t in ("", "Retrace")]
+    found = [path for path in paths if path.exists()]
+    assert len(found) == 1, (m, found)
+    return np.load(found[0])
+
+
+@pytest.mark.slow
+def test_cli_retrace_on_a_retrace_only_file_fits_the_volume_the_default_fits(run_cli):
+    """--trace retrace on rtrace0001.h5 selects its one volume, named Retrace."""
+    stem = NAMING["arh5"][0]
+    default, retrace = run_cli("arh5"), run_cli("arh5_retrace")
+    assert retrace.result.exit_code == 0, retrace.result.output
+    for m in DEFAULT_MAPS:
+        a = np.load(default.out / export_name(stem, m))
+        b = load_map_with_or_without_direction(retrace.out, stem, m)
+        np.testing.assert_array_equal(a, b, err_msg=m)
+
+
+# builders of files with a scan direction, by format
+DIRECTED_BUILDERS = {"ardf": build_ardf, "arh5": build_arh5_ffm}
+SUFFIXES = {"ardf": ".ARDF", "arh5": ".h5"}
+
+
+def build_directed(directory, fmt, capture):
+    filename = f"{capture}{SUFFIXES[fmt]}"
+    return DIRECTED_BUILDERS[fmt](directory, capture=capture, filename=filename).path
+
+
+def skip_run(paths, out, trace):
+    """Run the CLI with --fit-mode skip and --verbose over paths."""
+    args = ["--trace", trace, "--fit-mode", "skip", "--verbose", *map(str, paths[:-1])]
+    return invoke_cli(paths[-1], out, args)
+
+
+@pytest.mark.parametrize("fmt", DIRECTED_BUILDERS)
+@pytest.mark.parametrize(
+    ("capture", "trace"),
+    [
+        ("trace", "trace"),
+        ("retrace", "retrace"),
+        ("both", "trace"),
+        ("both", "retrace"),
+    ],
+)
+def test_cli_trace_option_runs_on_a_file_holding_that_direction(
+    tmp_path, fmt, capture, trace
+):
+    """--trace selects the volume named for the direction, wherever it is listed."""
+    path = build_directed(tmp_path, fmt, capture)
+    result = skip_run([path], tmp_path / "out", trace)
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert result.stdout.count("Skipping writing options_json") == 1
+
+
+@pytest.mark.parametrize("fmt", DIRECTED_BUILDERS)
+@pytest.mark.parametrize(
+    ("capture", "trace"), [("retrace", "trace"), ("trace", "retrace")]
+)
+def test_cli_trace_option_for_a_direction_the_file_lacks_fails_that_file_only(
+    tmp_path, fmt, capture, trace
+):
+    """Like a parse failure: the file is reported, the next one runs, exit 1."""
+    bad = build_directed(tmp_path, fmt, capture)
+    good = build_directed(tmp_path, fmt, "both")
+    result = skip_run([bad, good], tmp_path / "out", trace)
+    assert result.exit_code == 1, result.output
+    assert f"Unhandled error processing {bad}.\n" in result.stderr
+    assert str(good) not in result.stderr
+    assert result.stdout.count("Skipping writing options_json") == 1  # good's
+
+
+# builders of files with no scan direction
+UNDIRECTED_BUILDERS = {
+    "pfc": build_pfc,
+    "spm": build_spm,
+    "nid": build_nid,
+    "arh5-force-map": build_arh5_force_map,
+}
+
+
+@pytest.mark.parametrize("trace", ["trace", "retrace"])
+@pytest.mark.parametrize("case", UNDIRECTED_BUILDERS)
+def test_cli_trace_option_is_ignored_on_a_file_without_a_direction(
+    tmp_path, case, trace
+):
+    """A file with no direction runs its first volume whatever --trace asks."""
+    path = UNDIRECTED_BUILDERS[case](tmp_path).path
+    result = skip_run([path], tmp_path / "out", trace)
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert result.stdout.count("Skipping writing options_json") == 1
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("trace", ["trace", "retrace"])
+def test_cli_trace_option_is_ignored_on_two_undirected_volumes(
+    real_data_file, tmp_path, trace
+):
+    """DOE4's two Deflection Error volumes have no direction, so --trace is ignored."""
+    path = Path(real_data_file(DOE4_RELPATH))
+    result = skip_run([path], tmp_path / "out", trace)
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert result.stdout.count("Skipping writing options_json") == 1
 
 
 @pytest.mark.slow

@@ -28,17 +28,18 @@ from synthetic_files.nid import build_nid
 
 from magic_afm.data_readers import FVFile
 
-# builder, volumes the file holds, and the trace the file should report: 1 (the first
-# volume) for an ARDF holding both a trace and a retrace volume, else None
+# builder, volumes the file holds, and the trace the file should report: 1 for a file
+# holding both a trace and a retrace volume, else None
 BUILDERS = {
     "nid": (build_nid, 1, None),
     "arh5-ffm-trace": (partial(build_arh5_ffm, capture="trace"), 1, None),
-    # the ARH5 reader does not report which of its volumes is the trace
-    "arh5-ffm-both": (partial(build_arh5_ffm, capture="both"), 2, None),
+    "arh5-ffm-retrace": (partial(build_arh5_ffm, capture="retrace"), 1, None),
+    "arh5-ffm-both": (partial(build_arh5_ffm, capture="both"), 2, 1),
     "arh5-force-map": (build_arh5_force_map, 1, None),
     "pfc": (build_pfc, 1, None),
     "spm": (build_spm, 1, None),
     "ardf-trace": (partial(build_ardf, capture="trace"), 1, None),
+    "ardf-retrace": (partial(build_ardf, capture="retrace"), 1, None),
     "ardf-both": (partial(build_ardf, capture="both"), 2, 1),
 }
 
@@ -57,8 +58,10 @@ def test_file_declares_sync_dist_as_the_file_states_it_or_none(tmp_path, case):
 
 
 @pytest.mark.parametrize("case", BUILDERS)
-def test_file_declares_trace_as_one_for_two_volume_ardf_else_none(tmp_path, case):
-    """trace reads directly: 1 for an ARDF with trace and retrace volumes, else None."""
+def test_file_declares_trace_as_one_when_it_holds_trace_and_retrace_else_none(
+    tmp_path, case
+):
+    """trace reads directly: 1 for a file with trace and retrace volumes, else None."""
     builder, expected_volumes, expected = BUILDERS[case]
     synthetic = builder(tmp_path)
     with open_fvfile(synthetic.path) as fvfile:
