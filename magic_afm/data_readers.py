@@ -103,6 +103,17 @@ def _si_prefix_exponent(unit: str, base: str) -> int | None:
     return _SI_PREFIX_EXPONENTS.get(unit[: len(unit) - len(base)])
 
 
+def _split_si_prefix(unit: str) -> tuple[int, str]:
+    """Decimal exponent and base of a prefixed unit, such as (-9, "m") for "nm".
+
+    A unit that is one character, or starts with no known prefix, is unprefixed.
+    """
+    exponent = _SI_PREFIX_EXPONENTS.get(unit[:1])
+    if exponent is None or len(unit) == 1:
+        return 0, unit
+    return exponent, unit[1:]
+
+
 def _nano_factor(unit: str, base: str) -> float | None:
     """Factor converting unit to nano-base, such as 1e3 for "µm" and "m", or None."""
     exponent = _si_prefix_exponent(unit, base)
@@ -1428,11 +1439,11 @@ class NanoscopeImage:
             soft_scale_string = header["Ciao scan list"][0][soft_scale_name]
         except KeyError:
             soft_scale_string = header["Scanner list"][0][soft_scale_name]
-        soft_scale = float(soft_scale_string.split()[1]) / _NANOMETER_UNIT_CONVERSION
+        soft_scale_fields = soft_scale_string.split()
+        exponent, units = _split_si_prefix(soft_scale_fields[2].split("/")[0])
+        soft_scale = float(soft_scale_fields[1]) / 10.0**-exponent
         unit_scale = hard_scale * soft_scale
         unit_offset = hard_offset * soft_scale
-        # the soft scale is in n<unit>/V and the division above takes off the n
-        units = soft_scale_string.split()[2].split("/")[0].removeprefix("n")
         return cls(
             data=data,
             name=name,
