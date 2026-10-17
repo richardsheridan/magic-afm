@@ -103,6 +103,17 @@ def _si_prefix_exponent(unit: str, base: str) -> int | None:
     return _SI_PREFIX_EXPONENTS.get(unit[: len(unit) - len(base)])
 
 
+def _split_si_prefix(unit: str) -> tuple[int, str]:
+    """Decimal exponent and base of a prefixed unit, such as (-9, "m") for "nm".
+
+    A unit that is one character, or starts with no known prefix, is unprefixed.
+    """
+    exponent = _SI_PREFIX_EXPONENTS.get(unit[:1])
+    if exponent is None or len(unit) == 1:
+        return 0, unit
+    return exponent, unit[1:]
+
+
 def _nano_factor(unit: str, base: str) -> float | None:
     """Factor converting unit to nano-base, such as 1e3 for "µm" and "m", or None."""
     exponent = _si_prefix_exponent(unit, base)
@@ -145,6 +156,7 @@ _StepInfo: TypeAlias = tuple[tuple[float, str], ...]
 class Image(Protocol):
     name: str
     shape: Index
+    units: str
 
     def get_image(self) -> np.ndarray:
         """Get the image from disk."""
@@ -423,11 +435,27 @@ class ARH5ForceMapVolume:
         return x
 
 
+_ASYLUM_BASE_UNITS = {
+    "Height": "m",
+    "ZSensor": "m",
+    "Adhesion": "N",
+    "Force": "N",
+    "YoungsJKR": "Pa",
+}
+
+
+def _asylum_units(name: str) -> str:
+    """Unit of an Asylum image's values by its base name, or "V" when unknown."""
+    base = name.removesuffix("Retrace").removesuffix("Trace")
+    return _ASYLUM_BASE_UNITS.get(base, "V")
+
+
 @frozen
 class ARH5Image:
     data: dict
     name: str
     shape: Index
+    units: str
 
     def get_image(self) -> np.ndarray:
         """Get the image from disk."""
@@ -478,7 +506,7 @@ class ARH5File:
     def parse(cls, h5data):
         notes = _parse_ar_note(h5data.attrs["Note"].splitlines())
         images = {
-            name: ARH5Image(img, name, img.shape)
+            name: ARH5Image(img, name, img.shape, _asylum_units(name))
             for name, img in h5data["Image"].items()
         }
 
@@ -823,6 +851,9 @@ class ARDFImage:
         if _ or __:
             raise FileFormatError(f"image definition reserved fields are {_}, {__}")
         x_unit, y_unit, name, units = list(map(_decode_cstring, cstrings))
+        # IDEF says m for every image, so trust it only for length maps
+        if (known := _asylum_units(name)) != "m":
+            units = known
 
         return cls(
             imag_header.data,
@@ -1391,6 +1422,7 @@ class NanoscopeImage:
     unit_scale: float
     unit_offset: float
     shape: Index
+    units: str
 
     @classmethod
     def parse_image(cls, data, header, h, name):
@@ -1407,7 +1439,13 @@ class NanoscopeImage:
             soft_scale_string = header["Ciao scan list"][0][soft_scale_name]
         except KeyError:
             soft_scale_string = header["Scanner list"][0][soft_scale_name]
-        soft_scale = float(soft_scale_string.split()[1]) / _NANOMETER_UNIT_CONVERSION
+        soft_scale_fields = soft_scale_string.split()
+        # a unitless soft scale leaves the image in the hard scale's unit
+        soft_unit = (
+            soft_scale_fields[2] if len(soft_scale_fields) > 2 else value.split()[0]
+        )
+        exponent, units = _split_si_prefix(soft_unit.split("/")[0])
+        soft_scale = float(soft_scale_fields[1]) / 10.0**-exponent
         unit_scale = hard_scale * soft_scale
         unit_offset = hard_offset * soft_scale
         return cls(
@@ -1419,6 +1457,7 @@ class NanoscopeImage:
             unit_scale=unit_scale,
             unit_offset=unit_offset,
             shape=(r, c),
+            units=units,
         )
 
     def get_image(self) -> np.ndarray:

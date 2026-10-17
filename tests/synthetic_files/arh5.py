@@ -111,6 +111,23 @@ def _maps(zext, zret, dext, dret, k, rng) -> dict[str, np.ndarray]:
     return {name: m.astype(np.float32) for name, m in maps.items()}
 
 
+# what each map holds; the file states no units
+MAP_UNITS = {
+    "Adhesion": "N",
+    "Force": "N",
+    "Height": "m",
+    "YoungsJKR": "Pa",
+    "ZSensor": "m",
+}
+
+
+def _image_units(images: dict[str, np.ndarray]) -> dict[str, str]:
+    return {
+        name: MAP_UNITS[name.removesuffix("Retrace").removesuffix("Trace")]
+        for name in images
+    }
+
+
 def build_arh5_ffm(
     directory: Path,
     shape: Index = (3, 4),
@@ -190,6 +207,7 @@ def build_arh5_ffm(
         path=path,
         volumes=volumes,
         images=images,
+        image_units=_image_units(images),
         k=expected["k"],
         defl_sens=expected["defl_sens"],
         t_step=1 / float(samples_str),
@@ -275,6 +293,7 @@ def build_arh5_force_map(
         path=path,
         volumes=[volume],
         images=images,
+        image_units=_image_units(images),
         k=expected["k"],
         defl_sens=expected["defl_sens"],
         t_step=1 / float(samples_str),

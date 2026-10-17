@@ -244,19 +244,6 @@ class ForceVolumeParams:
 class GUIFVFile:
     """Consistent interface across filetypes for Magic AFM GUI"""
 
-    _units_map = {
-        "Adhesion": "N",
-        "Height": "m",
-        "Height Sensor": "m",
-        "IndentationHertz": "m",
-        "YoungsHertz": "Pa",
-        "YoungsJKR": "Pa",
-        "YoungsDMT": "Pa",
-        "ZSensor": "m",
-        "MapAdhesion": "N",
-        "MapHeight": "m",
-        "Force": "N",
-    }
     _default_heightmap_names = {
         "MapHeight",
         "ZSensorTrace",
@@ -267,6 +254,7 @@ class GUIFVFile:
 
     fvfile: data_readers.FVFile
     _image_cache: dict[str, np.ndarray] = field(factory=dict, init=False, repr=False)
+    _image_units: dict[str, str] = field(factory=dict, init=False, repr=False)
 
     @property
     def image_names(self):
@@ -288,24 +276,15 @@ class GUIFVFile:
             trace=self.fvfile.trace,
         )
 
-    @staticmethod
-    def strip_trace(image_name):
-        for suffix in ("retrace", "Retrace", "trace", "Trace"):
-            image_name = image_name.removesuffix(suffix)
-        return image_name
-
     def get_image_units(self, image_name):
-        # TODO: check every FVFile for units, not only NID (and Demo has no images)
+        if image_name in self._image_units:
+            return self._image_units[image_name]
         image = getattr(self.fvfile, "images", {}).get(image_name)
-        if isinstance(image, data_readers.NIDMapHeightImage | data_readers.NIDMapImage):
-            return image.units
-        image_name = self.strip_trace(image_name)
-        return self._units_map.get(image_name, "V")
+        return "V" if image is None else image.units
 
     def add_image(self, image_name, units, image):
         self._image_cache[image_name] = image
-        image_name = self.strip_trace(image_name)
-        self._units_map[image_name] = units
+        self._image_units[image_name] = units
 
     def get_image(self, image_name):
         if image_name in self._image_cache:

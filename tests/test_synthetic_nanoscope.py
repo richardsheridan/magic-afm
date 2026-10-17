@@ -174,6 +174,7 @@ def test_pfc_height_image_round_trips(pfc):
             assert image.shape == pfc.images[name].shape
             # the reader gives maps in m
             assert pfc.image_units[name] == "nm"
+            assert image.units == "m"
             assert_float32_close(image.get_image(), pfc.images[name] * 1e-9)
 
 
@@ -234,7 +235,44 @@ def test_spm_height_sensor_image_round_trips(spm):
             assert image.shape == spm.images[name].shape
             # the reader gives maps in m
             assert spm.image_units[name] == "nm"
+            assert image.units == "m"
             assert_float32_close(image.get_image(), spm.images[name] * 1e-9)
+
+
+# builder and height image name of each format, for files that also hold a Phase image
+# on the unitless Sens. Phase soft scale of the real scan lists
+PHASE_BUILDERS = {"pfc": (build_pfc, "Height"), "spm": (build_spm, "Height Sensor")}
+
+
+@pytest.mark.parametrize("fmt", PHASE_BUILDERS)
+def test_image_on_a_unitless_soft_scale_reads_in_volts(tmp_path, fmt):
+    """Its values are the hard-scaled volts times the soft scale, declared as V."""
+    builder, _ = PHASE_BUILDERS[fmt]
+    synthetic = builder(tmp_path, phase_image=True)
+    with open_fvfile(synthetic.path) as fvfile:
+        assert sorted(fvfile.images) == sorted(synthetic.images)
+        image = fvfile.images["Phase"]
+        assert synthetic.image_units["Phase"] == "V"
+        assert image.units == "V"
+        assert_float32_close(image.get_image(), synthetic.images["Phase"])
+
+
+@pytest.mark.parametrize("fmt", PHASE_BUILDERS)
+def test_height_image_reads_the_same_beside_an_image_on_a_unitless_soft_scale(
+    tmp_path, fmt
+):
+    builder, height_name = PHASE_BUILDERS[fmt]
+    (tmp_path / "plain").mkdir()
+    (tmp_path / "phase").mkdir()
+    plain = builder(tmp_path / "plain")
+    with_phase = builder(tmp_path / "phase", phase_image=True)
+    with open_fvfile(plain.path) as fvfile:
+        expected = fvfile.images[height_name].get_image()
+    with open_fvfile(with_phase.path) as fvfile:
+        image = fvfile.images[height_name]
+        assert image.units == "m"
+        np.testing.assert_array_equal(image.get_image(), expected)
+    assert_float32_close(expected, with_phase.images[height_name] * 1e-9)
 
 
 def read_header(path):

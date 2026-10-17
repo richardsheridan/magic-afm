@@ -97,6 +97,7 @@ def assert_images(fvfile, synthetic):
     assert sorted(fvfile.images) == sorted(synthetic.images)
     for name, image in fvfile.images.items():
         assert image.shape == synthetic.images[name].shape
+        assert image.units == synthetic.image_units[name]
         np.testing.assert_array_equal(image.get_image(), synthetic.images[name])
 
 

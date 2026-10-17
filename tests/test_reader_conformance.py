@@ -26,7 +26,7 @@ from synthetic_files.arh5 import build_arh5_ffm, build_arh5_force_map
 from synthetic_files.nanoscope import build_pfc, build_spm
 from synthetic_files.nid import build_nid
 
-from magic_afm.data_readers import FVFile
+from magic_afm.data_readers import FVFile, Image
 
 # builder, volumes the file holds, and the trace the file should report: 1 for a file
 # holding both a trace and a retrace volume, else None
@@ -76,6 +76,23 @@ def test_fvfile_protocol_declares_sync_dist_and_trace():
     hints = typing.get_type_hints(FVFile)
     assert hints["sync_dist"] == float | None
     assert hints["trace"] == int | None
+
+
+def test_image_protocol_declares_units_as_str():
+    """Image annotates units as str, the unit of the values get_image returns."""
+    assert typing.get_type_hints(Image)["units"] is str
+
+
+@pytest.mark.parametrize("case", BUILDERS)
+def test_every_image_declares_a_nonempty_str_unit(tmp_path, case):
+    """Every reader's images each declare a unit, whether or not the file states it."""
+    builder, _, _ = BUILDERS[case]
+    synthetic = builder(tmp_path)
+    with open_fvfile(synthetic.path) as fvfile:
+        units = {name: image.units for name, image in fvfile.images.items()}
+    assert units
+    for name, unit in units.items():
+        assert isinstance(unit, str) and unit, (name, unit)
 
 
 @pytest.mark.parametrize("case", BUILDERS)
