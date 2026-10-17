@@ -133,6 +133,7 @@ class ForceCurveOptions:
     li_amp: float
     drag: float
     trace: int | None
+    resample_npts: int = calculation.RESAMPLE_NPTS
 
 
 @frozen
@@ -1709,6 +1710,7 @@ class ForceVolumeController:
                         s_ratio=options.defl_sens
                         / self.opened_fvol.initial_parameters.defl_sens,
                         fit_mode=options.fit_mode,
+                        resample_npts=options.resample_npts,
                     ),
                     self.opened_fvol.iter_curves(options.trace, options.sync_dist),
                     chunksize * 8,
@@ -2351,7 +2353,7 @@ def calculate_force_data(
     cancel_poller()
     npts = sum(map(len, zxr))
     t_step *= 1000
-    rnpts = calculation.RESAMPLE_NPTS
+    rnpts = options.resample_npts
     if npts > rnpts:
         zxr, dxr = calculation._resample_halves(zxr, dxr, rnpts)
         cancel_poller()

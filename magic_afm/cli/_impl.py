@@ -40,6 +40,7 @@ from magic_afm.calculation import (
     PARMS_UNITS_DICT,
     PROPERTY_DTYPE,
     PROPERTY_UNITS_DICT,
+    RESAMPLE_NPTS,
     FitFix,
     FitMode,
     fit_curve_properties,
@@ -184,6 +185,7 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
         prepare_force_curve,
         fit_mode=co["fit_mode"],
         s_ratio=defl_sens / fvfile.defl_sens,
+        resample_npts=co["resample_npts"],
     )
     calcfun = partial(fit_curve_properties, **{**co, "k": k})
     chunksize = 8
@@ -411,12 +413,13 @@ def main(
 
     # get flag defaults from single source of truth, not click decorators
     co["fit_fix"] = FitFix.DEFAULTS
+    co["resample_npts"] = RESAMPLE_NPTS
 
     # override use configuration file for defaults if given, but give command line
     # selections priority over the json file.
     if options_json:
         for k, v in options_json.items():
-            if k == "fit_fix" or is_default(k):
+            if k in ("fit_fix", "resample_npts") or is_default(k):
                 co[k] = v
 
     # override fit_fix with flags from command line
