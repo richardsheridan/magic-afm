@@ -117,6 +117,8 @@ HEIGHT_FULL_SCALE = 354.4026
 # Sample Points times PFT Freq in every real capture
 PFC_SAMPLE_RATE_KHZ = 512.0
 PFC_HEADER_BYTES = 40960
+# the Sens. Phase soft scale of every real scan list: a factor of 1 with no unit
+PHASE_SENS = "1.000000"
 SPM_HEADER_BYTES = 80960
 
 
@@ -189,6 +191,26 @@ def _quantize(values: np.ndarray, lsb: float, dtype) -> tuple[np.ndarray, np.nda
     return codes, codes * lsb
 
 
+def _phase_image(rng, shape: Index, bytes_per_pixel: int, dtype, entry: dict):
+    """A Phase image on the unitless soft scale, with its Ciao image list entry.
+
+    Gives the codes, their values in V and the entry, a copy of the given image's with
+    the Phase Image Data and Z scale lines.
+    """
+    lsb = _v_per_lsb(bytes_per_pixel)
+    full = _fixed(INPUT_VOLTS)
+    codes, volts = _quantize(
+        rng.uniform(-5.0, 5.0, shape), float(full) / 2 ** (8 * bytes_per_pixel), dtype
+    )
+    entry = entry | {
+        "Data length": str(codes.nbytes),
+        "@2:Image Data": 'S [Phase] "Phase"',
+        "@2:Z scale": _z_scale("Sens. Phase", lsb, full),
+        "@2:Z offset": _z_scale("Sens. Phase", lsb, "0"),
+    }
+    return codes, volts * float(PHASE_SENS), entry
+
+
 def build_pfc(
     directory: Path,
     shape: Index = (4, 4),
@@ -205,6 +227,7 @@ def build_pfc(
     sample_points: int | None = None,
     amplitude: float = 75.0,
     extend_marker: bool = True,
+    phase_image: bool = False,
     filename: str = "synthetic.000.pfc",
 ) -> SyntheticFile:
     """Write a PeakForce capture of shape (rows, cols) and say what it holds.
@@ -216,7 +239,9 @@ def build_pfc(
     the drive in samples of ``sample_points`` per period (by default 512 kHz
     over ``rate``); it must stay under half a period. ``sync_distance_qnm``
     adds that newer key, whose value is then the lag. ``extend_marker`` writes
-    the INT16_MIN marker of the real captures.
+    the INT16_MIN marker of the real captures. ``phase_image`` adds a Phase image
+    after the Height image, on the scan list's unitless ``Sens. Phase`` soft scale
+    (``V 1.000000 `` in the real files), so its values are in V.
     """
     rows, cols = shape
     n_curves = rows * cols
@@ -276,6 +301,35 @@ def build_pfc(
     image_offset = PFC_HEADER_BYTES
     image_length = height_codes.nbytes
     force_offset = image_offset + image_length
+    height_entry = {
+        "Data offset": str(image_offset),
+        "Data length": str(image_length),
+        "Bytes/pixel": "2",
+        "Start context": "OL1BIG",
+        "Data type": "AFM",
+        "Frame direction": "Down",
+        "Samps/line": str(cols),
+        "Number of lines": str(rows),
+        "Aspect Ratio": _aspect(shape),
+        "Scan Size": _image_scan_size(fast, slow),
+        "Line Direction": "Retrace",
+        "@2:Image Data": 'S [Height] "Height"',
+        "@2:Z scale": _z_scale("Sens. Zsens", height_v_per_lsb, height_full),
+        "@2:Z offset": _z_scale("Sens. Zsens", height_v_per_lsb, "0"),
+    }
+    image_sections = [("Ciao image list", height_entry)]
+    image_codes = [height_codes.astype("<i2")]
+    images = {"Height": height}
+    image_units = {"Height": "nm"}
+    if phase_image:
+        phase_codes, phase, phase_entry = _phase_image(
+            rng, shape, 2, np.int16, height_entry | {"Data offset": str(force_offset)}
+        )
+        force_offset += phase_codes.nbytes
+        image_sections.append(("Ciao image list", phase_entry))
+        image_codes.append(phase_codes.astype("<i2"))
+        images["Phase"] = phase
+        image_units["Phase"] = "V"
     scan_list = {
         "Parameter select": "Main",
         "Operating mode": "Image",
@@ -293,6 +347,8 @@ def build_pfc(
     }
     if qnm_str is not None:
         scan_list["Sync Distance QNM"] = qnm_str
+    if phase_image:
+        scan_list["@Sens. Phase"] = f"V {PHASE_SENS} "
     sections = [
         (
             "Force file list",
@@ -319,25 +375,7 @@ def build_pfc(
                 "@4:Image Data": 'S [DeflectionError] "Deflection Error"',
             },
         ),
-        (
-            "Ciao image list",
-            {
-                "Data offset": str(image_offset),
-                "Data length": str(image_length),
-                "Bytes/pixel": "2",
-                "Start context": "OL1BIG",
-                "Data type": "AFM",
-                "Frame direction": "Down",
-                "Samps/line": str(cols),
-                "Number of lines": str(rows),
-                "Aspect Ratio": _aspect(shape),
-                "Scan Size": _image_scan_size(fast, slow),
-                "Line Direction": "Retrace",
-                "@2:Image Data": 'S [Height] "Height"',
-                "@2:Z scale": _z_scale("Sens. Zsens", height_v_per_lsb, height_full),
-                "@2:Z offset": _z_scale("Sens. Zsens", height_v_per_lsb, "0"),
-            },
-        ),
+        *image_sections,
         (
             "Ciao force image list",
             {
@@ -359,7 +397,8 @@ def build_pfc(
     path = Path(directory) / filename
     with path.open("wb") as f:
         f.write(_header(sections, PFC_HEADER_BYTES))
-        f.write(height_codes.astype("<i2").tobytes())
+        for codes in image_codes:
+            f.write(codes.tobytes())
         f.write(force_data.tobytes())
 
     volume = SyntheticVolume(
@@ -375,12 +414,12 @@ def build_pfc(
     return SyntheticFile(
         path=path,
         volumes=[volume],
-        images={"Height": height},
+        images=images,
         k=float(k_str),
         defl_sens=float(sens_str),
         t_step=1 / (float(rate_str) * 1e3 * npts),
         scansize=(fast, slow),
-        image_units={"Height": "nm"},
+        image_units=image_units,
         sync_dist=lag,
     )
 
@@ -398,6 +437,7 @@ def build_spm(
     ramp_rate: float = 1.00469,
     scan_list_grid: Index | None = None,
     invalid_pixels: Iterable[Index] = (),
+    phase_image: bool = False,
     filename: str = "synthetic.0_00000.spm",
 ) -> SyntheticFile:
     """Write a force volume of shape (rows, cols) and say what it holds.
@@ -407,7 +447,9 @@ def build_spm(
     the fast axis in nm, ``ramp_rate`` the ramps per second. ``scan_list_grid``
     (rows, cols) replaces the grid of the Ciao scan list alone; ``invalid_pixels``
     lists the (row, col) of pixels marked invalid. Both write what the reader
-    gets wrong today; see the module docstring.
+    gets wrong today; see the module docstring. ``phase_image`` adds a Phase image
+    after the Height Sensor image, on the scan list's unitless ``Sens. Phase`` soft
+    scale (``V 1.000000 `` in the real files), so its values are in V.
     """
     rows, cols = shape
     scan_rows, scan_cols = shape if scan_list_grid is None else scan_list_grid
@@ -487,6 +529,39 @@ def build_spm(
         )
         offset += data.nbytes
     image_codes = image_codes.astype("<i4")
+    height_entry = {
+        "Data offset": str(offset),
+        "Data length": str(image_codes.nbytes),
+        "Bytes/pixel": "4",
+        "Start context": "OL1BIG",
+        "Data type": "AFM",
+        "Frame direction": "Up",
+        "Invalid Data Flag": "None",
+        "Invalid Data Fill": "None",
+        "Samps/line": str(cols),
+        "Number of lines": str(rows),
+        "Aspect Ratio": _aspect(shape),
+        "Scan Size": _image_scan_size(fast, slow),
+        "Line Direction": "Retrace",
+        "@2:Image Data": 'S [ZSensor] "Height Sensor"',
+        "@2:Z scale": _z_scale("Sens. ZsensSens", _v_per_lsb(4), full_scale),
+        "@2:Z offset": _z_scale("Sens. ZsensSens", _v_per_lsb(4), "0"),
+    }
+    image_sections = [("Ciao image list", height_entry)]
+    stored_images = [image_codes]
+    images = {"Height Sensor": image}
+    image_units = {"Height Sensor": "nm"}
+    scan_list_phase = {}
+    if phase_image:
+        phase_offset = offset + image_codes.nbytes
+        phase_codes, phase, phase_entry = _phase_image(
+            rng, shape, 4, np.int32, height_entry | {"Data offset": str(phase_offset)}
+        )
+        image_sections.append(("Ciao image list", phase_entry))
+        stored_images.append(phase_codes.astype("<i4"))
+        images["Phase"] = phase
+        image_units["Phase"] = "V"
+        scan_list_phase["@Sens. Phase"] = f"V {PHASE_SENS} "
     sections = [
         (
             "Force file list",
@@ -514,6 +589,7 @@ def build_spm(
                 "@Sens. DeflSens": f"V {sens_str} nm/V",
                 "@Sens. ZsensSens": f"V {z_sens_str} nm/V",
                 "@Sens. ForceDeflSens": f"V {force_sens_str} nN/V",
+                **scan_list_phase,
             },
         ),
         (
@@ -533,34 +609,15 @@ def build_spm(
         ),
         ("Probe List", {"Save/Load Tip Model": "Spherical"}),
         *force_sections,
-        (
-            "Ciao image list",
-            {
-                "Data offset": str(offset),
-                "Data length": str(image_codes.nbytes),
-                "Bytes/pixel": "4",
-                "Start context": "OL1BIG",
-                "Data type": "AFM",
-                "Frame direction": "Up",
-                "Invalid Data Flag": "None",
-                "Invalid Data Fill": "None",
-                "Samps/line": str(cols),
-                "Number of lines": str(rows),
-                "Aspect Ratio": _aspect(shape),
-                "Scan Size": _image_scan_size(fast, slow),
-                "Line Direction": "Retrace",
-                "@2:Image Data": 'S [ZSensor] "Height Sensor"',
-                "@2:Z scale": _z_scale("Sens. ZsensSens", _v_per_lsb(4), full_scale),
-                "@2:Z offset": _z_scale("Sens. ZsensSens", _v_per_lsb(4), "0"),
-            },
-        ),
+        *image_sections,
     ]
     path = Path(directory) / filename
     with path.open("wb") as f:
         f.write(_header(sections, SPM_HEADER_BYTES))
         for *_, data in channels:
             f.write(data.tobytes())
-        f.write(image_codes.tobytes())
+        for codes in stored_images:
+            f.write(codes.tobytes())
 
     volume = SyntheticVolume(
         "Deflection Error",
@@ -575,10 +632,10 @@ def build_spm(
     return SyntheticFile(
         path=path,
         volumes=[volume],
-        images={"Height Sensor": image},
+        images=images,
         k=float(k_str),
         defl_sens=float(sens_str),
         t_step=1 / (float(rate_str) * 2 * points),
         scansize=(fast, slow),
-        image_units={"Height Sensor": "nm"},
+        image_units=image_units,
     )
