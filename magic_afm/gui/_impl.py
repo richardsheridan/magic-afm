@@ -160,8 +160,8 @@ class ForceCurveData:
     z_tru: Optional[float] = None
     mindelta: Optional[float] = None
     a_c: Optional[float] = None
-    sens: Optional[np.ndarray] = None
-    sse: Optional[np.ndarray] = None
+    sens: Optional[float] = None
+    sse: Optional[float] = None
 
 
 @frozen
@@ -2137,7 +2137,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
                     "{:.2f}±{:.2f}".format(
                         data.parms["M"].item() * fac, data.parms_err["M"].item() * fac
                     ),
-                    "{:.2e}".format(data.sens.item()),
+                    "{:.2e}".format(data.sens),
                     "{:.2f}±{:.2f}".format(
                         data.parms["fc"].item(), data.parms_err["fc"].item()
                     ),
@@ -2157,9 +2157,9 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
         m, sens, fadh, defl, ind, rat, a_c = np.transpose(
             [
                 (
-                    float(data.parms["M"]),
-                    float(data.sens),
-                    float(data.parms["fc"]),
+                    data.parms["M"].item(),
+                    data.sens,
+                    data.parms["fc"].item(),
                     data.defl,
                     data.ind,
                     data.defl / data.ind,
