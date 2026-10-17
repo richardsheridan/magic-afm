@@ -54,6 +54,7 @@ from conftest import load_platform_goldens
 from synthetic_files.nanoscope import build_pfc, edit_nanoscope_header
 from test_goldens import TOLERANCES as T2_TOLERANCES
 
+from magic_afm import calculation
 from magic_afm.calculation import FitFix
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -346,7 +347,7 @@ def test_cli_name_filter_follows_fit_fix_and_k_sens(run_cli):
     assert run.result.exit_code == 0
     assert written(run) == sorted(expected)
     options = json.loads((run.out / options_name(stem)).read_text())
-    assert options["fit_fix"] == FitFix.LJ_SCALE == 4
+    assert options["fit_fix"] == ["LJ_SCALE"]
     assert options["k_sens"] is False
 
 
@@ -434,8 +435,10 @@ def test_cli_options_json_at_defaults_on_the_nid(run_cli):
         "li_per": 0.0,
         "li_amp": 0.0,
         "drag": 0.0,
-        "fit_fix": FitFix.DEFAULTS.value,
+        "fit_fix": [m.name for m in FitFix.DEFAULTS],
         "fit_mode": "RETRACT",
+        "resample_npts": calculation.RESAMPLE_NPTS,
+        "schema_version": 1,
     }
 
 
