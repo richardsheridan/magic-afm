@@ -1761,8 +1761,12 @@ class NanoscopeFile:
                 sync_dist_str = csl["Sync Distance QNM"]
             except KeyError:
                 sync_dist_str = csl["Sync Distance"]
-            # actually sync_dist * sum(Samps/line) / Sample Points, but it works
-            sync_dist = float(sync_dist_str) * rate / 2
+            npts = sum(map(int, deflections[0]["Samps/line"].split()))
+            try:
+                sample_points = float(csl["Sample Points"])
+            except KeyError:
+                sample_points = 512 / rate
+            sync_dist = float(sync_dist_str) * npts / sample_points
             volumes = [
                 NanoscopeVolume.parse(
                     header,
