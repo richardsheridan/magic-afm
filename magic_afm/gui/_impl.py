@@ -136,6 +136,12 @@ class ForceCurveOptions:
     resample_npts: int = calculation.RESAMPLE_NPTS
 
 
+def options_dict(options: ForceCurveOptions) -> dict:
+    """options as the options JSON and the fit workers take them."""
+    # disp_kind is display state, and unpickling it would import the GUI in a worker
+    return asdict(options, filter=lambda attribute, _: attribute.name != "disp_kind")
+
+
 @frozen
 class ForceCurveData:
     zxr: tuple[np.ndarray, np.ndarray]
@@ -154,8 +160,8 @@ class ForceCurveData:
     z_tru: Optional[float] = None
     mindelta: Optional[float] = None
     a_c: Optional[float] = None
-    sens: Optional[np.ndarray] = None
-    sse: Optional[np.ndarray] = None
+    sens: Optional[float] = None
+    sse: Optional[float] = None
 
 
 @frozen
@@ -741,9 +747,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         image_names = [x for x in self._get_image_names() if x.startswith("Calc")]
 
         async def write_options():
-            options = asdict(self._get_options())
-            del options["disp_kind"]
-            options = dump_options(options)
+            options = dump_options(options_dict(self._get_options()))
             async with await trio.open_file(_export.options_file_name(root), "w") as f:
                 await f.write(options)
 
@@ -1714,8 +1718,7 @@ class ForceVolumeController:
                     chunksize * 8,
                 )
                 # noinspection PyTypeChecker
-                d = asdict(options)
-                del d["disp_kind"]
+                d = options_dict(options)
                 property_aiter = await pipeline_nursery.start(
                     async_tools.to_sync_runner_map_unordered,
                     trio_parallel.run_sync,
@@ -2134,7 +2137,7 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
                     "{:.2f}±{:.2f}".format(
                         data.parms["M"].item() * fac, data.parms_err["M"].item() * fac
                     ),
-                    "{:.2e}".format(data.sens.item()),
+                    "{:.2e}".format(data.sens),
                     "{:.2f}±{:.2f}".format(
                         data.parms["fc"].item(), data.parms_err["fc"].item()
                     ),
@@ -2154,9 +2157,9 @@ def draw_data_table(point_data: dict[ImagePoint, ForceCurveData], ax: Axes):
         m, sens, fadh, defl, ind, rat, a_c = np.transpose(
             [
                 (
-                    float(data.parms["M"]),
-                    float(data.sens),
-                    float(data.parms["fc"]),
+                    data.parms["M"].item(),
+                    data.sens,
+                    data.parms["fc"].item(),
                     data.defl,
                     data.ind,
                     data.defl / data.ind,
@@ -2344,38 +2347,18 @@ def calculate_force_data(
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
     cancel_poller()
-    optionsdict = calculation._fit_arguments(asdict(options))
-    parms, parms_err, sse, d_fit = calculation.fit_force_curve(
+    parms, parms_err, sse, d_fit, quantities = calculation._fit_properties(
         z,
         d,
-        cancel_poller=cancel_poller,
-        split=split,
+        split,
+        asdict(options),
+        options.k_sens,
         nan_on_error=False,
-        **optionsdict,
+        cancel_poller=cancel_poller,
     )
     f_fit = d_fit * options.k
-    cancel_poller()
-
-    eps = 1e-3
-    d_new, k_new = calculation.perturb_k(d, options.k, eps)
-    optionsdict.pop("k")
-    parms_perturb = calculation.fit_force_curve(
-        z,
-        d_new,
-        k_new,
-        cancel_poller=cancel_poller,
-        split=split,
-        p0=parms,
-        nan_on_error=False,
-        **optionsdict,
-    )[0]
-
-    sens = (parms_perturb["M"] - parms["M"]) / parms["M"] / eps
-    deflection, indentation, a_c = calculation.max_load_quantities(
-        d, parms, options.k, options.fit_mode, split=split
-    )
+    deflection, indentation, a_c, z_true_surface, sens = quantities
     mindelta = calculation.pull_off_delta(parms, options.k)
-    z_true_surface = calculation.true_surface_z(parms, options.k)
     return ForceCurveData(
         zxr=zxr,
         dxr=dxr,

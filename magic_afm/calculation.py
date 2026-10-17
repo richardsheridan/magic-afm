@@ -1250,13 +1250,21 @@ def _fit_arguments(options):
     }
 
 
-def fit_curve_properties(z_d_s_rc, k_sens=True, **kwargs):
-    z, d, split, rc = z_d_s_rc
-    kwargs = _fit_arguments(kwargs)
-    kwargs["split"] = split
-    parms, parms_err, sse, _ = fit_force_curve(z, d, nan_on_error=True, **kwargs)
+def _fit_properties(z, d, split, options, k_sens, nan_on_error, cancel_poller=bool):
+    """Fit one curve, derive its properties and optionally its k sensitivity.
+
+    options may hold more than fit_force_curve takes; the rest is ignored.
+
+    Return (parms, parms_err, sse, d_fit, quantities), where quantities is
+    (deflection, indentation, a_c, z_true_surface, ind_mod_sens_k), or None if a
+    fit gave NaN, which only happens with nan_on_error.
+    """
+    kwargs = dict(_fit_arguments(options), split=split, cancel_poller=cancel_poller)
+    parms, parms_err, sse, d_fit = fit_force_curve(
+        z, d, nan_on_error=nan_on_error, **kwargs
+    )
     if np.any(np.isnan(parms.item())):
-        return rc, None, None, None
+        return parms, parms_err, sse, d_fit, None
     deflection, indentation, a_c = max_load_quantities(
         d, parms, kwargs["k"], kwargs["fit_mode"], split=split
     )
@@ -1265,14 +1273,26 @@ def fit_curve_properties(z_d_s_rc, k_sens=True, **kwargs):
         k = kwargs.pop("k")
         eps = 1e-3
         params_perturb, *_ = fit_force_curve(
-            z, *perturb_k(d, k, eps), p0=parms, nan_on_error=True, **kwargs
+            z, *perturb_k(d, k, eps), p0=parms, nan_on_error=nan_on_error, **kwargs
         )
         if np.any(np.isnan(params_perturb.item())):
-            return rc, None, None, None
+            return parms, parms_err, sse, d_fit, None
         ind_mod_sens_k = (params_perturb["M"] - parms["M"]) / parms["M"] / eps
         ind_mod_sens_k = ind_mod_sens_k.item()
     else:
         ind_mod_sens_k = 0.0
+    quantities = deflection, indentation, a_c, z_true_surface, ind_mod_sens_k
+    return parms, parms_err, sse, d_fit, quantities
+
+
+def fit_curve_properties(z_d_s_rc, k_sens=True, **kwargs):
+    z, d, split, rc = z_d_s_rc
+    parms, parms_err, sse, _, quantities = _fit_properties(
+        z, d, split, kwargs, k_sens, nan_on_error=True
+    )
+    if quantities is None:
+        return rc, None, None, None
+    deflection, indentation, a_c, z_true_surface, ind_mod_sens_k = quantities
 
     # pack up properties, ensuring all fields are filled in order
     properties = np.void(np.nan, dtype=PROPERTY_DTYPE)
