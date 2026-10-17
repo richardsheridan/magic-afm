@@ -19,9 +19,9 @@
 # and must give bitwise the values it gave. Its values differ between the plain and
 # jitted model (about 1e-7 in indentation) and across platforms, so they are pinned by
 # old_calc_def_ind_ztru_ac below, a copy of it as it stood before the split, run in the
-# same process on the same inputs. It looks the model functions up on the module at
-# call time, so it follows _warmup_jit_worker(). Before the split it was bitwise equal
-# to calc_def_ind_ztru_ac on every case here, in env test plain and jitted and in env
+# same process on the same inputs. It looks the model functions up on the module at call
+# time, so it follows _warmup_jit_worker(). Before the split it was bitwise equal to
+# calc_def_ind_ztru_ac on every case here, in env test plain and jitted and in env
 # test-nonumba.
 
 import importlib.util
