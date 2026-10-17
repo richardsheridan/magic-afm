@@ -136,6 +136,12 @@ class ForceCurveOptions:
     resample_npts: int = calculation.RESAMPLE_NPTS
 
 
+def options_dict(options: ForceCurveOptions) -> dict:
+    """options as the options JSON and the fit workers take them."""
+    # disp_kind is display state, and unpickling it would import the GUI in a worker
+    return asdict(options, filter=lambda attribute, _: attribute.name != "disp_kind")
+
+
 @frozen
 class ForceCurveData:
     zxr: tuple[np.ndarray, np.ndarray]
@@ -741,9 +747,7 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
         image_names = [x for x in self._get_image_names() if x.startswith("Calc")]
 
         async def write_options():
-            options = asdict(self._get_options())
-            del options["disp_kind"]
-            options = dump_options(options)
+            options = dump_options(options_dict(self._get_options()))
             async with await trio.open_file(_export.options_file_name(root), "w") as f:
                 await f.write(options)
 
@@ -1714,8 +1718,7 @@ class ForceVolumeController:
                     chunksize * 8,
                 )
                 # noinspection PyTypeChecker
-                d = asdict(options)
-                del d["disp_kind"]
+                d = options_dict(options)
                 property_aiter = await pipeline_nursery.start(
                     async_tools.to_sync_runner_map_unordered,
                     trio_parallel.run_sync,
@@ -2348,7 +2351,7 @@ def calculate_force_data(
         z,
         d,
         split,
-        calculation._fit_arguments(asdict(options)),
+        asdict(options),
         options.k_sens,
         nan_on_error=False,
         cancel_poller=cancel_poller,

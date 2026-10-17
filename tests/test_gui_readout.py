@@ -19,7 +19,6 @@ import io
 
 import numpy as np
 import pytest
-from attrs import asdict
 
 from magic_afm import calculation
 from magic_afm._options import dump_options, load_options
@@ -69,11 +68,11 @@ def map_pixel(fvfile, rc, options):
         fit_mode=options.fit_mode,
         resample_npts=options.resample_npts,
     )
-    fit_options = asdict(options)
-    del fit_options["disp_kind"]
+    from magic_afm.gui import _impl as gui
+
     with np.errstate(all="ignore"):
         _, properties, parms, parms_err = calculation.fit_curve_properties(
-            z_d_s_rc, **fit_options
+            z_d_s_rc, **gui.options_dict(options)
         )
     return properties, parms, parms_err
 
@@ -197,8 +196,5 @@ def test_gui_options_round_trip_through_the_options_json(case):
     from magic_afm.gui import _impl as gui
 
     options = gui_options(gui.DemoForceVolumeFile(), **ROUND_TRIP_OPTIONS[case])
-    # as AsyncNavigationToolbar2Tk._aexport_calculations writes them
-    written = asdict(options)
-    del written["disp_kind"]
-    loaded = load_options(io.StringIO(dump_options(written)))
+    loaded = load_options(io.StringIO(dump_options(gui.options_dict(options))))
     assert gui.ForceCurveOptions(**loaded, disp_kind=options.disp_kind) == options

@@ -1250,14 +1250,16 @@ def _fit_arguments(options):
     }
 
 
-def _fit_properties(z, d, split, fit_args, k_sens, nan_on_error, cancel_poller=bool):
+def _fit_properties(z, d, split, options, k_sens, nan_on_error, cancel_poller=bool):
     """Fit one curve, derive its properties and optionally its k sensitivity.
+
+    options may hold more than fit_force_curve takes; the rest is ignored.
 
     Return (parms, parms_err, sse, d_fit, quantities), where quantities is
     (deflection, indentation, a_c, z_true_surface, ind_mod_sens_k), or None if a
     fit gave NaN, which only happens with nan_on_error.
     """
-    kwargs = dict(fit_args, split=split, cancel_poller=cancel_poller)
+    kwargs = dict(_fit_arguments(options), split=split, cancel_poller=cancel_poller)
     parms, parms_err, sse, d_fit = fit_force_curve(
         z, d, nan_on_error=nan_on_error, **kwargs
     )
@@ -1286,7 +1288,7 @@ def _fit_properties(z, d, split, fit_args, k_sens, nan_on_error, cancel_poller=b
 def fit_curve_properties(z_d_s_rc, k_sens=True, **kwargs):
     z, d, split, rc = z_d_s_rc
     parms, parms_err, sse, _, quantities = _fit_properties(
-        z, d, split, _fit_arguments(kwargs), k_sens, nan_on_error=True
+        z, d, split, kwargs, k_sens, nan_on_error=True
     )
     if quantities is None:
         return rc, None, None, None
