@@ -116,12 +116,12 @@ PARMS_UNITS_DICT = {
     "fc": "N",
     "delta_shift": "m",
     "force_shift": "N",
-    "lj_scale": None,
+    "lj_scale": "ln(m)",
     "vd": None,
     "li_per": "m",
     "li_amp": "m",
     "li_pha": "rad",
-    "drag": "s",
+    "drag": "samples",
 }
 
 PARMS_DTYPE = np.dtype([(name, "f4") for name in PARMS_UNITS_DICT])

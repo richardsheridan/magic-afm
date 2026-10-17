@@ -341,6 +341,8 @@ def main(
     These can be overridden by specifying an options-json, which can itself be
     overridden by fix/fit switches and initial value options at the command line.
     Note that M (modulus) and radius are covariate so their fit/fix flag is linked.
+    Maps are written in SI units (m, N, Pa); options-json and the initial value
+    options are in fit units (nm, nN, GPa).
 
     If output-path is "absolute" (i.e. starts with "C:\\" or "/"), all results
     will be written to the same directory, and identically-named files will clobber
