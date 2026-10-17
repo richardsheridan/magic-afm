@@ -126,7 +126,7 @@ class RecordingProgressBar(tqdm_std):
         self.instances.append(self)
 
 
-def run_gui_fit(path, monkeypatch, shape):
+def run_gui_fit(path, monkeypatch, shape, *, fit_mode=FitMode.RETRACT, trace=None):
     """Run the GUI's property-map fit with no Tk display; return its bar and file."""
     from magic_afm.gui import _impl as gui
 
@@ -142,7 +142,7 @@ def run_gui_fit(path, monkeypatch, shape):
         controller.axesimage = MagicMock(**{"get_size.return_value": shape})
         controller.spinner_scope = contextlib.nullcontext
         options = gui.ForceCurveOptions(
-            fit_mode=FitMode.RETRACT,
+            fit_mode=fit_mode,
             fit_fix=FitFix.DEFAULTS,
             disp_kind=gui.DispKind.zd,
             k=params.k,
@@ -157,7 +157,7 @@ def run_gui_fit(path, monkeypatch, shape):
             li_per=0.0,
             li_amp=0.0,
             drag=0.0,
-            trace=None,
+            trace=trace,
         )
         with np.errstate(all="ignore"):
             trio.run(controller.calc_prop_map_response, options)

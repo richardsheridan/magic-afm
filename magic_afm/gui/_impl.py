@@ -60,7 +60,7 @@ from matplotlib.ticker import EngFormatter
 from matplotlib.transforms import Bbox, BboxTransform
 from tqdm.std import tqdm as tqdm_std
 
-from magic_afm import async_tools, calculation, data_readers
+from magic_afm import _export, async_tools, calculation, data_readers
 from magic_afm._options import dump_options
 from magic_afm._util import nice_workers
 
@@ -744,16 +744,16 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             options = asdict(self._get_options())
             del options["disp_kind"]
             options = dump_options(options)
-            async with await trio.open_file(root + "_options.json", "w") as f:
+            async with await trio.open_file(_export.options_file_name(root), "w") as f:
                 await f.write(options)
 
         def export_one(image_name):
             # to date, all afm images have been "flipped" on disk, which is
             # why they are displayed with "lower" origin, but on export users
             # have found this confusing, so we manually flip here
-            # TODO: solve this at the data reader level?
             image = self._get_image_by_name(image_name)[::-1]
-            exporter(root + "_" + image_name[4:] + ext, image)
+            map_name = image_name.removeprefix("Calc")
+            exporter(_export.export_file_name(root, map_name, ext), image)
 
         try:
             async with trio.open_nursery() as n:
@@ -1761,59 +1761,18 @@ class ForceVolumeController:
         combobox_values = list(self.display.image_name_menu.cget("values"))
 
         # Actually write out results to external world
-        if options.trace == 0:
-            trace = "Retrace"
-        elif options.trace == 1:
-            trace = "Trace"
-        else:
-            trace = ""
-        if options.fit_mode == calculation.FitMode.EXTEND:
-            extret = "Ext"
-        elif options.fit_mode == calculation.FitMode.RETRACT:
-            extret = "Ret"
-        else:
-            extret = "Both"
-        FitFix = calculation.FitFix
-        for names_units, map_, err_str in zip(
-            [
-                calculation.PROPERTY_UNITS_DICT,
-                calculation.PARMS_UNITS_DICT,
-                calculation.PARMS_UNITS_DICT,
-            ],
-            [property_map, parms_map, parms_err_map],
-            ["", "", "Err"],
-        ):
-            for name in names_units:
-                units_factor = 1  # would be great to use UNITS_DICT somehow
-                name2 = name
-                # skip writing fittable params that are fixed
-                if (
-                    name.upper() in FitFix.__members__
-                    and d["fit_fix"] & FitFix[name.upper()]
-                ):
-                    continue
-                # ugly special cases for M, etc.
-                if name == "M":
-                    if not d["fit_fix"] & FitFix["RADIUS"]:
-                        continue
-                    name2 = "IndentationModulus"
-                    units_factor = 1e9
-                if name == "li_pha":
-                    if d["fit_fix"] & FitFix["LI_AMP"]:
-                        continue
-                if name == "fc":
-                    name2 = "AdhesionForce"
-                    units_factor = 1e-9
-                if name == "SensIndMod_k" and not options.k_sens:
-                    continue
-                newname = "Calc" + extret + name2 + err_str + trace
-                self.opened_fvol.add_image(
-                    image_name=newname,
-                    units=names_units[name],
-                    image=map_[name].squeeze() * units_factor,
-                )
-                if newname not in combobox_values:
-                    combobox_values.append(newname)
+        fvfile = self.opened_fvol.fvfile
+        volume = data_readers._select_volume(fvfile, options.trace)
+        trace_suffix = _export.trace_suffix(fvfile.volumes, volume)
+        mode_tag = _export.mode_tag(options.fit_mode)
+        maps = _export.export_maps(
+            property_map, parms_map, parms_err_map, d["fit_fix"], options.k_sens
+        )
+        for name, units, image in maps:
+            newname = "Calc" + _export.map_name(mode_tag, name, trace_suffix)
+            self.opened_fvol.add_image(image_name=newname, units=units, image=image)
+            if newname not in combobox_values:
+                combobox_values.append(newname)
 
         self.display.reset_image_name_menu(combobox_values)
         self.display.image_name_menu.set(self.display.image_name_menu.get())

@@ -28,6 +28,7 @@ import numpy as np
 from attr import evolve
 from tqdm import tqdm
 
+from magic_afm import _export
 from magic_afm._options import (
     OPTIONS_JSON_SCHEMA,
     TraceChoice,
@@ -37,9 +38,7 @@ from magic_afm._options import (
 from magic_afm._util import MAX_WORKERS, cli_init
 from magic_afm.calculation import (
     PARMS_DTYPE,
-    PARMS_UNITS_DICT,
     PROPERTY_DTYPE,
-    PROPERTY_UNITS_DICT,
     RESAMPLE_NPTS,
     FitFix,
     FitMode,
@@ -168,7 +167,6 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
     defl_sens = fvfile.defl_sens if co["defl_sens"] is None else co["defl_sens"]
     file_sync_dist = fvfile.sync_dist
     sync_dist = file_sync_dist if co["sync_dist"] is None else co["sync_dist"]
-    trace = co["trace"] is None or co["trace"]
 
     v = _select_volume(fvfile, co["trace"])
     if sync_dist != file_sync_dist:
@@ -220,20 +218,8 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
         return
 
     # Actually write out results to external world
-    if co["trace"] is None:
-        tracestr = ""
-    elif trace == 0:
-        tracestr = "Retrace"
-    elif trace == 1:
-        tracestr = "Trace"
-    else:
-        tracestr = str(trace)
-    if co["fit_mode"] == FitMode.EXTEND:
-        extret = "Ext"
-    elif co["fit_mode"] == FitMode.RETRACT:
-        extret = "Ret"
-    else:
-        extret = "Both"
+    trace_suffix = _export.trace_suffix(fvfile.volumes, v)
+    mode_tag = _export.mode_tag(co["fit_mode"])
 
     if output_path is None:
         parent_path = filename.parent
@@ -242,9 +228,8 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
     else:
         parent_path = filename.parent / output_path
 
-    options_json_path = parent_path / (
-        filename.stem + "_options" + extret + tracestr + ".json"
-    )
+    root = filename.stem
+    options_json_path = parent_path / _export.options_file_name(root)
 
     # recreate options_json dict with selections
     new_json = {k: co[k] for k in OPTIONS_JSON_SCHEMA}
@@ -258,49 +243,17 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
     with options_json_path.open("w") as fp:
         fp.write(dump_options(new_json))
 
-    for names, map_, err_str in zip(
-        [PROPERTY_UNITS_DICT, PARMS_UNITS_DICT, PARMS_UNITS_DICT],
-        [property_map, parms_map, parms_err_map],
-        ["", "", "Err"],
-    ):
-        for name in names:
-            units_factor = 1  # would be great to use UNITS_DICT somehow
-            name2 = name
-            # skip writing fittable params that are fixed
-            if (
-                name.upper() in FitFix.__members__
-                and co["fit_fix"] & FitFix[name.upper()]
-            ):
-                continue
-            # ugly special case for M, etc.
-            if name == "M":
-                if not co["fit_fix"] & FitFix["RADIUS"]:
-                    continue
-                name2 = "IndentationModulus"
-                units_factor = 1e9
-            if name == "li_pha":
-                if co["fit_fix"] & FitFix["LI_AMP"]:
-                    continue
-            if name == "fc":
-                name2 = "AdhesionForce"
-                units_factor = 1e-9
-            if name == "SensIndMod_k" and not co["k_sens"]:
-                continue
-            export_path = parent_path / (
-                filename.stem
-                + "_"
-                + extret
-                + name2
-                + err_str
-                + tracestr
-                + "."
-                + output_type
-            )
-            if verbose:
-                echo("Writing " + str(export_path))
-            EXPORTER_MAP[output_type](
-                export_path, units_factor * map_[name].squeeze()[::-1]
-            )
+    maps = _export.export_maps(
+        property_map, parms_map, parms_err_map, co["fit_fix"], co["k_sens"]
+    )
+    for name, _, array in maps:
+        map_name = _export.map_name(mode_tag, name, trace_suffix)
+        export_path = parent_path / _export.export_file_name(
+            root, map_name, "." + output_type
+        )
+        if verbose:
+            echo("Writing " + str(export_path))
+        EXPORTER_MAP[output_type](export_path, array[::-1])
 
 
 @cloup.command(epilog="See https://github.com/richardsheridan/magic-afm for more.")
