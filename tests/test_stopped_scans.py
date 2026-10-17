@@ -36,6 +36,7 @@ from test_cli import (
     DEFAULT_MAPS,
     EXPORT_FIELDS,
     export_name,
+    export_value,
     invoke_cli,
     map_tolerance,
     options_name,
@@ -80,8 +81,8 @@ def acquired_and_fitted(path):
 def assert_nan_exactly_where_not_acquired(maps, acquired, want_maps):
     """Every map matches want on acquired pixels and is all-NaN on the rest."""
     for m, a in maps.items():
-        group, field, factor = EXPORT_FIELDS[m]
-        want = factor * want_maps[group][field]
+        group, field, _ = EXPORT_FIELDS[m]
+        want = export_value(m, want_maps[group][field])
         rtol, atol = map_tolerance(m)
         np.testing.assert_array_equal(
             np.isnan(a[acquired]), np.isnan(want[acquired]), err_msg=m

@@ -23,7 +23,14 @@ import test_goldens as t2
 from attrs import asdict
 from synthetic_files import open_fvfile
 from synthetic_files.nid import build_nid
-from test_cli import DEFAULT_MAPS, EXPORT_FIELDS, export_name, invoke_cli, map_tolerance
+from test_cli import (
+    DEFAULT_MAPS,
+    EXPORT_FIELDS,
+    export_name,
+    export_value,
+    invoke_cli,
+    map_tolerance,
+)
 
 from magic_afm import calculation
 from magic_afm.calculation import FitFix, FitMode
@@ -125,11 +132,11 @@ def test_cli_run_on_a_synthetic_file_matches_a_direct_fit(tmp_path):
     for m in DEFAULT_MAPS:
         # the CLI exports rows reversed relative to the reader
         actual = np.load(out / export_name(stem, m)).astype(np.float64)[::-1]
-        group, field, factor = EXPORT_FIELDS[m]
+        group, field, _ = EXPORT_FIELDS[m]
         rtol, atol = map_tolerance(m)
         np.testing.assert_allclose(
             actual,
-            factor * want[group][field],
+            export_value(m, want[group][field]),
             rtol=rtol,
             atol=atol,
             equal_nan=True,

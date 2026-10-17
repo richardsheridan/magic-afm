@@ -17,9 +17,13 @@
 
 # The fit works in nm, nN and GPa; the exports are in m, N and Pa. The expected units
 # and factors are written out here rather than read from PROPERTY_UNITS_DICT and
-# PARMS_UNITS_DICT, so that a wrong declaration fails. Only the fields whose
-# declaration is settled are listed: lj_scale, vd, li_per, li_amp, li_pha, drag and
-# SumSquaredError are not checked here.
+# PARMS_UNITS_DICT, so that a wrong declaration fails. Three fields are special:
+# SumSquaredError is a dimensionless weighted chi-squared, the fit's implicit weight
+# of 1 being 1/(1 nm)²; lj_scale is ln(L / 1 nm) in the fit and ln(L / 1 m) in the
+# export, a shift and no factor, its Err unshifted; drag is in resampled sample
+# intervals and exported as fitted (its conversion to seconds is deferred to M2).
+
+import math
 
 import numpy as np
 import pytest
@@ -39,24 +43,42 @@ PROPERTY_SI = {
     "TrueHeight": ("m", 1e-9),
     "IndentationRatio": (None, 1.0),
     "SensIndMod_k": (None, 1.0),
+    "SumSquaredError": (None, 1.0),
 }
+# field: (SI unit, factor from fit units, shift added to the value, not to its Err)
+LN_NM_IN_M = math.log(1e-9)
 PARMS_SI = {
-    "radius": ("m", 1e-9),
-    "tau": (None, 1.0),
-    "M": ("Pa", 1e9),
-    "fc": ("N", 1e-9),
-    "delta_shift": ("m", 1e-9),
-    "force_shift": ("N", 1e-9),
+    "radius": ("m", 1e-9, 0.0),
+    "tau": (None, 1.0, 0.0),
+    "M": ("Pa", 1e9, 0.0),
+    "fc": ("N", 1e-9, 0.0),
+    "delta_shift": ("m", 1e-9, 0.0),
+    "force_shift": ("N", 1e-9, 0.0),
+    "lj_scale": ("ln(m)", 1.0, LN_NM_IN_M),
+    "vd": (None, 1.0, 0.0),
+    "li_per": ("m", 1e-9, 0.0),
+    "li_amp": ("m", 1e-9, 0.0),
+    "li_pha": ("rad", 1.0, 0.0),
+    "drag": ("samples", 1.0, 0.0),
 }
 EXPORTED_AS = {"M": "IndentationModulus", "fc": "AdhesionForce"}
 
 FREE_RADIUS = FitFix.DEFAULTS & ~FitFix.RADIUS
+FREE_ARTIFACTS = ~(FitFix.VD | FitFix.LI_PER | FitFix.LI_AMP | FitFix.DRAG)
 # case: (fit_fix, the PARMS_SI fields it exports)
 FIT_FIX_CASES = {
-    "defaults": (FitFix.DEFAULTS, ("M", "fc", "delta_shift", "force_shift")),
+    "defaults": (
+        FitFix.DEFAULTS,
+        ("M", "fc", "delta_shift", "force_shift", "lj_scale"),
+    ),
     "free_radius_and_tau": (
         FREE_RADIUS & ~FitFix.TAU,
-        ("radius", "tau", "fc", "delta_shift", "force_shift"),
+        ("radius", "tau", "fc", "delta_shift", "force_shift", "lj_scale"),
+    ),
+    "free_artifacts": (
+        FitFix.DEFAULTS & FREE_ARTIFACTS,
+        ("M", "fc", "delta_shift", "force_shift", "lj_scale")
+        + ("vd", "li_per", "li_amp", "li_pha", "drag"),
     ),
 }
 SHAPE = (2, 3)
@@ -70,28 +92,40 @@ def filled(dtype, offset):
     return a
 
 
-@pytest.mark.parametrize("case", FIT_FIX_CASES)
-def test_export_maps_writes_values_and_errors_in_the_declared_si_unit(case):
-    fit_fix, parms = FIT_FIX_CASES[case]
-    property_map = filled(calculation.PROPERTY_DTYPE, 1.0)
-    parms_map = filled(calculation.PARMS_DTYPE, 2.0)
-    parms_err_map = filled(calculation.PARMS_DTYPE, 3.0)
-    maps = _export.export_maps(property_map, parms_map, parms_err_map, fit_fix, True)
-    exported = {name: (units, array) for name, units, array in maps}
-
-    expected = {}
-    for field, (unit, factor) in PROPERTY_SI.items():
-        expected[field] = (unit, factor * property_map[field])
+def expected_maps(parms):
+    """map name: (group, field, unit, factor, shift) for every map a case exports."""
+    out = {f: ("properties", f, u, k, 0.0) for f, (u, k) in PROPERTY_SI.items()}
     for field in parms:
-        unit, factor = PARMS_SI[field]
+        unit, factor, shift = PARMS_SI[field]
         name = EXPORTED_AS.get(field, field)
-        expected[name] = (unit, factor * parms_map[field])
-        expected[name + "Err"] = (unit, factor * parms_err_map[field])
-    assert expected.keys() <= exported.keys()
-    for name, (unit, want) in expected.items():
-        units, array = exported[name]
-        assert units == unit, name
-        np.testing.assert_allclose(array, want, rtol=1e-6, atol=0, err_msg=name)
+        out[name] = ("parms", field, unit, factor, shift)
+        out[name + "Err"] = ("parms_err", field, unit, factor, 0.0)
+    return out
+
+
+# exported map: the first FIT_FIX_CASES case that exports it
+MAP_CASES = {}
+for _case, (_, _parms) in FIT_FIX_CASES.items():
+    for _name in expected_maps(_parms):
+        MAP_CASES.setdefault(_name, _case)
+
+
+@pytest.mark.parametrize("name", MAP_CASES)
+def test_export_maps_writes_a_map_in_its_declared_si_unit(name):
+    fit_fix, parms = FIT_FIX_CASES[MAP_CASES[name]]
+    group, field, unit, factor, shift = expected_maps(parms)[name]
+    fit_maps = {
+        "properties": filled(calculation.PROPERTY_DTYPE, 1.0),
+        "parms": filled(calculation.PARMS_DTYPE, 2.0),
+        "parms_err": filled(calculation.PARMS_DTYPE, 3.0),
+    }
+    maps = _export.export_maps(*fit_maps.values(), fit_fix, True)
+    exported = {n: (units, array) for n, units, array in maps}
+    assert name in exported
+    units, array = exported[name]
+    assert units == unit
+    want = factor * fit_maps[group][field] + shift
+    np.testing.assert_allclose(array, want, rtol=1e-6, atol=0)
 
 
 def fit_demo(fit_fix, **options):
@@ -126,13 +160,23 @@ def test_export_maps_of_a_known_curve_are_its_model_parameters_in_si():
     np.testing.assert_allclose(with_radius_free["radius"], 2e-8, rtol=0.1, atol=0)
 
 
-def test_cli_writes_a_fitted_radius_and_its_error_in_metres(tmp_path):
+# field: (fit_fix, CLI arguments); lj_scale is free at the defaults
+CLI_CASES = {
+    "radius": (FREE_RADIUS, ("--fit-radius",)),
+    "lj_scale": (FitFix.DEFAULTS, ("--fit-lj-scale",)),
+}
+
+
+@pytest.mark.parametrize("field", CLI_CASES)
+def test_cli_writes_a_free_parameter_and_its_error_in_its_si_unit(tmp_path, field):
+    fit_fix, args = CLI_CASES[field]
+    _, factor, shift = PARMS_SI[field]
     (tmp_path / "in").mkdir()
     synthetic = build_nid(tmp_path / "in")
     with open_fvfile(synthetic.path) as fvfile:
         volume = fvfile.volumes[0]
-        want = {name: np.full(volume.shape, np.nan) for name in ("parms", "parms_err")}
-        options = {**t2.DEFAULT_OPTIONS, "fit_fix": FREE_RADIUS}
+        fitted = {name: np.full(volume.shape, np.nan) for name in ("parms", "err")}
+        options = {**t2.DEFAULT_OPTIONS, "fit_fix": fit_fix}
         for rc_curve in volume.iter_curves():
             rc = rc_curve[0]
             with np.errstate(all="ignore"):
@@ -143,16 +187,20 @@ def test_cli_writes_a_fitted_radius_and_its_error_in_metres(tmp_path):
                     **options,
                 )
             if parms is not None:
-                want["parms"][rc] = parms["radius"].item()
-                want["parms_err"][rc] = parms_err["radius"].item()
-    assert np.isfinite(want["parms"]).any(), "no curve fits"
+                fitted["parms"][rc] = parms[field].item()
+                fitted["err"][rc] = parms_err[field].item()
+    assert np.isfinite(fitted["parms"]).any(), "no curve fits"
+    want = {
+        field: factor * fitted["parms"] + shift,
+        field + "Err": factor * fitted["err"],
+    }
     out = tmp_path / "out"
-    result = invoke_cli(synthetic.path, out, ["--stop-on-error", "--fit-radius"])
+    result = invoke_cli(synthetic.path, out, ["--stop-on-error", *args])
     assert result.exit_code == 0, result.output
     stem = synthetic.path.stem
-    for name, group in (("radius", "parms"), ("radiusErr", "parms_err")):
+    for name, expected in want.items():
         # the CLI exports rows reversed relative to the reader
         actual = np.load(out / export_name(stem, name)).astype(np.float64)[::-1]
         np.testing.assert_allclose(
-            actual, 1e-9 * want[group], rtol=1e-4, atol=0, equal_nan=True, err_msg=name
+            actual, expected, rtol=1e-4, atol=0, equal_nan=True, err_msg=name
         )

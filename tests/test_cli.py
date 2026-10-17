@@ -39,6 +39,7 @@
 # run keeps the progress bars.
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -144,7 +145,10 @@ DEFAULT_MAPS = (
 
 # Units as written: the SI unit PROPERTY_UNITS_DICT or PARMS_UNITS_DICT declares, so
 # lengths in m (nm in the fit), forces in N (nN) and IndentationModulus in Pa (M is
-# GPa). SumSquaredError and lj_scale keep factor 1 pending a decision on their units.
+# GPa). SumSquaredError keeps factor 1: the fit's implicit weight of 1 is read as
+# 1/(1 nm)², so its chisq is already a dimensionless weighted chi-squared. lj_scale,
+# ln(L / 1 nm) in the fit, is exported as ln(L / 1 m), a shift (EXPORT_SHIFTS) and no
+# factor; its Err is unshifted.
 # exported map: (t2_goldens.json group, field, factor from fit units)
 EXPORT_FIELDS = {
     "Deflection": ("properties", "Deflection", 1e-9),
@@ -165,6 +169,15 @@ EXPORT_FIELDS = {
     "force_shiftErr": ("parms_err", "force_shift", 1e-9),
     "lj_scaleErr": ("parms_err", "lj_scale", 1.0),
 }
+# exported map: shift added after the factor
+EXPORT_SHIFTS = {"lj_scale": math.log(1e-9)}
+
+
+def export_value(name, fit_value):
+    """fit_value, in the fit units of map name's field, as that map exports it."""
+    _, _, factor = EXPORT_FIELDS[name]
+    return factor * fit_value + EXPORT_SHIFTS.get(name, 0.0)
+
 
 # Tolerances per exported map, (rtol, atol) in exported units: the fit-unit tolerances
 # of tests/test_goldens.py with atol scaled by the export factor, except Indentation and
@@ -510,8 +523,8 @@ def test_cli_nid_maps_are_t2_maps_scaled_and_row_flipped(run_cli, name, t2_mode)
     """Exports are the calculation-layer maps times a units factor, rows reversed."""
     t2_maps = load_platform_goldens("t2_goldens.json")["nid"][t2_mode]["maps"]
     maps = run_maps(run_cli(name), name)
-    for m, (group, field, factor) in EXPORT_FIELDS.items():
-        want = factor * np.array(t2_maps[group][field], dtype=np.float64)[::-1]
+    for m, (group, field, _) in EXPORT_FIELDS.items():
+        want = export_value(m, np.array(t2_maps[group][field], dtype=np.float64)[::-1])
         rtol, atol = map_tolerance(m)
         np.testing.assert_array_equal(np.isnan(maps[m]), np.isnan(want), err_msg=m)
         np.testing.assert_allclose(maps[m], want, rtol=rtol, atol=atol, err_msg=m)
