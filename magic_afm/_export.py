@@ -53,7 +53,7 @@ def trace_suffix(volumes: Iterable[Volume], selected: Volume) -> str:
 def export_maps(
     property_map, parms_map, parms_err_map, fit_fix, k_sens
 ) -> list[tuple[str, str | None, np.ndarray]]:
-    """(name, units, array) for each map to export, in export units, unflipped."""
+    """(name, units, array) for each map to export, in SI units, unflipped."""
     out = []
     for names_units, map_, err_str in zip(
         [
@@ -64,11 +64,7 @@ def export_maps(
         [property_map, parms_map, parms_err_map],
         ["", "", "Err"],
     ):
-        for name in names_units:
-            units = names_units[name]
-            factor, shift = SI_FROM_FIT_UNITS[units]
-            if err_str:
-                shift = 0.0
+        for name, units in names_units.items():
             name2 = name
             # skip writing fittable params that are fixed
             if name.upper() in FitFix.__members__ and fit_fix & FitFix[name.upper()]:
@@ -83,6 +79,9 @@ def export_maps(
                 name2 = "AdhesionForce"
             if name == "SensIndMod_k" and not k_sens:
                 continue
+            factor, shift = SI_FROM_FIT_UNITS[units]
+            if err_str:
+                shift = 0.0
             array = map_[name].squeeze() * factor + shift
             out.append((name2 + err_str, units, array))
     return out
