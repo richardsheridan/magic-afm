@@ -126,7 +126,7 @@ CASES = {
 
 @cache
 def fitted_inputs(case, mode):
-    """(d, parms, split) of a fitted synthetic curve, parms as fit_force_curve returns them."""
+    """(d, parms, split) of a fitted synthetic curve, parms from fit_force_curve."""
     golden_case, tau = CASES[case]
     curve = t2.demo_curve(**t2.SYNTHETIC_CASES[golden_case])
     z, d, split, _ = t2.preprocess(((0, 0), curve), mode)

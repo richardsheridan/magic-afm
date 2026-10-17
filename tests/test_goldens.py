@@ -387,7 +387,7 @@ def test_jitted_synthetic_fit_matches_golden(goldens, jitted_fits, case, mode):
 
 @pytest.mark.filterwarnings("error::DeprecationWarning")
 @pytest.mark.parametrize("mode", MODES, ids=lambda m: m.name)
-def test_fitfun_raises_no_deprecation_warning(mode):
+def test_fit_force_curve_raises_no_deprecation_warning(mode):
     """One fit, with errors raised rather than turned into NaN, does not warn."""
     curve = demo_curve(**SYNTHETIC_CASES["demo_r0_c0"])
     z, d, split, _ = preprocess(((0, 0), curve), mode)

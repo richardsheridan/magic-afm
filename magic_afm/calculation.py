@@ -723,9 +723,8 @@ _powrat = _bigpow / _lilpow
 
 # algebraically solved LJ parameters such that the minimum value is at delta=1
 _prefactor = _powrat ** (1 / (_bigpow - _lilpow))
-_postfactor = 1 / (
-    _prefactor ** (-_bigpow) - _prefactor ** (-_lilpow)
-)  # such that lj(1)=1
+# such that lj(1)=1
+_postfactor = 1 / (_prefactor ** (-_bigpow) - _prefactor ** (-_lilpow))
 # delta of minimum slope
 _lj_limit_factor = ((_bigpow + 1) / (_lilpow + 1)) ** (1 / (_bigpow - _lilpow))
 

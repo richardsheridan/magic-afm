@@ -211,7 +211,7 @@ def test_arh5_force_map_iter_curves_yields_what_get_curve_returns(force_map):
 @pytest.mark.parametrize(
     "fit_mode", [FitMode.EXTEND, FitMode.RETRACT], ids=lambda m: m.name.lower()
 )
-def test_arh5_force_map_iter_curves_feed_process_force_curve(force_map, fit_mode):
+def test_arh5_force_map_iter_curves_feed_prepare_force_curve(force_map, fit_mode):
     """The CLI passes each yielded curve to prepare_force_curve; it takes one half."""
     expected = force_map.volumes[0]
     n_ext, n_ret = expected.ext_points.min(), expected.ret_points.min()
