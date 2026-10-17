@@ -218,8 +218,8 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
         return
 
     # Actually write out results to external world
-    tracestr = _export.trace_suffix((vol.name for vol in fvfile.volumes), v.name)
-    extret = _export.mode_tag(co["fit_mode"])
+    trace_suffix = _export.trace_suffix(fvfile.volumes, v)
+    mode_tag = _export.mode_tag(co["fit_mode"])
 
     if output_path is None:
         parent_path = filename.parent
@@ -247,8 +247,9 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
         property_map, parms_map, parms_err_map, co["fit_fix"], co["k_sens"]
     )
     for name, _, array in maps:
+        map_name = _export.map_name(mode_tag, name, trace_suffix)
         export_path = parent_path / _export.export_file_name(
-            root, extret, name, tracestr, "." + output_type
+            root, map_name, "." + output_type
         )
         if verbose:
             echo("Writing " + str(export_path))

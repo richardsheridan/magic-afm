@@ -751,9 +751,9 @@ class AsyncNavigationToolbar2Tk(NavigationToolbar2Tk):
             # to date, all afm images have been "flipped" on disk, which is
             # why they are displayed with "lower" origin, but on export users
             # have found this confusing, so we manually flip here
-            # TODO: solve this at the data reader level?
             image = self._get_image_by_name(image_name)[::-1]
-            exporter(root + "_" + image_name[4:] + ext, image)
+            map_name = image_name.removeprefix("Calc")
+            exporter(_export.export_file_name(root, map_name, ext), image)
 
         try:
             async with trio.open_nursery() as n:
@@ -1763,13 +1763,13 @@ class ForceVolumeController:
         # Actually write out results to external world
         fvfile = self.opened_fvol.fvfile
         volume = data_readers._select_volume(fvfile, options.trace)
-        trace = _export.trace_suffix((v.name for v in fvfile.volumes), volume.name)
-        extret = _export.mode_tag(options.fit_mode)
+        trace_suffix = _export.trace_suffix(fvfile.volumes, volume)
+        mode_tag = _export.mode_tag(options.fit_mode)
         maps = _export.export_maps(
             property_map, parms_map, parms_err_map, d["fit_fix"], options.k_sens
         )
         for name, units, image in maps:
-            newname = "Calc" + extret + name + trace
+            newname = "Calc" + _export.map_name(mode_tag, name, trace_suffix)
             self.opened_fvol.add_image(image_name=newname, units=units, image=image)
             if newname not in combobox_values:
                 combobox_values.append(newname)

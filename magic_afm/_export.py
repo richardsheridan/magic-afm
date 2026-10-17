@@ -20,6 +20,7 @@ import numpy as np
 
 from . import calculation
 from .calculation import FitFix, FitMode
+from .data_readers import Volume
 
 DIRECTIONS = frozenset({"Trace", "Retrace"})
 
@@ -32,9 +33,9 @@ def mode_tag(fit_mode) -> str:
     return "Both"
 
 
-def trace_suffix(volume_names: Iterable[str], selected: str) -> str:
+def trace_suffix(volumes: Iterable[Volume], selected: Volume) -> str:
     """The selected volume's name if the file holds both directions, else empty."""
-    return selected if DIRECTIONS <= set(volume_names) else ""
+    return selected.name if DIRECTIONS <= {v.name for v in volumes} else ""
 
 
 def export_maps(
@@ -74,9 +75,13 @@ def export_maps(
     return out
 
 
-def export_file_name(root: str, mode: str, name: str, suffix: str, ext: str) -> str:
-    """{root}_{mode}{name}{suffix}{ext}, ext including its dot."""
-    return f"{root}_{mode}{name}{suffix}{ext}"
+def map_name(mode: str, name: str, suffix: str) -> str:
+    return f"{mode}{name}{suffix}"
+
+
+def export_file_name(root: str, map_name: str, ext: str) -> str:
+    """{root}_{map_name}{ext}, ext including its dot."""
+    return f"{root}_{map_name}{ext}"
 
 
 def options_file_name(root: str) -> str:

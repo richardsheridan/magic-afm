@@ -16,9 +16,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # These tests pin the CLI's observable output (file names, array shapes and dtypes,
-# units, the options JSON, and values) so that the export code can move into a module
-# shared with the GUI without changing it. They are not a statement that today's output
-# is right: see the notes on units, trace and error handling below.
+# units, the options JSON, and values), which the CLI builds through the
+# magic_afm/_export.py it shares with the GUI; tests/test_export_names.py states the
+# naming rule. They are not a statement that today's output
+# is right: see the notes on units and error handling below.
 #
 # Options live in tests/goldens/t3_goldens.json and map values in
 # tests/goldens/<pixi platform>/t3_goldens.json, written by
