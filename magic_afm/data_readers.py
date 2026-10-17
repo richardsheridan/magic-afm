@@ -1440,7 +1440,11 @@ class NanoscopeImage:
         except KeyError:
             soft_scale_string = header["Scanner list"][0][soft_scale_name]
         soft_scale_fields = soft_scale_string.split()
-        exponent, units = _split_si_prefix(soft_scale_fields[2].split("/")[0])
+        # a unitless soft scale leaves the image in the hard scale's unit
+        soft_unit = (
+            soft_scale_fields[2] if len(soft_scale_fields) > 2 else value.split()[0]
+        )
+        exponent, units = _split_si_prefix(soft_unit.split("/")[0])
         soft_scale = float(soft_scale_fields[1]) / 10.0**-exponent
         unit_scale = hard_scale * soft_scale
         unit_offset = hard_offset * soft_scale
