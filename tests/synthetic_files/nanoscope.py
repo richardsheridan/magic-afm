@@ -24,9 +24,10 @@ in time order. The deflection lags the drive by ``Sync Distance`` samples of
 ``Sample Points`` per period, and each tap peaks that far into its record: at 68, 70 and
 75 of 256 points in the real captures at 0.5, 1 and 2 kHz, whose Sample Points times PFT
 Freq is always 512 kHz. So a record starts where the drive is nearest the surface, and
-the curve of a pixel, from the farthest point of the drive to the farthest, runs from
-the end of the record before its own into its own. The first pixel's curve starts before
-the first record; the expected curves are NaN where the file does not hold them. The
+the curve of a pixel, from the farthest point of the drive to the farthest, is its own
+record rotated, the samples before the tap wrapped from the end of that record. The
+records are not one signal running on from pixel to pixel: the first sample of a real
+record lies nearer the last of its own record than the last of the record before. The
 first sample in time of every real record, the last stored point of its first half, is
 INT16_MIN: a marker in place of a sample, so the expected curves are NaN there too. The
 z of a curve is a model, not data: the drive is a cosine of ``Peak Force Amplitude``
@@ -38,14 +39,13 @@ The layout, section order, keys and channel set follow a real capture (software
 whether ``Sample Points`` stays at 512 kHz over PFT Freq when a curve has other than 128
 + 128 points; on a grid that is not square, that the lines come first, that
 ``Scan Size`` is the fast axis and ``Aspect Ratio`` fast to slow (the builder's pixels
-are square); in what order the records were taken, beyond running on across neighbouring
-records, so the builder takes the stored order as time order and copies
-``Capture direction`` and ``Frame direction`` as found; what point of the tap the Height
-image gives; and the ``Sync Distance QNM`` key, which no real capture has but a newer
-force volume carries beside ``Sync Distance``, so that the builder writes it the same
-way and takes it as the lag. The skipped-point capture, whose ``force/line`` (16 0) is
-half the scan list's ``Samps/line`` (32) and whose force ``Data length`` is a quarter of
-a full capture's, is not built.
+are square); in what order the records were taken, so the builder takes the stored order
+as time order and copies ``Capture direction`` and ``Frame direction`` as found; what
+point of the tap the Height image gives; and the ``Sync Distance QNM`` key, which no
+real capture has but a newer force volume carries beside ``Sync Distance``, so that the
+builder writes it the same way and takes it as the lag. The skipped-point capture, whose
+``force/line`` (16 0) is half the scan list's ``Samps/line`` (32) and whose force
+``Data length`` is a quarter of a full capture's, is not built.
 
 A force volume stores z and deflection as force channels of their own, in the set and
 order of the real file: ``Deflection Error``, ``Peak Force Error``, ``Deflection Error``
@@ -245,8 +245,6 @@ def build_pfc(
     """
     rows, cols = shape
     n_curves = rows * cols
-    if n_curves < 2:
-        raise ValueError("a capture needs two pixels, one to precede the other", shape)
     npts = 2 * points
     rate_str = _g(rate)
     if sample_points is None:
@@ -273,22 +271,17 @@ def build_pfc(
         rng, counts, counts, z_far=-amplitude, ramp=2 * amplitude
     )
     curves = np.concatenate([dext, dret], axis=-1).reshape(n_curves, npts)
-    # Lay the curves end to end, each starting half a period before its tap peaks lag
-    # points into its own record. The tip taps on at the last pixel after the map, which
-    # fills the end of the last record.
-    first = points - lag_points  # where the first record starts in curve 0
-    stream = np.concatenate([curves, curves[-1:]]).ravel()
-    stored = stream[first : first + n_curves * npts]
+    # Each record is one period of its own pixel's tap: the curve rotated so that the
+    # record starts half a period before its tap peaks lag points into it.
+    first = points - lag_points  # where each record starts in its pixel's curve
+    stored = np.roll(curves, -first, axis=1)
     codes, decoded = _quantize(stored, float(v_per_lsb) * float(sens_str), np.int16)
     if extend_marker:
-        codes[::npts] = INT16_MIN
-        decoded[::npts] = np.nan
-    known = np.full_like(stream, np.nan)
-    known[first : first + n_curves * npts] = decoded
-    d = known[: n_curves * npts].reshape(rows, cols, npts)
-    records = codes.reshape(n_curves, npts)
+        codes[:, 0] = INT16_MIN
+        decoded[:, 0] = np.nan
+    d = np.roll(decoded, first, axis=1).reshape(rows, cols, npts)
     force_data = np.concatenate(
-        [records[:, :points][:, ::-1], records[:, points:]], axis=1
+        [codes[:, :points][:, ::-1], codes[:, points:]], axis=1
     ).astype("<i2")
 
     height_lsb = float(height_full) / 2**16 * float(z_sens_str)

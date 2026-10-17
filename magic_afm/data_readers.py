@@ -1551,24 +1551,22 @@ class _QNMDReader:
 
     def get_curve(self, r, c, sync_dist_int):
         i = np.ravel_multi_index((r, c), self.shape)
-        if i:
-            i -= 1  # due to applying sync_dist, the first pixel is OOB
         with memoryview(self.data):  # assert data is open, and hold it open
-            d = self.ints[i : i + 2]
-            extend_marker = d[0, 0, -1] == -32768
+            d = self.ints[i]
+            extend_marker = d[0, -1] == -32768
             d = d.astype("f4")
         d *= self.scale
-        # flip extend segments
-        d[:, 0, :] = d[:, 0, ::-1]
+        # flip extend segment
+        d[0, :] = d[0, ::-1]
         # remove extend segment marker
         if extend_marker:
-            d[:, 0, 0] = d[:, 0, 1]
+            d[0, 0] = d[0, 1]
         d = d.reshape(-1)
-        # "roll" across 2 indents (usually mostly consisting of the 2nd indent)
-        npts = len(d) // 2
+        # rotate the record so the tap lands at the split, wrapping its own end
+        npts = len(d)
         n_ext = npts // 2  # halves are equal, see shape in parse
         sync_dist = (sync_dist_int - n_ext) % npts  # according to Bruker via Bede
-        d = d[sync_dist : sync_dist + npts]
+        d = np.roll(d, -sync_dist)
         return d.reshape((2, -1))
 
 

@@ -23,12 +23,13 @@
 # curves and are not compared. Metadata parsed from decimal text match to double
 # rounding.
 
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
 import pytest
 from synthetic_files import open_fvfile
-from synthetic_files.nanoscope import INT32_MIN, build_pfc, build_spm
+from synthetic_files.nanoscope import INT16_MIN, INT32_MIN, build_pfc, build_spm
 
 PFC_RELPATH = "test_cases/PS_PCL_SAA/QNM/onekhz.000.pfc"
 SPM_RELPATH = "test_cases/A1_OCSOH-PMMA21k_300421.0_300425.spm"
@@ -57,9 +58,6 @@ LAGGED_CASES = [case for case in PFC_CASES if case != "square-64"]
 # Left out of the scan size test: "tall-128". The reader takes Scan Size as the longer
 # side, the builder as the fast axis; no real file says which.
 SCANSIZE_CASES = [case for case in PFC_CASES if case != "tall-128"]
-# Left out everywhere: the deflection of pixel (0, 0). The reader cuts each curve from
-# its own record and the one before, and for (0, 0) uses those of (0, 1), so
-# get_curve(0, 0) returns the deflection of (0, 1).
 # Left out everywhere: t_step. The reader divides the drive period by force/line, the
 # curves per line, not by the points per curve.
 
@@ -136,9 +134,7 @@ def test_pfc_get_curve_returns_the_known_curves(tmp_path, case):
     with open_fvfile(synthetic.path) as fvfile:
         volume = fvfile.volumes[0]
         for r, c in np.ndindex(expected.shape):
-            assert_same_curve(
-                volume.get_curve(r, c), expected.curve(r, c), (r, c) != (0, 0)
-            )
+            assert_same_curve(volume.get_curve(r, c), expected.curve(r, c))
 
 
 @pytest.mark.parametrize("case", LAGGED_CASES)
@@ -151,7 +147,7 @@ def test_pfc_iter_curves_goes_row_by_row(tmp_path, case):
         seen = []
         for (r, c), curve in volume.iter_curves():
             seen.append((r, c))
-            assert_same_curve(curve, expected.curve(r, c), (r, c) != (0, 0))
+            assert_same_curve(curve, expected.curve(r, c))
     assert seen == list(expected.order)
 
 
@@ -161,10 +157,67 @@ def test_pfc_get_all_curves_returns_every_curve(tmp_path, case):
     expected = synthetic.volumes[0]
     with open_fvfile(synthetic.path) as fvfile:
         z, d = fvfile.volumes[0].get_all_curves()
+    assert np.isfinite(z).all() and np.isfinite(d).all()
     assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
-    expected_d = np.stack([expected.dext, expected.dret], axis=2)
-    expected_d[0, 0] = np.nan  # left out, see above
-    assert_float32_close(d, expected_d)
+    assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+
+
+def pfc_records(path):
+    """Each pixel's deflection record as stored, and nm per LSB, without a reader.
+
+    The INT16_MIN marker of a record, the last stored point of its first half, is
+    left out, so a record holds 2 * points or 2 * points - 1 values.
+    """
+    data, sections = read_header(path)
+    keys = dict(sections)
+    scan_list, force = keys["Ciao scan list"], keys["Ciao force image list"]
+    rows, cols = int(scan_list["Lines"]), int(scan_list["Samps/line"])
+    points = int(force["Samps/line"].split()[0])
+    count = rows * cols * 2 * points
+    offset = int(force["Data offset"])
+    stored = np.frombuffer(data, "<i2", count, offset).reshape(rows * cols, 2 * points)
+    scale = force["@4:Z scale"]
+    v_per_lsb = float(scale[scale.find("(") + 1 :].split()[0])
+    nm_per_v = float(scan_list["@Sens. DeflSens"].split()[1])
+    records = []
+    for record in stored:
+        if record[points - 1] == INT16_MIN:
+            record = np.delete(record, points - 1)
+        records.append(record.astype(np.int64))
+    return records, v_per_lsb * nm_per_v
+
+
+def assert_curves_hold_their_own_records(d, path):
+    """Each curve holds every value of its own record, so none from another.
+
+    d is (rows, cols, 2, points) in nm; a curve point off the record, where the
+    marker was, may hold any value.
+    """
+    records, lsb = pfc_records(path)
+    rows, cols = d.shape[:2]
+    curves = np.asarray(d, dtype=np.float64).reshape(rows * cols, -1)
+    for i, (curve, record) in enumerate(zip(curves, records, strict=True)):
+        held = curve[~np.isnan(curve)]
+        assert len(held) >= len(record)
+        codes = np.rint(held / lsb).astype(np.int64)
+        missing = Counter(record.tolist()) - Counter(codes.tolist())
+        assert not missing, (np.unravel_index(i, (rows, cols)), missing)
+
+
+def test_pfc_builder_writes_each_pixel_in_its_own_record(pfc):
+    """The expected deflection of each pixel is its own stored record, rotated."""
+    expected = pfc.volumes[0]
+    d = np.stack([expected.dext, expected.dret], axis=2)
+    assert_curves_hold_their_own_records(d, pfc.path)
+
+
+@pytest.mark.parametrize("case", LAGGED_CASES)
+def test_pfc_deflection_comes_from_its_own_record_only(tmp_path, case):
+    synthetic = build_pfc_case(tmp_path, case)
+    with open_fvfile(synthetic.path) as fvfile:
+        _, d = fvfile.volumes[0].get_all_curves()
+    assert np.isfinite(d).all()
+    assert_curves_hold_their_own_records(d, synthetic.path)
 
 
 def test_pfc_height_image_round_trips(pfc):
@@ -461,6 +514,24 @@ def test_synthetic_pfc_has_the_structure_of_the_real_file(real_data_file, tmp_pa
         assert_keys_in_real_file(fvfile.headers, real_headers)
         for key in ("Sample Points", "PFT Freq"):
             assert fvfile.headers["Ciao scan list"][0][key] == scan_list[key]
+
+
+@pytest.mark.slow
+def test_real_pfc_first_pixel_has_its_own_deflection(real_data_file):
+    with open_fvfile(Path(real_data_file(PFC_RELPATH))) as fvfile:
+        volume = fvfile.volumes[0]
+        _, first = volume.get_curve(0, 0)
+        _, second = volume.get_curve(0, 1)
+    assert not np.array_equal(np.stack(first), np.stack(second))
+
+
+@pytest.mark.slow
+def test_real_pfc_deflection_comes_from_its_own_record_only(real_data_file):
+    path = Path(real_data_file(PFC_RELPATH))
+    with open_fvfile(path) as fvfile:
+        _, d = fvfile.volumes[0].get_all_curves()
+    assert np.isfinite(d).all()
+    assert_curves_hold_their_own_records(d, path)
 
 
 @pytest.mark.slow
