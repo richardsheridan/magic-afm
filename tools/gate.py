@@ -136,6 +136,42 @@ def written_since(start, tracked):
     return written
 
 
+def start_state(extra, missing):
+    """HEAD's tree, the tracked files, and the reasons known now not to stamp."""
+    reasons = []
+    if extra:
+        reasons.append(f"extra pytest arguments: {subprocess.list2cmdline(extra)}")
+    blocking = blocking_env_vars()
+    if blocking:
+        reasons.append(f"environment variables set: {', '.join(blocking)}")
+    if missing:
+        reasons.append(f"real data incomplete: {', '.join(missing)}")
+    try:
+        tree, dirty = tree_state()
+        tracked = [name for name in git("ls-files", "-z").split("\0") if name]
+    except (OSError, subprocess.CalledProcessError) as e:
+        tree, dirty, tracked = None, [f"cannot read git state: {e}"], []
+    reasons += [f"at start, {r}" for r in dirty]
+    return tree, tracked, reasons
+
+
+def end_reasons(start_tree, tracked, start):
+    """The reasons the run left the tree other than it found it."""
+    if start_tree is None:
+        return []
+    try:
+        end_tree, dirty = tree_state()
+    except (OSError, subprocess.CalledProcessError) as e:
+        end_tree, dirty = None, [f"cannot read git state: {e}"]
+    reasons = [f"at end, {r}" for r in dirty]
+    if end_tree != start_tree:
+        reasons.append("HEAD's tree changed during the run")
+    written = written_since(start, tracked)
+    if written:
+        reasons.append(f"tracked files written during the run: {', '.join(written)}")
+    return reasons
+
+
 def write_stamp(tree):
     common = Path(git("rev-parse", "--git-common-dir").strip())
     stamp = ROOT / common / STAMP_FILE
@@ -185,22 +221,9 @@ def main():
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / time.strftime("gate-%Y%m%d-%H%M%S.log")
     extra = sys.argv[1:]
-    no_stamp = []
-    if extra:
-        no_stamp.append(f"extra pytest arguments: {subprocess.list2cmdline(extra)}")
-    blocking = blocking_env_vars()
-    if blocking:
-        no_stamp.append(f"environment variables set: {', '.join(blocking)}")
     missing = missing_real_data()
-    if missing:
-        no_stamp.append(f"real data incomplete: {', '.join(missing)}")
     test_env = {} if missing else {"MAFM_REQUIRE_REAL_DATA": "1"}
-    try:
-        start_tree, reasons = tree_state()
-        tracked = git("ls-files", "-z").split("\0")
-    except (OSError, subprocess.CalledProcessError) as e:
-        start_tree, reasons, tracked = None, [f"cannot read git state: {e}"], []
-    no_stamp += [f"at start, {r}" for r in reasons]
+    start_tree, tracked, no_stamp = start_state(extra, missing)
     start = time.time()
     failed = []
     with open(log_path, "w", encoding="utf-8") as log:
@@ -227,19 +250,7 @@ def main():
         print(f"GATE FAILED: {', '.join(failed)}")
         return 1
     print("GATE PASSED")
-    if start_tree is not None:
-        try:
-            end_tree, reasons = tree_state()
-        except (OSError, subprocess.CalledProcessError) as e:
-            end_tree, reasons = None, [f"cannot read git state: {e}"]
-        no_stamp += [f"at end, {r}" for r in reasons]
-        if end_tree != start_tree:
-            no_stamp.append("HEAD's tree changed during the run")
-        written = written_since(start, [t for t in tracked if t])
-        if written:
-            no_stamp.append(
-                f"tracked files written during the run: {', '.join(written)}"
-            )
+    no_stamp += end_reasons(start_tree, tracked, start)
     if not no_stamp:
         try:
             write_stamp(start_tree)
