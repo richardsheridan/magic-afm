@@ -126,6 +126,11 @@ def _nan_curve(npts: int) -> np.ndarray:
     return x
 
 
+def _halves(z, d) -> "_Curve":
+    """((z_ext, z_ret), (d_ext, d_ret)) from z and d each holding two halves."""
+    return (z[0], z[1]), (d[0], d[1])
+
+
 ###############################################
 ############### Typing stuff ##################
 ###############################################
@@ -133,6 +138,7 @@ def _nan_curve(npts: int) -> np.ndarray:
 
 Index: TypeAlias = tuple[int, ...]
 ZDArrays: TypeAlias = Collection[np.ndarray]
+_Curve: TypeAlias = tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]
 _ChanMap: TypeAlias = dict[str, tuple[int, "_ARDFVchan"]]
 _StepInfo: TypeAlias = tuple[tuple[float, str], ...]
 
@@ -150,7 +156,7 @@ class Volume(Protocol):
     name: str
     shape: Index
 
-    def get_curve(self, r: int, c: int) -> ZDArrays:
+    def get_curve(self, r: int, c: int) -> _Curve:
         """Efficiently get a specific curve from disk."""
         ...
 
@@ -158,7 +164,7 @@ class Volume(Protocol):
         """Iterate over force curve indices in on-disk order"""
         ...
 
-    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+    def iter_curves(self) -> Iterable[tuple[Index, _Curve]]:
         """Iterate over curves lazily in on-disk order."""
         ...
 
@@ -370,25 +376,16 @@ class ARH5ForceMapVolume:
         # We could slice with "1:" if chanmap were constant but I'm not sure if it is
         self.defl_zsnsr_row_slice = [chanmap["Defl"], chanmap["ZSnsr"]]
 
-    def _shared_get_part(self, curve, s):
-        # Index into the data and grab the Defl and Zsnsr ext and ret arrays as one 2D array
-        defl_zsnsr = curve[self.defl_zsnsr_row_slice, :]  # XXX Read h5data
-
-        # we are happy to throw away data far from the surface to square up the data
-        # Also reverse axis zero so data is ordered zsnsr,defl like we did for FFM
-        return (
-            defl_zsnsr[::-1, (s - self.minext) : (s + self.minret)]
-            * _NANOMETER_UNIT_CONVERSION
-        )
-
     def get_curve(self, r, c):
         # Because of the nonuniform arrays, each indent gets its own dataset
         # indexed by 'row:column' e.g. '1:1'.
         curve = self.force_curves[f"{r}:{c}"]  # XXX Read h5data
         split = self.extlens[r, c]
-
-        z, d = self._shared_get_part(curve, split)
-        split = self.minext
+        end = self.extretlens[r, c]
+        # Index into the data and grab the Defl and Zsnsr ext and ret arrays as one 2D array
+        defl_zsnsr = curve[self.defl_zsnsr_row_slice, :end]  # XXX Read h5data
+        # reverse axis zero so data is ordered zsnsr,defl like we did for FFM
+        z, d = (defl_zsnsr[::-1] * _NANOMETER_UNIT_CONVERSION).astype(np.float32)
         return (z[:split], z[split:]), (d[:split], d[split:])
 
     def iter_indices(self) -> Iterable[Index]:
@@ -432,14 +429,14 @@ class ARH5FFMVolume:
     _dreader: np.ndarray
 
     def get_curve(self, r, c):
-        z = self._zreader[r, c].reshape((2, -1))
-        d = self._dreader[r, c].reshape((2, -1))
-        return z * _NANOMETER_UNIT_CONVERSION, d * _NANOMETER_UNIT_CONVERSION
+        z = self._zreader[r, c].reshape((2, -1)) * _NANOMETER_UNIT_CONVERSION
+        d = self._dreader[r, c].reshape((2, -1)) * _NANOMETER_UNIT_CONVERSION
+        return _halves(z.astype(np.float32), d.astype(np.float32))
 
     def iter_indices(self) -> Iterable[Index]:
         return np.ndindex(self.shape)
 
-    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+    def iter_curves(self) -> Iterable[tuple[Index, _Curve]]:
         for index in self.iter_indices():
             yield index, self.get_curve(*index)
 
@@ -942,7 +939,7 @@ class _ARDFFFMReader:
             x = self.array_view[r, c, self.channels]  # advanced indexing copies
         x = x.astype("f4", copy=False)
         x *= self.factors
-        return x.reshape((len(self.channels), 2, -1))
+        return _halves(*x.reshape((len(self.channels), 2, -1)))
 
     def iter_indices(self) -> Iterable[Index]:
         """Iterate over force curve indices in on-disk order"""
@@ -958,7 +955,7 @@ class _ARDFFFMReader:
             for point in points_iter:
                 yield line, point
 
-    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+    def iter_curves(self) -> Iterable[tuple[Index, _Curve]]:
         """Iterate over curves lazily in on-disk order."""
         # TODO: cleverly use np.nditer?
         for index in self.iter_indices():
@@ -1026,7 +1023,7 @@ class _ARDFForceMapReader:
             yield _ARDFVdata.unpack(vdat_header)
             pointer = vdat_header.offset + vdat_header.size
 
-    def get_curve(self, r: int, c: int) -> ZDArrays:
+    def get_curve(self, r: int, c: int) -> _Curve:
         """Efficiently get a specific curve from disk."""
         if not (0 <= r < self.lines and 0 <= c < self.points):
             raise ValueError("Invalid index:", (self.lines, self.points), (r, c))
@@ -1041,7 +1038,7 @@ class _ARDFForceMapReader:
                 sl = np.s_[:]
             i = bisect_left(self.vtoc.lines[sl], r)
             if i >= len(self.vtoc.lines) or r != int(self.vtoc.lines[sl][i]):
-                return self.nancurve
+                return _halves(*self.nancurve)
             # read entire line of the vtoc
             for vset in self.traverse_vsets(int(self.vtoc.pointers[sl][i])):
                 if vset.line != r:
@@ -1052,7 +1049,7 @@ class _ARDFForceMapReader:
             vset = self._seen_vsets[index]
         except KeyError:
             # index was missing from the line, probably due to "Stop"
-            return self.nancurve
+            return _halves(*self.nancurve)
 
         zxr, dxr = self.nancurve
         for vdat in self.traverse_vdats(vset.offset + vset.size):
@@ -1064,7 +1061,7 @@ class _ARDFForceMapReader:
             elif vdat.channel == self.channels["Defl"][0]:
                 d = vdat.get_ndarray(self.dfactor)
                 dxr = d[:ret].reshape(2, ext)
-        return zxr, dxr
+        return _halves(zxr, dxr)
 
     def iter_indices(self) -> Iterable[Index]:
         """Iterate over force curve indices in on-disk order"""
@@ -1073,7 +1070,7 @@ class _ARDFForceMapReader:
                 continue
             yield vset.line, vset.point
 
-    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+    def iter_curves(self) -> Iterable[tuple[Index, _Curve]]:
         """Iterate over curves lazily in on-disk order."""
         zname = self.zname
         for vset in self.traverse_vsets(self.vtoc.pointers[0]):
@@ -1089,7 +1086,7 @@ class _ARDFForceMapReader:
                 elif vdat.channel == self.channels["Defl"][0]:
                     d = vdat.get_ndarray(self.dfactor)
                     dxr = d[:ret].reshape(2, ext)
-            yield (vset.line, vset.point), (zxr, dxr)
+            yield (vset.line, vset.point), _halves(zxr, dxr)
 
     def get_all_curves(self) -> ZDArrays:
         """Eagerly load all curves into memory."""
@@ -1232,7 +1229,7 @@ class ARDFVolume:
             mask[rc] = True
         return mask
 
-    def get_curve(self, r: int, c: int) -> ZDArrays:
+    def get_curve(self, r: int, c: int) -> _Curve:
         """Efficiently get a specific curve from disk."""
         return self._reader.get_curve(r, c)
 
@@ -1240,7 +1237,7 @@ class ARDFVolume:
         """Iterate over force curve indices in on-disk order"""
         return self._reader.iter_indices()
 
-    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+    def iter_curves(self) -> Iterable[tuple[Index, _Curve]]:
         """Iterate over curves lazily in on-disk order."""
         return self._reader.iter_curves()
 
@@ -1616,14 +1613,15 @@ class NanoscopeVolume:
             d_reader,
         )
 
-    def get_curve(self, r: int, c: int) -> ZDArrays:
+    def get_curve(self, r: int, c: int) -> _Curve:
         """Efficiently get a specific curve from disk."""
         if self.sync_dist is None:
-            return self._zreader.get_curve(r, c), self._dreader.get_curve(r, c)
+            z, d = self._zreader.get_curve(r, c), self._dreader.get_curve(r, c)
+            return _halves(z, d)
         else:
             sync_dist_int = int(self.sync_dist)
             sync_dist_frac = self.sync_dist - sync_dist_int
-            return (
+            return _halves(
                 self._zreader.get_curve(r, c, sync_dist_frac),
                 self._dreader.get_curve(r, c, sync_dist_int),
             )
@@ -1633,7 +1631,7 @@ class NanoscopeVolume:
         # TODO: ensure on-disk order
         return np.ndindex(self.shape)
 
-    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+    def iter_curves(self) -> Iterable[tuple[Index, _Curve]]:
         """Iterate over curves lazily in on-disk order."""
         for index in self.iter_indices():
             yield index, self.get_curve(*index)
@@ -2109,29 +2107,26 @@ class NIDVolume:
         # rows are zero filled past LineDim{n}Points
         return int(self._zfwd.line_points[line]), int(self._zbwd.line_points[line])
 
-    def _get_line_curve(self, line: int, n: int | None = None) -> ZDArrays:
+    def _get_line_curve(self, line: int, n: int | None = None) -> _Curve:
         nf, nb = self._line_npts(line)
-        if n is None:
-            n = min(nf, nb)
-        zext = self._zfwd.get_line(line)[nf - n : nf]
-        dext = self._dfwd.get_line(line)[nf - n : nf]
+        ne, nr = (nf, nb) if n is None else (n, n)
+        zf, zb = self._zfactors[:, 0]
+        df, db = self._dfactors[:, 0]
+        zext = self._zfwd.get_line(line)[nf - ne : nf] * zf
+        dext = self._dfwd.get_line(line)[nf - ne : nf] * df
         # backward rows are stored far-to-near
-        zret = self._zbwd.get_line(line)[nb - n : nb][::-1]
-        dret = self._dbwd.get_line(line)[nb - n : nb][::-1]
-        z = np.stack((zext, zret))
-        d = np.stack((dext, dret))
-        z *= self._zfactors
-        d *= self._dfactors
-        return z, d
+        zret = self._zbwd.get_line(line)[nb - nr : nb][::-1] * zb
+        dret = self._dbwd.get_line(line)[nb - nr : nb][::-1] * db
+        return (zext, zret), (dext, dret)
 
-    def get_curve(self, r: int, c: int) -> ZDArrays:
+    def get_curve(self, r: int, c: int) -> _Curve:
         """Efficiently get a specific curve from disk."""
         ny, nx = self.shape
         if not (0 <= r < ny and 0 <= c < nx):
             raise ValueError("Invalid index:", self.shape, (r, c))
         line = _nid_map_rc_to_line(r, c, nx)
         if line >= self.n_lines:
-            return self.nancurve
+            return _halves(*self.nancurve)
         return self._get_line_curve(line)
 
     def iter_indices(self) -> Iterable[Index]:
@@ -2140,7 +2135,7 @@ class NIDVolume:
         for line in range(self.n_lines):
             yield _nid_map_line_to_rc(line, nx)
 
-    def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
+    def iter_curves(self) -> Iterable[tuple[Index, _Curve]]:
         """Iterate over curves lazily in on-disk order."""
         nx = self.shape[1]
         for line in range(self.n_lines):
