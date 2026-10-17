@@ -179,17 +179,14 @@ def test_arh5_force_map_indices_cover_the_grid_once(force_map):
     assert sorted(indices) == list(np.ndindex(force_map.volumes[0].shape))
 
 
-def test_arh5_force_map_get_curve_cuts_to_the_shortest_halves(force_map):
+def test_arh5_force_map_get_curve_returns_each_half_as_stored(force_map):
     expected = force_map.volumes[0]
-    n_ext, n_ret = expected.ext_points.min(), expected.ret_points.min()
     rows, cols = expected.shape
     with open_fvfile(force_map.path) as fvfile:
         volume = fvfile.volumes[0]
         for r in range(rows):
             for c in range(cols):
-                assert_same_curve(
-                    volume.get_curve(r, c), expected.curve(r, c, n_ext, n_ret)
-                )
+                assert_same_curve(volume.get_curve(r, c), expected.curve(r, c))
 
 
 def test_arh5_force_map_iter_curves_yields_what_get_curve_returns(force_map):
@@ -214,14 +211,13 @@ def test_arh5_force_map_iter_curves_yields_what_get_curve_returns(force_map):
 def test_arh5_force_map_iter_curves_feed_prepare_force_curve(force_map, fit_mode):
     """The CLI passes each yielded curve to prepare_force_curve; it takes one half."""
     expected = force_map.volumes[0]
-    n_ext, n_ret = expected.ext_points.min(), expected.ret_points.min()
     half = 0 if fit_mode == FitMode.EXTEND else 1
     with open_fvfile(force_map.path) as fvfile:
         for rc, curve in fvfile.volumes[0].iter_curves():
             z, d, split, out_rc = prepare_force_curve((rc, curve), fit_mode, 1.0)
             assert out_rc == rc
             assert split is None
-            (ezext, ezret), (edext, edret) = expected.curve(*rc, n_ext, n_ret)
+            (ezext, ezret), (edext, edret) = expected.curve(*rc)
             assert_float32_close(z, (ezext, ezret)[half])
             assert_float32_close(d, (edext, edret)[half])
 
