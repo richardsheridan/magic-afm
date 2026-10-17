@@ -132,7 +132,7 @@ def fitted_inputs(case, mode):
     z, d, split, _ = t2.preprocess(((0, 0), curve), mode)
     with np.errstate(all="ignore"):
         parms, *_ = calculation.fit_force_curve(
-            z, d, k=t2.DEMO_K, fit_mode=mode, split=split, **t2.DEFAULT_OPTIONS
+            z, d, k=t2.DEMO_K, fit_mode=mode, split=split, **t2.FIT_OPTIONS
         )
     if tau is not None:
         parms = parms.copy()
@@ -296,3 +296,9 @@ def test_map_worker_properties_come_from_the_split_functions(case, mode):
             atol=0,
             err_msg=f"{case} {mode.name} {name}",
         )
+
+
+def test_max_load_quantities_in_both_mode_requires_split():
+    d, parms, _ = fitted_inputs("demo_r0_c0", FitMode.BOTH)
+    with pytest.raises(ValueError, match="split"):
+        calculation.max_load_quantities(d, parms, t2.DEMO_K, FitMode.BOTH)

@@ -62,6 +62,7 @@ __all__ = [
 ]
 
 import enum
+import inspect
 import traceback
 
 import numpy as np
@@ -1030,12 +1031,14 @@ def fit_force_curve(
     li_amp,
     fit_mode,
     fit_fix,
+    split=None,
     cancel_poller=bool,
     p0=None,
     nan_on_error=False,
     verbose_nans=False,
-    **kwargs,
 ):
+    if fit_mode == FitMode.BOTH and split is None:
+        raise ValueError("fit_mode BOTH requires split")
     delta = z - d
     force = d * k
     d0 = d
@@ -1080,14 +1083,14 @@ def fit_force_curve(
     p0 = np.clip(p0, *bounds)
 
     assert fit_mode
-    split = None
     if fit_mode == FitMode.EXTEND:
         red_curve = red_extend
+        split = None
     elif fit_mode == FitMode.RETRACT:
         red_curve = red_retract
+        split = None
     elif fit_mode == FitMode.BOTH:
         red_curve = red_both
-        split = kwargs["split"]
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
@@ -1200,6 +1203,8 @@ def max_load_quantities(d, params, k, fit_mode, split=None):
     """Calculate deflection, indentation and contact radius at maximum load."""
 
     assert fit_mode
+    if fit_mode == FitMode.BOTH and split is None:
+        raise ValueError("fit_mode BOTH requires split")
     force = d * k
     n_pts_max = len(force) // 25
     if fit_mode == FitMode.EXTEND:
@@ -1233,8 +1238,21 @@ def perturb_k(d, k, epsilon=1e-3):
     return d_new, k_new
 
 
+_FIT_FORCE_CURVE_PARAMETERS = frozenset(inspect.signature(fit_force_curve).parameters)
+
+
+def _fit_arguments(options):
+    """The items of options that fit_force_curve takes as parameters."""
+    return {
+        name: value
+        for name, value in options.items()
+        if name in _FIT_FORCE_CURVE_PARAMETERS
+    }
+
+
 def fit_curve_properties(z_d_s_rc, k_sens=True, **kwargs):
     z, d, split, rc = z_d_s_rc
+    kwargs = _fit_arguments(kwargs)
     kwargs["split"] = split
     parms, parms_err, sse, _ = fit_force_curve(z, d, nan_on_error=True, **kwargs)
     if np.any(np.isnan(parms.item())):
