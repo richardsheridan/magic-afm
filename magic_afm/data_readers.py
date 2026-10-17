@@ -199,6 +199,21 @@ class FileFormatError(ValueError):
     """A file is malformed or uses a variant this module cannot read."""
 
 
+_DIRECTION_NAMES = {0: "Retrace", 1: "Trace"}
+
+
+def _select_volume(fvfile: FVFile, trace: int | None) -> Volume:
+    """The volume named for trace, else the first if trace or directions are absent."""
+    names = [v.name for v in fvfile.volumes]
+    directions = [n for n in names if n in _DIRECTION_NAMES.values()]
+    if trace is None or not directions:
+        return fvfile.volumes[0]
+    wanted = _DIRECTION_NAMES[int(trace)]
+    if wanted not in names:
+        raise ValueError(f"Requested {wanted} but the file holds only {directions}")
+    return fvfile.volumes[names.index(wanted)]
+
+
 def _check_force_bpp(length, ncurves, npts, header) -> int:
     """Bytes per point of a force section that holds ncurves curves of npts points."""
     bpp, rem = divmod(length, ncurves * npts)
@@ -447,21 +462,6 @@ class ARH5FFMVolume:
         return np.stack((z, d))
 
 
-_DIRECTION_NAMES = {0: "Retrace", 1: "Trace"}
-
-
-def _select_volume(fvfile: FVFile, trace: int | None) -> Volume:
-    """The volume named for trace, else the first if trace or directions are absent."""
-    names = [v.name for v in fvfile.volumes]
-    directions = [n for n in names if n in _DIRECTION_NAMES.values()]
-    if trace is None or not directions:
-        return fvfile.volumes[0]
-    wanted = _DIRECTION_NAMES[int(trace)]
-    if wanted not in names:
-        raise ValueError(f"Requested {wanted} but the file holds only {directions}")
-    return fvfile.volumes[names.index(wanted)]
-
-
 @frozen
 class ARH5File:
     headers: dict[str, Any] = field(repr=lambda x: f"<dict with {len(x)} entries>")
@@ -494,26 +494,19 @@ class ARH5File:
         volumes = []
         if "FFM" in h5data:
             # self.scandown = bool(self.notes["ScanDown"])
-            # FastMapCapture: 1 trace, 2 retrace, 3 both, stored in groups 0, 1
+            # FastMapCapture: 1 trace (a guess), 2 retrace, 3 both. No note or group
+            # attribute says which group is which, so assume FFM/0 and FFM/1 follow
+            # capture order, trace first.
             capture = int(notes.get("FastMapCapture", 3))
             names = {1: ["Trace"], 2: ["Retrace"]}.get(capture, ["Trace", "Retrace"])
-            for group, name in zip("01", names):
-                if group in h5data["FFM"]:
-                    volumes.append(
-                        ARH5FFMVolume(
-                            name,
-                            h5data["FFM"][group]["Raw"].shape[:2],
-                            h5data["FFM"][group]["Raw"],
-                            h5data["FFM"][group]["Defl"],
-                        )
-                    )
-            if "Raw" in h5data["FFM"]:
+            ffm = h5data["FFM"]
+            groups = [(ffm[g], name) for g, name in zip("01", names) if g in ffm]
+            if "Raw" in ffm:
+                groups.append((ffm, names[0]))
+            for group, name in groups:
                 volumes.append(
                     ARH5FFMVolume(
-                        names[0],
-                        h5data["FFM"]["Raw"].shape[:2],
-                        h5data["FFM"]["Raw"],
-                        h5data["FFM"]["Defl"],
+                        name, group["Raw"].shape[:2], group["Raw"], group["Defl"]
                     )
                 )
             npts = volumes[0]._zreader.shape[-1]

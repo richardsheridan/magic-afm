@@ -35,6 +35,7 @@ IMPLAUSIBLE_M = 1e4
 
 
 class TraceChoice(enum.IntEnum):
+    # selects the volume of that name, see data_readers._select_volume
     RETRACE = 0
     TRACE = 1
     # BOTH = 2
