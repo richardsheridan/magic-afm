@@ -2344,38 +2344,18 @@ def calculate_force_data(
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
     cancel_poller()
-    optionsdict = calculation._fit_arguments(asdict(options))
-    parms, parms_err, sse, d_fit = calculation.fit_force_curve(
+    parms, parms_err, sse, d_fit, quantities = calculation._fit_properties(
         z,
         d,
-        cancel_poller=cancel_poller,
-        split=split,
+        split,
+        calculation._fit_arguments(asdict(options)),
+        options.k_sens,
         nan_on_error=False,
-        **optionsdict,
+        cancel_poller=cancel_poller,
     )
     f_fit = d_fit * options.k
-    cancel_poller()
-
-    eps = 1e-3
-    d_new, k_new = calculation.perturb_k(d, options.k, eps)
-    optionsdict.pop("k")
-    parms_perturb = calculation.fit_force_curve(
-        z,
-        d_new,
-        k_new,
-        cancel_poller=cancel_poller,
-        split=split,
-        p0=parms,
-        nan_on_error=False,
-        **optionsdict,
-    )[0]
-
-    sens = (parms_perturb["M"] - parms["M"]) / parms["M"] / eps
-    deflection, indentation, a_c = calculation.max_load_quantities(
-        d, parms, options.k, options.fit_mode, split=split
-    )
+    deflection, indentation, a_c, z_true_surface, sens = quantities
     mindelta = calculation.pull_off_delta(parms, options.k)
-    z_true_surface = calculation.true_surface_z(parms, options.k)
     return ForceCurveData(
         zxr=zxr,
         dxr=dxr,
