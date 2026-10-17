@@ -27,7 +27,12 @@ from click.testing import CliRunner
 from synthetic_files.nanoscope import build_pfc
 
 from magic_afm import calculation
-from magic_afm._options import TraceChoice, dump_options, load_options
+from magic_afm._options import (
+    OPTIONS_JSON_SCHEMA,
+    TraceChoice,
+    dump_options,
+    load_options,
+)
 from magic_afm.calculation import FitFix, FitMode
 from magic_afm.cli._impl import main
 
@@ -259,6 +264,14 @@ def test_dump_options_writes_schema_version_1_and_resample_npts():
     written = json.loads(dump_options(full_options(resample_npts=64)))
     assert written["schema_version"] == 1
     assert written["resample_npts"] == 64
+
+
+def test_schema_version_is_written_first_and_not_loaded_as_an_option():
+    text = dump_options(full_options())
+    assert list(json.loads(text)) == ["schema_version", *OPTIONS_JSON_SCHEMA]
+    loaded = load_options(io.StringIO(text))
+    assert "schema_version" not in loaded
+    assert loaded.keys() == OPTIONS_JSON_SCHEMA.keys()
 
 
 @pytest.mark.parametrize("trace", [None, TraceChoice.TRACE])

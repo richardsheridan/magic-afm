@@ -410,7 +410,7 @@ def test_cli_options_json_matches_golden(run_cli, goldens, name):
     run = run_cli(name)
     text = (run.out / options_name(stem, mode=mode, trace=trace)).read_text()
     options = json.loads(text)
-    assert list(options) == list(OPTIONS_JSON_SCHEMA)
+    assert list(options) == ["schema_version", *OPTIONS_JSON_SCHEMA]
     assert options == goldens["options"][name]
     with (run.out / options_name(stem, mode=mode, trace=trace)).open() as f:
         assert load_options(f).keys() == OPTIONS_JSON_SCHEMA.keys()
