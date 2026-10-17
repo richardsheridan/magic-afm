@@ -174,6 +174,7 @@ def test_pfc_height_image_round_trips(pfc):
             assert image.shape == pfc.images[name].shape
             # the reader gives maps in m
             assert pfc.image_units[name] == "nm"
+            assert image.units == "m"
             assert_float32_close(image.get_image(), pfc.images[name] * 1e-9)
 
 
@@ -234,6 +235,7 @@ def test_spm_height_sensor_image_round_trips(spm):
             assert image.shape == spm.images[name].shape
             # the reader gives maps in m
             assert spm.image_units[name] == "nm"
+            assert image.units == "m"
             assert_float32_close(image.get_image(), spm.images[name] * 1e-9)
 
 

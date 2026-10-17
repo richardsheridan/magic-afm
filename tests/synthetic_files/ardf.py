@@ -118,6 +118,14 @@ CHANNELS = (("Raw", "m"), ("Defl", "m"), ("Drive", "m"))
 # the lengths a channel can be written in, in m
 LENGTH_UNITS = {"m": 1.0, "nm": 1e-9}
 MAP_NAMES = ("Height", "ZSensor", "Adhesion", "Force", "YoungsJKR")
+# what each map holds, whatever unit the file's IDEF gives it
+MAP_UNITS = {
+    "Height": "m",
+    "ZSensor": "m",
+    "Adhesion": "N",
+    "Force": "N",
+    "YoungsJKR": "Pa",
+}
 # FastMapCapture: which scan directions a fast force map kept, one volume each
 CAPTURES = {"trace": ("Trace",), "retrace": ("Retrace",), "both": ("Trace", "Retrace")}
 CAPTURE_CODES = {"trace": 1, "retrace": 2, "both": 3}
@@ -466,6 +474,8 @@ def build_ardf(
         defl_sens=float(invols_str) * 1e9,
         t_step=t_step,
         scansize=(float(fast_str) * 1e9, float(slow_str) * 1e9),
-        image_units=dict.fromkeys(images, "m"),
+        image_units={
+            name + d: MAP_UNITS[name] for name in MAP_NAMES for d in directions
+        },
         units=units,
     )
