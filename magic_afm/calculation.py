@@ -1289,21 +1289,28 @@ def fit_curve_properties(z_d_s_rc, k_sens=True, **kwargs):
     return rc, properties, parms, parms_err
 
 
+def _resample_halves(zxr, dxr, npts=RESAMPLE_NPTS):
+    """Resample both halves as one curve to npts, splitting at the scaled turnaround."""
+    n_ext = len(zxr[0])
+    total = n_ext + len(zxr[1])
+    zd = np.stack([np.concatenate(zxr), np.concatenate(dxr)])
+    zd = resample_wrapper(zd, npts, True)
+    split = round(n_ext * npts / total)
+    return (zd[0, :split], zd[0, split:]), (zd[1, :split], zd[1, split:])
+
+
 def prepare_force_curve(x, fit_mode, s_ratio):
-    rc, (zxr_and_dxr) = x
-    npts = sum(map(len, zxr_and_dxr[0]))
+    rc, (zxr, dxr) = x
+    npts = sum(map(len, zxr))
     if npts > RESAMPLE_NPTS:
-        zxr_and_dxr = np.reshape(zxr_and_dxr, (2, -1))
-        zxr_and_dxr = resample_wrapper(zxr_and_dxr, RESAMPLE_NPTS, True)
-        zxr_and_dxr = zxr_and_dxr.reshape(2, 2, -1)
-    zxr, dxr = zxr_and_dxr
+        zxr, dxr = _resample_halves(zxr, dxr)
 
     if fit_mode == FitMode.EXTEND:
         z, d, split = zxr[0], dxr[0], None
     elif fit_mode == FitMode.RETRACT:
         z, d, split = zxr[1], dxr[1], None
     elif fit_mode == FitMode.BOTH:
-        (z, d), split = np.reshape(zxr_and_dxr, (2, -1)), len(zxr_and_dxr[0][0])
+        z, d, split = np.concatenate(zxr), np.concatenate(dxr), len(zxr[0])
     else:
         raise ValueError("Unknown fit_mode: ", fit_mode)
     d *= s_ratio
