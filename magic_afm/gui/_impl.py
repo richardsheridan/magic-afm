@@ -2351,11 +2351,8 @@ def calculate_force_data(
     t_step *= 1000
     rnpts = calculation.RESAMPLE_NPTS
     if npts > rnpts:
-        zxr_and_dxr = np.reshape((zxr, dxr), (2, -1))
-        zxr_and_dxr = calculation.resample_wrapper(zxr_and_dxr, rnpts, True)
-        assert zxr_and_dxr.shape[-1] == rnpts
+        zxr, dxr = calculation._resample_halves(zxr, dxr, rnpts)
         cancel_poller()
-        zxr, dxr = zxr_and_dxr.reshape(2, 2, -1)
         t_step *= npts / rnpts
         npts = rnpts
     # Transform data to model units
