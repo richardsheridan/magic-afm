@@ -164,7 +164,7 @@ def test_nid_stopped_map_yields_exactly_the_acquired_curves(stopped):
 
 
 def test_nid_stopped_map_get_curve_off_the_map_is_nan_of_the_row_length(stopped):
-    # both halves come back cut to the shorter of the forward and backward rows
+    # both NaN halves are as long as the shorter of the forward and backward rows
     synthetic, points = stopped
     expected = synthetic.volumes[0]
     with open_fvfile(synthetic.path) as fvfile:
