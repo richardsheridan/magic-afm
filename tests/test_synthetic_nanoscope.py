@@ -29,7 +29,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 from synthetic_files import open_fvfile
-from synthetic_files.nanoscope import INT16_MIN, INT32_MIN, build_pfc, build_spm
+from synthetic_files.nanoscope import (
+    INT16_MIN,
+    INT32_MIN,
+    build_pfc,
+    build_spm,
+    edit_nanoscope_header,
+)
 
 PFC_RELPATH = "test_cases/PS_PCL_SAA/QNM/onekhz.000.pfc"
 SPM_RELPATH = "test_cases/A1_OCSOH-PMMA21k_300421.0_300425.spm"
@@ -49,12 +55,9 @@ PFC_CASES = {
     "no-marker": ((4, 4), 128, {"extend_marker": False}),
     "square-64-no-lag": ((4, 4), 64, {"sync_distance": 0.0}),
     "square-64": ((4, 4), 64, {}),
+    "square-32": ((4, 4), 32, {}),
+    "sample-points-1024": ((4, 4), 128, {"sample_points": 1024}),
 }
-# Left out of the lag and curve tests: "square-64". The reader converts Sync Distance to
-# stored points as Sync Distance * PFT Freq / 2, which holds only for 128 + 128 points
-# at 512 samples per ms; with 64 + 64 it doubles the lag. "square-64-no-lag" checks that
-# curve length with no lag to convert.
-LAGGED_CASES = [case for case in PFC_CASES if case != "square-64"]
 # Left out of the scan size test: "tall-128". The reader takes Scan Size as the longer
 # side, the builder as the fast axis; no real file says which.
 SCANSIZE_CASES = [case for case in PFC_CASES if case != "tall-128"]
@@ -120,14 +123,37 @@ def test_pfc_scansize_round_trips(tmp_path, case):
         np.testing.assert_allclose(fvfile.scansize, synthetic.scansize, rtol=1e-12)
 
 
-@pytest.mark.parametrize("case", LAGGED_CASES)
+@pytest.mark.parametrize("case", list(PFC_CASES))
 def test_pfc_lag_of_the_deflection_round_trips(tmp_path, case):
     synthetic = build_pfc_case(tmp_path, case)
     with open_fvfile(synthetic.path) as fvfile:
         np.testing.assert_allclose(fvfile.sync_dist, synthetic.sync_dist, rtol=1e-12)
+        np.testing.assert_allclose(
+            fvfile.volumes[0].sync_dist, synthetic.sync_dist, rtol=1e-12
+        )
 
 
-@pytest.mark.parametrize("case", LAGGED_CASES)
+def test_pfc_without_sample_points_takes_512_khz_over_pft_freq(tmp_path):
+    """With no Sample Points the lag is Sync Distance x points x PFT Freq / 512 kHz."""
+    synthetic = build_pfc(tmp_path, (4, 4), 64, rate=2.0, sync_distance=75.175)
+
+    def drop_sample_points(lines):
+        kept = [line for line in lines if not line.startswith("\\Sample Points:")]
+        assert len(kept) == len(lines) - 1
+        return kept
+
+    edit_nanoscope_header(synthetic.path, drop_sample_points)
+    lag = 75.175 * 128 * 2.0 / 512
+    expected = synthetic.volumes[0]
+    with open_fvfile(synthetic.path) as fvfile:
+        np.testing.assert_allclose(fvfile.sync_dist, lag, rtol=1e-12)
+        np.testing.assert_allclose(fvfile.volumes[0].sync_dist, lag, rtol=1e-12)
+        z, d = fvfile.volumes[0].get_all_curves()
+    assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
+    assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+
+
+@pytest.mark.parametrize("case", list(PFC_CASES))
 def test_pfc_get_curve_returns_the_known_curves(tmp_path, case):
     synthetic = build_pfc_case(tmp_path, case)
     expected = synthetic.volumes[0]
@@ -137,7 +163,7 @@ def test_pfc_get_curve_returns_the_known_curves(tmp_path, case):
             assert_same_curve(volume.get_curve(r, c), expected.curve(r, c))
 
 
-@pytest.mark.parametrize("case", LAGGED_CASES)
+@pytest.mark.parametrize("case", list(PFC_CASES))
 def test_pfc_iter_curves_goes_row_by_row(tmp_path, case):
     synthetic = build_pfc_case(tmp_path, case)
     expected = synthetic.volumes[0]
@@ -151,7 +177,7 @@ def test_pfc_iter_curves_goes_row_by_row(tmp_path, case):
     assert seen == list(expected.order)
 
 
-@pytest.mark.parametrize("case", LAGGED_CASES)
+@pytest.mark.parametrize("case", list(PFC_CASES))
 def test_pfc_get_all_curves_returns_every_curve(tmp_path, case):
     synthetic = build_pfc_case(tmp_path, case)
     expected = synthetic.volumes[0]
@@ -211,7 +237,7 @@ def test_pfc_builder_writes_each_pixel_in_its_own_record(pfc):
     assert_curves_hold_their_own_records(d, pfc.path)
 
 
-@pytest.mark.parametrize("case", LAGGED_CASES)
+@pytest.mark.parametrize("case", list(PFC_CASES))
 def test_pfc_deflection_comes_from_its_own_record_only(tmp_path, case):
     synthetic = build_pfc_case(tmp_path, case)
     with open_fvfile(synthetic.path) as fvfile:
