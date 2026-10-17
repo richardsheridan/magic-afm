@@ -87,7 +87,8 @@ NULLABLE_FIELDS = {"k", "defl_sens", "sync_dist", "trace"}
 def load_options(fp):
     """Read an options JSON from an open file into a dict of validated values.
 
-    Any subset of the keys in OPTIONS_JSON_SCHEMA may be present."""
+    Any subset of the keys in OPTIONS_JSON_SCHEMA may be present. A "schema_version"
+    key, if present, must equal SCHEMA_VERSION and is dropped from the result."""
     options = json.load(fp)
     if not isinstance(options, dict):
         raise ValueError("options_json must be a JSON object")
@@ -118,12 +119,14 @@ def dump_options(options):
     """Convert a dict of options to the text of an options JSON.
 
     The keys must be exactly those of OPTIONS_JSON_SCHEMA, ensuring
-    the CLI will be able to read it back in."""
+    the CLI will be able to read it back in. The JSON leads with "schema_version"."""
     mismatched = options.keys() ^ OPTIONS_JSON_SCHEMA.keys()
     if mismatched:
         raise ValueError(f"Options do not match OPTIONS_JSON_SCHEMA: {mismatched}")
-    options = {"schema_version": SCHEMA_VERSION, **options}
-    options = {k: options[k] for k in ["schema_version", *OPTIONS_JSON_SCHEMA]}
+    options = {
+        "schema_version": SCHEMA_VERSION,
+        **{k: options[k] for k in OPTIONS_JSON_SCHEMA},
+    }
     # convert enums to names
     options["fit_fix"] = [m.name for m in FitFix(options["fit_fix"])]
     options["fit_mode"] = FitMode(options["fit_mode"]).name

@@ -82,4 +82,5 @@ enums.
 | `k_sens` | absent | present | present |
 | key order | schema order | `ForceCurveOptions` order | schema order |
 
-Today's `load_options` reads `1e9` as 1e9 GPa, with no warning.
+Today's `load_options` reads `1e9` as 1e9 GPa and warns that this unversioned `M` is
+implausible.

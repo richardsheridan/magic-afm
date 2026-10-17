@@ -16,6 +16,7 @@ error, and the JSONs the released betas wrote still load."""
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import contextlib
 import io
 import json
 import warnings
@@ -169,19 +170,21 @@ def test_every_old_json_fixture_is_checked():
     assert {p.stem for p in OLD_JSON_DIR.glob("*.json")} == OLD_JSON_VALUES.keys()
 
 
+# M is in GPa, so an unversioned file whose M is above 1e4 GPa (10 TPa, about ten times
+# diamond) can only hold a value meant as Pa, such as the 1.0.0b2 CLI default of 1e9.
+M_WARNING_FIXTURES = {"1.0.0b2-cli", "1.0.0b2-cli-trace"}
+
+
 @pytest.mark.parametrize("name", OLD_JSON_VALUES)
 def test_load_options_reads_json_written_by_released_beta(name):
+    expect_m_warning = name in M_WARNING_FIXTURES
     with (OLD_JSON_DIR / (name + ".json")).open() as fp:
-        options = load_options(fp)
+        with pytest.warns(Warning) if expect_m_warning else contextlib.nullcontext():
+            options = load_options(fp)
     assert options == OLD_JSON_VALUES[name]
     for key, enum_type in ENUM_TYPES.items():
         if options[key] is not None:
             assert type(options[key]) is enum_type, key
-
-
-# M is in GPa, so an unversioned file whose M is above 1e4 GPa (10 TPa, about ten times
-# diamond) can only hold a value meant as Pa, such as the 1.0.0b2 CLI default of 1e9.
-M_WARNING_FIXTURES = {"1.0.0b2-cli", "1.0.0b2-cli-trace"}
 
 
 @pytest.mark.parametrize("name", OLD_JSON_VALUES)
