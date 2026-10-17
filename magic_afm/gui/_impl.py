@@ -324,7 +324,7 @@ class GUIFVFile:
 class DemoStub:
     scansize: object = 100, 100
     t_step: object = 5e-6
-    volumes: tuple = (None, None)
+    volumes: tuple = ()
     k: float = field(default=10.0)
     defl_sens: float = field(default=5.0)
     sync_dist: int = field(default=0)
@@ -1754,8 +1754,11 @@ class ForceVolumeController:
 
         # Actually write out results to external world
         fvfile = self.opened_fvol.fvfile
-        volume = data_readers._select_volume(fvfile, options.trace)
-        trace_suffix = _export.trace_suffix(fvfile.volumes, volume)
+        if fvfile.volumes:
+            volume = data_readers._select_volume(fvfile, options.trace)
+            trace_suffix = _export.trace_suffix(fvfile.volumes, volume)
+        else:
+            trace_suffix = ""
         mode_tag = _export.mode_tag(options.fit_mode)
         maps = _export.export_maps(
             property_map, parms_map, parms_err_map, d["fit_fix"], options.k_sens
