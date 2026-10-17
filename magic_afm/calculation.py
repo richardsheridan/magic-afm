@@ -1228,13 +1228,13 @@ def max_load_quantities(d, params, k, fit_mode, split=None):
     return tuple(x.item() for x in (deflection, indentation, contact_radius))
 
 
-_FIT_FORCE_CURVE_PARAMETERS = frozenset(inspect.signature(fit_force_curve).parameters)
-
-
 def perturb_k(d, k, epsilon=1e-3):
     k_new = (1 + epsilon) * k
     d_new = d * ((1 + epsilon) ** -0.5)
     return d_new, k_new
+
+
+_FIT_FORCE_CURVE_PARAMETERS = frozenset(inspect.signature(fit_force_curve).parameters)
 
 
 def _fit_arguments(options):
