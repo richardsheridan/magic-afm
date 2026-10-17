@@ -32,35 +32,35 @@
       "column": 13,
       "path": "magic_afm/data_readers.py",
       "name": "bad-assignment",
-      "concise_description": "`list[Any]` is not assignable to `ARDFHeader`",
+      "concise_description": "`list[Any]` is not assignable to `_ARDFHeader`",
       "severity": "error"
     },
     {
-      "column": 57,
+      "column": 58,
       "path": "magic_afm/data_readers.py",
       "name": "not-iterable",
-      "concise_description": "Type `ARDFHeader` is not iterable",
+      "concise_description": "Type `_ARDFHeader` is not iterable",
       "severity": "error"
     },
     {
       "column": 13,
       "path": "magic_afm/data_readers.py",
       "name": "bad-assignment",
-      "concise_description": "`list[Any]` is not assignable to `ARDFHeader`",
+      "concise_description": "`list[Any]` is not assignable to `_ARDFHeader`",
       "severity": "error"
     },
     {
-      "column": 57,
+      "column": 58,
       "path": "magic_afm/data_readers.py",
       "name": "not-iterable",
-      "concise_description": "Type `ARDFHeader` is not iterable",
+      "concise_description": "Type `_ARDFHeader` is not iterable",
       "severity": "error"
     },
     {
       "column": 71,
       "path": "magic_afm/data_readers.py",
       "name": "bad-argument-type",
-      "concise_description": "Argument `list[Any]` is not assignable to parameter `seg_offsets` with type `tuple[int, ...]` in function `ARDFVdata.__init__`",
+      "concise_description": "Argument `list[Any]` is not assignable to parameter `seg_offsets` with type `tuple[int, ...]` in function `_ARDFVdata.__init__`",
       "severity": "error"
     },
     {
@@ -88,35 +88,35 @@
       "column": 48,
       "path": "magic_afm/data_readers.py",
       "name": "bad-argument-type",
-      "concise_description": "Argument `floating[_32Bit]` is not assignable to parameter `amp` with type `float` in function `QNMZReader.__init__`",
+      "concise_description": "Argument `floating[_32Bit]` is not assignable to parameter `amp` with type `float` in function `_QNMZReader.__init__`",
       "severity": "error"
     },
     {
       "column": 43,
       "path": "magic_afm/data_readers.py",
       "name": "missing-argument",
-      "concise_description": "Missing argument `sync_dist_frac` in function `QNMZReader.get_curve`",
+      "concise_description": "Missing argument `sync_dist_frac` in function `_QNMZReader.get_curve`",
       "severity": "error"
     },
     {
       "column": 74,
       "path": "magic_afm/data_readers.py",
       "name": "missing-argument",
-      "concise_description": "Missing argument `sync_dist_int` in function `QNMDReader.get_curve`",
+      "concise_description": "Missing argument `sync_dist_int` in function `_QNMDReader.get_curve`",
       "severity": "error"
     },
     {
       "column": 47,
       "path": "magic_afm/data_readers.py",
       "name": "bad-argument-count",
-      "concise_description": "Expected 2 positional arguments, got 3 in function `FFVReader.get_curve`",
+      "concise_description": "Expected 2 positional arguments, got 3 in function `_FFVReader.get_curve`",
       "severity": "error"
     },
     {
       "column": 47,
       "path": "magic_afm/data_readers.py",
       "name": "bad-argument-count",
-      "concise_description": "Expected 2 positional arguments, got 3 in function `FFVReader.get_curve`",
+      "concise_description": "Expected 2 positional arguments, got 3 in function `_FFVReader.get_curve`",
       "severity": "error"
     },
     {

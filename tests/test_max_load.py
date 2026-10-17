@@ -20,7 +20,7 @@
 # jitted model (about 1e-7 in indentation) and across platforms, so they are pinned by
 # old_calc_def_ind_ztru_ac below, a copy of it as it stood before the split, run in the
 # same process on the same inputs. It looks the model functions up on the module at
-# call time, so it follows warmup_jit_worker(). Before the split it was bitwise equal
+# call time, so it follows _warmup_jit_worker(). Before the split it was bitwise equal
 # to calc_def_ind_ztru_ac on every case here, in env test plain and jitted and in env
 # test-nonumba.
 
@@ -57,7 +57,7 @@ def old_calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
         raise ValueError("Unknown fit_mode: ", fit_mode)
 
     maxdelta = calculation.delta_curve(
-        calculation.schwarz_wrap,
+        calculation._schwarz_wrap,
         maxforce,
         k,
         params["radius"],
@@ -69,7 +69,7 @@ def old_calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
         params["lj_scale"],
     )
     mindelta = calculation.delta_curve(
-        calculation.schwarz_wrap,
+        calculation._schwarz_wrap,
         params["force_shift"] - params["fc"],
         k,
         params["radius"],
@@ -126,12 +126,12 @@ CASES = {
 
 @cache
 def fitted_inputs(case, mode):
-    """(d, parms, split) of a fitted synthetic curve, parms as fitfun returns them."""
+    """(d, parms, split) of a fitted synthetic curve, parms from fit_force_curve."""
     golden_case, tau = CASES[case]
     curve = t2.demo_curve(**t2.SYNTHETIC_CASES[golden_case])
     z, d, split, _ = t2.preprocess(((0, 0), curve), mode)
     with np.errstate(all="ignore"):
-        parms, *_ = calculation.fitfun(
+        parms, *_ = calculation.fit_force_curve(
             z, d, k=t2.DEMO_K, fit_mode=mode, split=split, **t2.DEFAULT_OPTIONS
         )
     if tau is not None:
@@ -222,7 +222,7 @@ import test_max_load as tm
 
 from magic_afm import calculation
 
-calculation.warmup_jit_worker()
+calculation._warmup_jit_worker()
 values = {
     case: {
         mode.name: {"old": tm.old_values(case, mode), "new": tm.new_values(case, mode)}
@@ -237,9 +237,9 @@ print(json.dumps({"jitted": jitted, "values": values}))
 
 @pytest.fixture(scope="module")
 def jitted_values():
-    """Old and new values of every case, after warmup_jit_worker() in a subprocess."""
+    """Old and new values of every case, after _warmup_jit_worker() in a subprocess."""
     if importlib.util.find_spec("numba") is None:
-        pytest.skip("numba is not installed, so warmup_jit_worker() jits nothing")
+        pytest.skip("numba is not installed, so _warmup_jit_worker() jits nothing")
     proc = subprocess.run(
         [sys.executable, "-c", JITTED_VALUES_SCRIPT, str(Path(__file__).parent)],
         capture_output=True,
@@ -274,7 +274,7 @@ def test_map_worker_properties_come_from_the_split_functions(case, mode):
     z, d, split, rc = t2.preprocess(((0, 0), curve), mode)
     options = t2.DEFAULT_OPTIONS | dict(k_sens=False)
     with np.errstate(all="ignore"):
-        _, properties, parms, _ = calculation.calc_properties_imap(
+        _, properties, parms, _ = calculation.fit_curve_properties(
             (z, d, split, rc), fit_mode=mode, k=t2.DEMO_K, **options
         )
         defl, ind, a_c = calculation.max_load_quantities(

@@ -61,7 +61,7 @@ def call_model(function: str, **parameters):
     if function == "force_curve":
         delta = -15 * (np.cos(np.linspace(0, np.pi, 50)) + 0.5)
         return calculation.force_curve(calculation.red_extend, delta, *args)
-    return calculation.delta_curve(calculation.schwarz_wrap, 1.0, *args)
+    return calculation.delta_curve(calculation._schwarz_wrap, 1.0, *args)
 
 
 def outcome(function: str, **parameters) -> dict:
@@ -103,7 +103,7 @@ from magic_afm import calculation
 
 out = {"optimize": sys.flags.optimize, "plain": t.all_outcomes(), "jitted": None}
 if importlib.util.find_spec("numba") is not None:
-    calculation.warmup_jit_worker()
+    calculation._warmup_jit_worker()
     out["jitted_model"] = not isinstance(calculation.force_curve, types.FunctionType)
     out["jitted"] = t.all_outcomes()
 print(json.dumps(out))
@@ -158,7 +158,7 @@ def test_jitted_force_model_rejects_out_of_range_parameter_without_asserts(
     optimized_outcomes, function, case
 ):
     if importlib.util.find_spec("numba") is None:
-        pytest.skip("numba is not installed, so warmup_jit_worker() jits nothing")
+        pytest.skip("numba is not installed, so _warmup_jit_worker() jits nothing")
     assert optimized_outcomes["jitted_model"]
     assert optimized_outcomes["jitted"][function]["valid"] == {
         "mro": None,

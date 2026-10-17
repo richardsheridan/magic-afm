@@ -22,6 +22,16 @@ It is meant to be easy to lift individual items out into other projects.
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+__all__ = [
+    "TOOLTIP_CANCEL",
+    "LONGEST_IMPERCEPTIBLE_DELAY",
+    "cpu_bound_limiter",
+    "to_sync_runner_map_unordered",
+    "spinner_task",
+    "tooltip_task",
+    "receive_drain_and_get_latest",
+]
+
 from contextlib import asynccontextmanager, nullcontext
 from itertools import islice
 from math import inf
@@ -30,12 +40,12 @@ import trio
 
 from ._env import max_workers
 
-MAX_WORKERS = max_workers()
+_MAX_WORKERS = max_workers()
 
 TOOLTIP_CANCEL = None, None, None
 LONGEST_IMPERCEPTIBLE_DELAY = 0.032  # seconds
 
-cpu_bound_limiter = trio.CapacityLimiter(MAX_WORKERS)
+cpu_bound_limiter = trio.CapacityLimiter(_MAX_WORKERS)
 
 
 def _chunk_producer(fn, job_items, chunksize):

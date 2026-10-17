@@ -26,6 +26,33 @@ should be loaded lazily. (I'm looking at you h5py..)
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+__all__ = [
+    "Image",
+    "Volume",
+    "FVFile",
+    "FileFormatError",
+    "open_h5",
+    "mmap_path_read_only",
+    "convert_ardf",
+    "ARH5ForceMapVolume",
+    "ARH5Image",
+    "ARH5FFMVolume",
+    "ARH5File",
+    "ARDFImage",
+    "ARDFVolume",
+    "ARDFFile",
+    "NanoscopeImage",
+    "NanoscopeVolume",
+    "NanoscopeFile",
+    "NIDVolume",
+    "NIDMapHeightImage",
+    "NIDMapImage",
+    "NIDFile",
+    "SUFFIX_FVFILE_MAP",
+    "Index",
+    "ZDArrays",
+]
+
 import mmap
 import re
 import struct
@@ -52,13 +79,13 @@ except ImportError:
 import numpy as np
 from attrs import evolve, field, frozen
 
-NANOMETER_UNIT_CONVERSION = (
+_NANOMETER_UNIT_CONVERSION = (
     1e9  # maybe we can intelligently read this from the file someday
 )
-TOC_STRUCT = struct.Struct("<QLL")
+_TOC_STRUCT = struct.Struct("<QLL")
 
 # decimal exponents of the SI prefixes seen in unit strings (micro as micro sign or mu)
-SI_PREFIX_EXPONENTS = {
+_SI_PREFIX_EXPONENTS = {
     "": 0,
     "m": -3,
     "\u00b5": -6,
@@ -69,30 +96,30 @@ SI_PREFIX_EXPONENTS = {
 }
 
 
-def si_prefix_exponent(unit: str, base: str) -> int | None:
+def _si_prefix_exponent(unit: str, base: str) -> int | None:
     """Decimal exponent of unit as a prefixed base, such as -6 for "µm" and "m"."""
     if not unit.endswith(base):
         return None
-    return SI_PREFIX_EXPONENTS.get(unit[: len(unit) - len(base)])
+    return _SI_PREFIX_EXPONENTS.get(unit[: len(unit) - len(base)])
 
 
-def nano_factor(unit: str, base: str) -> float | None:
+def _nano_factor(unit: str, base: str) -> float | None:
     """Factor converting unit to nano-base, such as 1e3 for "µm" and "m", or None."""
-    exponent = si_prefix_exponent(unit, base)
+    exponent = _si_prefix_exponent(unit, base)
     if exponent is None:
         return None
     return 10.0 ** (9 + exponent)
 
 
-def nm_per_unit(unit: str) -> float:
+def _nm_per_unit(unit: str) -> float:
     """Factor converting a length in unit to nm, raising FileFormatError if unknown."""
-    factor = nano_factor(unit, "m")
+    factor = _nano_factor(unit, "m")
     if factor is None:
         raise FileFormatError("Expected a length unit.", unit)
     return factor
 
 
-def nan_curve(npts: int) -> np.ndarray:
+def _nan_curve(npts: int) -> np.ndarray:
     """A read-only all-NaN curve with npts points in each half."""
     x = np.full(shape=(2, 2, npts), fill_value=np.nan, dtype=np.float32)
     x.setflags(write=False)
@@ -106,8 +133,8 @@ def nan_curve(npts: int) -> np.ndarray:
 
 Index: TypeAlias = tuple[int, ...]
 ZDArrays: TypeAlias = Collection[np.ndarray]
-ChanMap: TypeAlias = dict[str, tuple[int, "ARDFVchan"]]
-StepInfo: TypeAlias = tuple[tuple[float, str], ...]
+_ChanMap: TypeAlias = dict[str, tuple[int, "_ARDFVchan"]]
+_StepInfo: TypeAlias = tuple[tuple[float, str], ...]
 
 
 class Image(Protocol):
@@ -192,14 +219,14 @@ def mmap_path_read_only(path):
         return mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
 
 
-def decode_cstring(cstring: bytes):
+def _decode_cstring(cstring: bytes):
     return cstring.rstrip(b"\0").decode("windows-1252")
 
 
-SEARCH_CHUNK_BYTES = 1 << 20
+_SEARCH_CHUNK_BYTES = 1 << 20
 
 
-def find_in_buffer(data: Buffer, sub: bytes, start: int = 0, end: int | None = None):
+def _find_in_buffer(data: Buffer, sub: bytes, start: int = 0, end: int | None = None):
     """Lowest index of sub in any buffer object, with bytes.find semantics."""
     find = getattr(data, "find", None)
     if find is not None:
@@ -207,9 +234,9 @@ def find_in_buffer(data: Buffer, sub: bytes, start: int = 0, end: int | None = N
     with memoryview(data).cast("B") as view:
         start, end, _ = slice(start, end).indices(len(view))
         # overlapping windows so that a straddling match is not missed
-        step = SEARCH_CHUNK_BYTES - len(sub) + 1
+        step = _SEARCH_CHUNK_BYTES - len(sub) + 1
         for pos in range(start, end, step):
-            index = bytes(view[pos : min(pos + SEARCH_CHUNK_BYTES, end)]).find(sub)
+            index = bytes(view[pos : min(pos + _SEARCH_CHUNK_BYTES, end)]).find(sub)
             if index >= 0:
                 return pos + index
     return -1
@@ -225,7 +252,7 @@ def find_in_buffer(data: Buffer, sub: bytes, start: int = 0, end: int | None = N
 ###############################################
 
 
-def parse_ar_note(note: Iterable[str]):
+def _parse_ar_note(note: Iterable[str]):
     # The notes have a very regular key-value structure
     # convert to dict for later access
     return dict(
@@ -351,7 +378,7 @@ class ARH5ForceMapVolume:
         # Also reverse axis zero so data is ordered zsnsr,defl like we did for FFM
         return (
             defl_zsnsr[::-1, (s - self.minext) : (s + self.minret)]
-            * NANOMETER_UNIT_CONVERSION
+            * _NANOMETER_UNIT_CONVERSION
         )
 
     def get_curve(self, r, c):
@@ -400,14 +427,14 @@ class ARH5Image:
 class ARH5FFMVolume:
     name: str
     shape: Index
-    # step_info: StepInfo
+    # step_info: _StepInfo
     _zreader: np.ndarray
     _dreader: np.ndarray
 
     def get_curve(self, r, c):
         z = self._zreader[r, c].reshape((2, -1))
         d = self._dreader[r, c].reshape((2, -1))
-        return z * NANOMETER_UNIT_CONVERSION, d * NANOMETER_UNIT_CONVERSION
+        return z * _NANOMETER_UNIT_CONVERSION, d * _NANOMETER_UNIT_CONVERSION
 
     def iter_indices(self) -> Iterable[Index]:
         return np.ndindex(self.shape)
@@ -417,8 +444,8 @@ class ARH5FFMVolume:
             yield index, self.get_curve(*index)
 
     def get_all_curves(self):
-        z = self._zreader[:] * NANOMETER_UNIT_CONVERSION
-        d = self._dreader[:] * NANOMETER_UNIT_CONVERSION
+        z = self._zreader[:] * _NANOMETER_UNIT_CONVERSION
+        d = self._dreader[:] * _NANOMETER_UNIT_CONVERSION
         z = z.reshape(z.shape[:-1] + (2, -1))
         d = d.reshape(d.shape[:-1] + (2, -1))
         return np.stack((z, d))
@@ -438,7 +465,7 @@ class ARH5File:
 
     @classmethod
     def parse(cls, h5data):
-        notes = parse_ar_note(h5data.attrs["Note"].splitlines())
+        notes = _parse_ar_note(h5data.attrs["Note"].splitlines())
         images = {
             name: ARH5Image(img, name, img.shape)
             for name, img in h5data["Image"].items()
@@ -446,12 +473,12 @@ class ARH5File:
 
         k = float(notes["SpringConstant"])
         scansize = (
-            float(notes["FastScanSize"]) * NANOMETER_UNIT_CONVERSION,
-            float(notes["SlowScanSize"]) * NANOMETER_UNIT_CONVERSION,
+            float(notes["FastScanSize"]) * _NANOMETER_UNIT_CONVERSION,
+            float(notes["SlowScanSize"]) * _NANOMETER_UNIT_CONVERSION,
         )
         # NOTE: aspect is redundant to scansize
         # self.aspect = float(self.notes["SlowRatio"]) / float(self.notes["FastRatio"])
-        defl_sens = float(notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
+        defl_sens = float(notes["InvOLS"]) * _NANOMETER_UNIT_CONVERSION
         rate = float(notes["FastMapZRate"])
         volumes = []
         if "FFM" in h5data:
@@ -493,7 +520,7 @@ class ARH5File:
 
 
 @frozen
-class ARDFHeader:
+class _ARDFHeader:
     data: Buffer
     offset: int
     crc: int = field(repr=hex)
@@ -521,21 +548,21 @@ class ARDFHeader:
 
 
 @frozen
-class ARDFTableOfContents:
+class _ARDFTableOfContents:
     data: Buffer
     offset: int
     size: int
-    entries: list[tuple[ARDFHeader, int]]
+    entries: list[tuple[_ARDFHeader, int]]
     _entry_struct = struct.Struct("<LL4sLQ")
 
     @classmethod
-    def unpack(cls, header: ARDFHeader):
+    def unpack(cls, header: _ARDFHeader):
         if header.size != 32:
             raise FileFormatError("Malformed table of contents", header)
         header.validate()
         data = header.data
         offset = header.offset
-        size, nentries, stride = TOC_STRUCT.unpack_from(data, offset + 16)
+        size, nentries, stride = _TOC_STRUCT.unpack_from(data, offset + 16)
         if stride != 24:
             raise FileFormatError(f"table of contents stride {stride}, expected 24")
         if size - 32 != nentries * stride:
@@ -547,7 +574,7 @@ class ARDFTableOfContents:
             *header, pointer = cls._entry_struct.unpack_from(data, toc_offset)
             if not pointer:
                 break  # rest is null padding
-            entry_header = ARDFHeader(data, toc_offset, *header)
+            entry_header = _ARDFHeader(data, toc_offset, *header)
             if entry_header.name not in {b"IMAG", b"VOLM", b"NEXT", b"THMB", b"NSET"}:
                 raise FileFormatError("Malformed table of contents.", entry_header)
             entry_header.validate()
@@ -556,21 +583,21 @@ class ARDFTableOfContents:
 
 
 @frozen
-class ARDFTextTableOfContents:
+class _ARDFTextTableOfContents:
     data: Buffer
     offset: int
     size: int
-    entries: list[tuple[ARDFHeader, int]]
+    entries: list[tuple[_ARDFHeader, int]]
     _entry_struct = struct.Struct("<LL4sLQQ")
 
     @classmethod
-    def unpack(cls, header: ARDFHeader):
+    def unpack(cls, header: _ARDFHeader):
         if header.size != 32 or header.name != b"TTOC":
             raise FileFormatError("Malformed text table of contents.", header)
         header.validate()
         offset = header.offset
         data = header.data
-        size, nentries, stride = TOC_STRUCT.unpack_from(data, offset + 16)
+        size, nentries, stride = _TOC_STRUCT.unpack_from(data, offset + 16)
         if stride != 32:
             raise FileFormatError(f"text table stride {stride}, expected 32")
         if size - 32 != nentries * stride:
@@ -582,7 +609,7 @@ class ARDFTextTableOfContents:
             *header, _, pointer = cls._entry_struct.unpack_from(data, toc_offset)
             if not pointer:
                 break  # rest is null padding
-            entry_header = ARDFHeader(data, toc_offset, *header)
+            entry_header = _ARDFHeader(data, toc_offset, *header)
             if entry_header.name != b"TOFF":
                 raise FileFormatError("Malformed text table entry.", entry_header)
             entry_header.validate()
@@ -592,7 +619,7 @@ class ARDFTextTableOfContents:
     def decode_entry(self, index: int):
         # maybe could be another TEXT class but we'll read it straight in
         entry_header, pointer = self.entries[index]
-        text_header = ARDFHeader.unpack(self.data, pointer)
+        text_header = _ARDFHeader.unpack(self.data, pointer)
         if text_header.name != b"TEXT":
             raise FileFormatError("Malformed text section.", text_header)
         text_header.validate()
@@ -607,7 +634,7 @@ class ARDFTextTableOfContents:
 
 
 @frozen
-class ARDFVolumeTableOfContents:
+class _ARDFVolumeTableOfContents:
     offset: int
     size: int
     lines: list[int]
@@ -615,13 +642,13 @@ class ARDFVolumeTableOfContents:
     _voff_struct = struct.Struct("<LLQQ")
 
     @classmethod
-    def unpack(cls, header: ARDFHeader):
-        # cant reuse exact ARDFTableOfContents for VTOC, but structure is similar
+    def unpack(cls, header: _ARDFHeader):
+        # cant reuse exact _ARDFTableOfContents for VTOC, but structure is similar
         data = header.data
         offset = header.offset
         if header.size != 32 or header.name != b"VTOC":
             raise FileFormatError("Malformed volume table of contents.", header)
-        size, nentries, stride = TOC_STRUCT.unpack_from(data, offset + 16)
+        size, nentries, stride = _TOC_STRUCT.unpack_from(data, offset + 16)
         if stride != 40:
             raise FileFormatError(f"volume table stride {stride}, expected 40")
         if size - 32 != nentries * stride:
@@ -632,7 +659,7 @@ class ARDFVolumeTableOfContents:
         for i, toc_offset in enumerate(
             range(header.offset + 32, header.offset + size, stride)
         ):
-            entry_header = ARDFHeader.unpack(data, toc_offset)
+            entry_header = _ARDFHeader.unpack(data, toc_offset)
             if not entry_header.crc:
                 # scan was interrupted, and vtoc is zero-filled
                 break
@@ -648,29 +675,29 @@ class ARDFVolumeTableOfContents:
 
 
 @frozen
-class ARDFVchan:
+class _ARDFVchan:
     name: str
     unit: str
     _struct = struct.Struct("<32s32s")
 
     @classmethod
-    def unpack(cls, header: ARDFHeader):
+    def unpack(cls, header: _ARDFHeader):
         if header.size != 80 or header.name != b"VCHN":
             raise FileFormatError("Malformed channel definition.", header)
         header.validate()
         name, unit = cls._struct.unpack_from(header.data, header.offset + 16)
-        return cls(decode_cstring(name), decode_cstring(unit))
+        return cls(_decode_cstring(name), _decode_cstring(unit))
 
 
 @frozen
-class ARDFXdef:
+class _ARDFXdef:
     offset: int
     size: int
     xdef: list[str]
     _struct = struct.Struct("<LL")
 
     @classmethod
-    def unpack(cls, header: ARDFHeader):
+    def unpack(cls, header: _ARDFHeader):
         if header.size != 96 or header.name != b"XDEF":
             raise FileFormatError("Malformed experiment definition.", header)
         header.validate()
@@ -686,7 +713,7 @@ class ARDFXdef:
 
 
 @frozen
-class ARDFVset:
+class _ARDFVset:
     data: Buffer
     offset: int
     size: int
@@ -704,7 +731,7 @@ class ARDFVset:
     _struct = struct.Struct("<LLLLQQ")
 
     @classmethod
-    def unpack(cls, vset_header: ARDFHeader):
+    def unpack(cls, vset_header: _ARDFHeader):
         if vset_header.name != b"VSET":
             raise FileFormatError("malformed VSET header", vset_header)
         vset_header.validate()
@@ -715,7 +742,7 @@ class ARDFVset:
 
 
 @frozen
-class ARDFVdata:
+class _ARDFVdata:
     data: Buffer
     offset: int
     force_index: int
@@ -727,7 +754,7 @@ class ARDFVdata:
     _struct = struct.Struct("<10L")
 
     @classmethod
-    def unpack(cls, header: ARDFHeader):
+    def unpack(cls, header: _ARDFHeader):
         data = header.data
         offset = header.offset
         (
@@ -770,22 +797,22 @@ class ARDFImage:
     name: str
     shape: Index
     units: str
-    step_info: StepInfo
+    step_info: _StepInfo
     acquired: np.ndarray | None = field(default=None, repr=False)
     _struct = struct.Struct("<LLQQdd32s32s32s32s")
 
     @classmethod
-    def parse_imag(cls, imag_header: ARDFHeader):
+    def parse_imag(cls, imag_header: _ARDFHeader):
         if imag_header.name != b"IMAG":
             raise FileFormatError("Malformed image header.", imag_header)
-        imag_toc = ARDFTableOfContents.unpack(imag_header)
+        imag_toc = _ARDFTableOfContents.unpack(imag_header)
 
         # don't use NEXT or THMB data, step over
-        ttoc_header = ARDFHeader.unpack(imag_toc.data, imag_toc.offset + imag_toc.size)
-        ttoc = ARDFTextTableOfContents.unpack(ttoc_header)
+        ttoc_header = _ARDFHeader.unpack(imag_toc.data, imag_toc.offset + imag_toc.size)
+        ttoc = _ARDFTextTableOfContents.unpack(ttoc_header)
 
         # don't use TTOC or TOFF, step over
-        idef_header = ARDFHeader.unpack(ttoc.data, ttoc.offset + ttoc.size)
+        idef_header = _ARDFHeader.unpack(ttoc.data, ttoc.offset + ttoc.size)
         if idef_header.name != b"IDEF" or idef_header.size != cls._struct.size + 16:
             raise FileFormatError("Malformed image definition.", idef_header)
         idef_header.validate()
@@ -795,7 +822,7 @@ class ARDFImage:
         )
         if _ or __:
             raise FileFormatError(f"image definition reserved fields are {_}, {__}")
-        x_unit, y_unit, name, units = list(map(decode_cstring, cstrings))
+        x_unit, y_unit, name, units = list(map(_decode_cstring, cstrings))
 
         return cls(
             imag_header.data,
@@ -807,12 +834,12 @@ class ARDFImage:
         )
 
     def get_image(self):
-        ibox_header = ARDFHeader.unpack(self.data, self.ibox_offset)
+        ibox_header = _ARDFHeader.unpack(self.data, self.ibox_offset)
         if ibox_header.size != 32 or ibox_header.name != b"IBOX":
             raise FileFormatError("Malformed image layout.", ibox_header)
         ibox_header.validate()
         data_offset = ibox_header.offset + ibox_header.size + 16  # past IDAT header
-        ibox_size, lines, stride = TOC_STRUCT.unpack_from(
+        ibox_size, lines, stride = _TOC_STRUCT.unpack_from(
             ibox_header.data, ibox_header.offset + 16
         )
         points = (stride - 16) // 4  # less IDAT header
@@ -829,7 +856,7 @@ class ARDFImage:
                 offset=data_offset,
                 strides=(stride, 4),
             ).astype("f4", copy=True)
-        gami_header = ARDFHeader.unpack(
+        gami_header = _ARDFHeader.unpack(
             ibox_header.data, ibox_header.offset + ibox_size
         )
         if gami_header.size != 16 or gami_header.name != b"GAMI":
@@ -841,7 +868,7 @@ class ARDFImage:
 
 
 @frozen
-class ARDFFFMReader:
+class _ARDFFFMReader:
     data: Buffer
     array_view: np.ndarray = field(repr=False)
     array_offset: int  # hard to recover from views
@@ -856,33 +883,33 @@ class ARDFFFMReader:
     trace: bool
 
     @classmethod
-    def parse(cls, first_vset_header: ARDFHeader, points: int, lines: int, channels):
+    def parse(cls, first_vset_header: _ARDFHeader, points: int, lines: int, channels):
         data = first_vset_header.data
         # just walk past these first headers to find our data_offset
-        first_vset = ARDFVset.unpack(first_vset_header)
+        first_vset = _ARDFVset.unpack(first_vset_header)
         vset_stride = first_vset.next_vset_offset - first_vset_header.offset
         if first_vset.vtype == 5:
             line_stride = vset_stride * points
         else:
-            # better be "both" setting see ARDFVset
+            # better be "both" setting see _ARDFVset
             if first_vset.vtype not in {10, 11}:
                 raise FileFormatError(f"unknown volume set type {first_vset.vtype}")
             line_stride = vset_stride * points * 2
         up = first_vset.line == 0
         trace = first_vset.point == 0
 
-        first_vnam_header = ARDFHeader.unpack(
+        first_vnam_header = _ARDFHeader.unpack(
             data, first_vset_header.offset + first_vset_header.size
         )
         if first_vnam_header.name != b"VNAM":
             raise FileFormatError("Malformed volume name", first_vnam_header)
         first_vnam_header.validate()
-        first_vdat_header = ARDFHeader.unpack(
+        first_vdat_header = _ARDFHeader.unpack(
             data, first_vnam_header.offset + first_vnam_header.size
         )
         if first_vdat_header.name != b"VDAT":
             raise FileFormatError("Malformed volume data")
-        first_vdat = ARDFVdata.unpack(first_vdat_header)
+        first_vdat = _ARDFVdata.unpack(first_vdat_header)
         return cls(
             data=data,
             array_view=np.ndarray(
@@ -901,7 +928,7 @@ class ARDFFFMReader:
             array_offset=first_vdat.array_offset,
             channels=[channels["Raw"][0], channels["Defl"][0]],
             factors=np.array(
-                [nm_per_unit(channels[name][1].unit) for name in ("Raw", "Defl")],
+                [_nm_per_unit(channels[name][1].unit) for name in ("Raw", "Defl")],
                 dtype="f4",
             )[:, None],
             seg_offsets=first_vdat.seg_offsets,
@@ -951,15 +978,15 @@ class ARDFFFMReader:
 
 
 @frozen
-class ARDFForceMapReader:
+class _ARDFForceMapReader:
     data: Buffer
-    vtoc: ARDFVolumeTableOfContents
+    vtoc: _ARDFVolumeTableOfContents
     lines: int
     points: int
     vtype: int
-    channels: ChanMap
+    channels: _ChanMap
     nancurve: np.ndarray = field(repr=False)
-    _seen_vsets: dict[Index, ARDFVset] = field(init=False, factory=dict)
+    _seen_vsets: dict[Index, _ARDFVset] = field(init=False, factory=dict)
 
     @property
     def zname(self):
@@ -967,18 +994,18 @@ class ARDFForceMapReader:
 
     @property
     def zfactor(self) -> float:
-        return nm_per_unit(self.channels[self.zname][1].unit)
+        return _nm_per_unit(self.channels[self.zname][1].unit)
 
     @property
     def dfactor(self) -> float:
-        return nm_per_unit(self.channels["Defl"][1].unit)
+        return _nm_per_unit(self.channels["Defl"][1].unit)
 
     def traverse_vsets(self, pointer: int):
         while True:
-            header = ARDFHeader.unpack(self.data, pointer)
+            header = _ARDFHeader.unpack(self.data, pointer)
             if header.name != b"VSET":
                 break
-            vset = ARDFVset.unpack(header)
+            vset = _ARDFVset.unpack(header)
             index = (vset.line, vset.point, vset.vtype)
             if index not in self._seen_vsets:
                 self._seen_vsets[index] = vset
@@ -986,17 +1013,17 @@ class ARDFForceMapReader:
             pointer = vset.next_vset_offset
 
     def traverse_vdats(self, pointer):
-        vnam_header = ARDFHeader.unpack(self.data, pointer)
+        vnam_header = _ARDFHeader.unpack(self.data, pointer)
         if vnam_header.name != b"VNAM":
             raise FileFormatError("Malformed volume name", vnam_header)
         vnam_header.validate()
         pointer = vnam_header.offset + vnam_header.size
         while True:
-            vdat_header = ARDFHeader.unpack(self.data, pointer)
+            vdat_header = _ARDFHeader.unpack(self.data, pointer)
             if vdat_header.name != b"VDAT":
                 break
             vdat_header.validate()  # opportunity to read data with gil released
-            yield ARDFVdata.unpack(vdat_header)
+            yield _ARDFVdata.unpack(vdat_header)
             pointer = vdat_header.offset + vdat_header.size
 
     def get_curve(self, r: int, c: int) -> ZDArrays:
@@ -1100,30 +1127,30 @@ class ARDFVolume:
     volm_offset: int
     name: str
     shape: Index
-    step_info: StepInfo
-    xdef: ARDFXdef
-    _reader: ARDFForceMapReader | ARDFFFMReader
+    step_info: _StepInfo
+    xdef: _ARDFXdef
+    _reader: _ARDFForceMapReader | _ARDFFFMReader
     _struct = struct.Struct("<LL24sddd32s32s32s32sQ")
 
     @classmethod
-    def parse_volm(cls, volm_header: ARDFHeader, npts: int | None = None):
+    def parse_volm(cls, volm_header: _ARDFHeader, npts: int | None = None):
         data = volm_header.data
         if volm_header.size != 32 or volm_header.name != b"VOLM":
             raise FileFormatError("Malformed volume header.", volm_header)
         # the next headers look a lot like VSET is a table of contents, but I've only
         # seen NEXT and NSET headers. NEXT shows up if "both" trace and retrace data
         # are inside. I'll assume the last entry is always NSET, the number of VSETs.
-        volm_toc = ARDFTableOfContents.unpack(volm_header)
+        volm_toc = _ARDFTableOfContents.unpack(volm_header)
         nset_header, nsets = volm_toc.entries[-1]
         nset_header.validate()
-        ttoc_header = ARDFHeader.unpack(data, volm_toc.offset + volm_toc.size)
-        ttoc = ARDFTextTableOfContents.unpack(ttoc_header)
+        ttoc_header = _ARDFHeader.unpack(data, volm_toc.offset + volm_toc.size)
+        ttoc = _ARDFTextTableOfContents.unpack(ttoc_header)
 
         # don't use TTOC or TOFF, step over
 
         # cls essentially represents VDEF plus its linkage down to VSET
         # so this unpacking is intentionally inlined here.
-        vdef_header = ARDFHeader.unpack(data, ttoc.offset + ttoc.size)
+        vdef_header = _ARDFHeader.unpack(data, ttoc.offset + ttoc.size)
         if vdef_header.name != b"VDEF" or vdef_header.size != cls._struct.size + 16:
             raise FileFormatError("Malformed volume definition.", vdef_header)
         vdef_header.validate()
@@ -1134,7 +1161,7 @@ class ARDFVolume:
         if sum(_) != 0:
             raise FileFormatError(f"volume definition reserved fields are {_}")
         complete = points * lines == nsets
-        x_unit, y_unit, t_unit, seg_names = list(map(decode_cstring, cstrings))
+        x_unit, y_unit, t_unit, seg_names = list(map(_decode_cstring, cstrings))
         seg_names = seg_names.split(";")[:-1]
         if nseg != len(seg_names):
             raise FileFormatError(
@@ -1143,14 +1170,14 @@ class ARDFVolume:
 
         # Implicit table of channels here smh
         offset = vdef_header.offset + vdef_header.size
-        channels: ChanMap = {}
+        channels: _ChanMap = {}
         for i in range(5):
-            header = ARDFHeader.unpack(data, offset)
+            header = _ARDFHeader.unpack(data, offset)
             if header.name != b"VCHN":
                 break
-            vchn = ARDFVchan.unpack(header)
+            vchn = _ARDFVchan.unpack(header)
             offset = header.offset + header.size
-            if si_prefix_exponent(vchn.unit, "m") is None:
+            if _si_prefix_exponent(vchn.unit, "m") is None:
                 raise FileFormatError(
                     f"channel {vchn.name} has unit {vchn.unit!r}, expected a length"
                 )
@@ -1158,33 +1185,33 @@ class ARDFVolume:
         else:
             raise FileFormatError("Got too many channels.", channels)
 
-        xdef = ARDFXdef.unpack(header)
-        vtoc_header = ARDFHeader.unpack(data, xdef.offset + xdef.size)
-        vtoc = ARDFVolumeTableOfContents.unpack(vtoc_header)
+        xdef = _ARDFXdef.unpack(header)
+        vtoc_header = _ARDFHeader.unpack(data, xdef.offset + xdef.size)
+        vtoc = _ARDFVolumeTableOfContents.unpack(vtoc_header)
 
-        mlov_header = ARDFHeader.unpack(data, vtoc.offset + vtoc.size)
+        mlov_header = _ARDFHeader.unpack(data, vtoc.offset + vtoc.size)
         if mlov_header.size != 16 or mlov_header.name != b"MLOV":
             raise FileFormatError("Malformed volume table of contents.", mlov_header)
         mlov_header.validate()
 
         # Check if each offset is regularly spaced
         # optimize for LARGE regular case (FMaps are SMALL)
-        first_vset_header = ARDFHeader.unpack(data, vtoc.pointers[0])
+        first_vset_header = _ARDFHeader.unpack(data, vtoc.pointers[0])
         if complete and not np.any(np.diff(np.diff(vtoc.pointers))):
-            reader = ARDFFFMReader.parse(first_vset_header, points, lines, channels)
+            reader = _ARDFFFMReader.parse(first_vset_header, points, lines, channels)
             name = "Trace" if reader.trace else "Retrace"
         else:
-            first_vset = ARDFVset.unpack(first_vset_header)
+            first_vset = _ARDFVset.unpack(first_vset_header)
             args = (data, vtoc, lines, points, first_vset.vtype, channels)
             if npts is None:
                 # no usable note, so fall back on the longest acquired curve
-                probe = ARDFForceMapReader(*args, nan_curve(0))
+                probe = _ARDFForceMapReader(*args, _nan_curve(0))
                 npts = max(
                     vdat.seg_offsets[1]
                     for vset in probe.traverse_vsets(vtoc.pointers[0])
                     for vdat in probe.traverse_vdats(vset.offset + vset.size)
                 )
-            reader = ARDFForceMapReader(*args, nan_curve(npts))
+            reader = _ARDFForceMapReader(*args, _nan_curve(npts))
             name = "FMAP"
 
         return cls(
@@ -1198,7 +1225,7 @@ class ARDFVolume:
 
     def acquired_mask(self) -> np.ndarray | None:
         """Mask of the curves the file holds, or None for a complete regular scan."""
-        if not isinstance(self._reader, ARDFForceMapReader):
+        if not isinstance(self._reader, _ARDFForceMapReader):
             return None
         mask = np.zeros(self.shape, dtype=bool)
         for rc in self.iter_indices():
@@ -1236,7 +1263,7 @@ class ARDFFile:
 
     @staticmethod
     def check_type(data: Buffer):
-        file_header = ARDFHeader.unpack(data, 0)
+        file_header = _ARDFHeader.unpack(data, 0)
         if file_header.size != 16 or file_header.name != b"ARDF":
             raise FileFormatError("Not an ARDF file.", file_header)
         file_header.validate()
@@ -1245,17 +1272,17 @@ class ARDFFile:
     @classmethod
     def parse(cls, data: Buffer):
         file_header = cls.check_type(data)
-        ftoc_header = ARDFHeader.unpack(data, offset=file_header.size)
+        ftoc_header = _ARDFHeader.unpack(data, offset=file_header.size)
         if ftoc_header.name != b"FTOC":
             raise FileFormatError("Malformed ARDF file table of contents.", ftoc_header)
-        ftoc = ARDFTableOfContents.unpack(ftoc_header)
-        ttoc_header = ARDFHeader.unpack(data, offset=ftoc.offset + ftoc.size)
-        ttoc = ARDFTextTableOfContents.unpack(ttoc_header)
+        ftoc = _ARDFTableOfContents.unpack(ftoc_header)
+        ttoc_header = _ARDFHeader.unpack(data, offset=ftoc.offset + ftoc.size)
+        ttoc = _ARDFTextTableOfContents.unpack(ttoc_header)
         if len(ttoc.entries) != 1:
             raise FileFormatError(
                 f"text table has {len(ttoc.entries)} entries, expected 1"
             )
-        notes = parse_ar_note(ttoc.decode_entry(0).splitlines())
+        notes = _parse_ar_note(ttoc.decode_entry(0).splitlines())
         try:
             npts = round(
                 float(notes["NumPtsPerSec"]) / float(notes["FastMapZRate"]) / 2
@@ -1266,7 +1293,7 @@ class ARDFFile:
         volumes = []
         for item, pointer in ftoc.entries:
             item.validate()
-            item = ARDFHeader.unpack(data, pointer)
+            item = _ARDFHeader.unpack(data, pointer)
             if item.name == b"IMAG":
                 item = ARDFImage.parse_imag(item)
                 images[item.name] = item
@@ -1298,12 +1325,12 @@ class ARDFFile:
         # xsize = lines * volumes[0].step_info[0][0]
         # ysize = points * volumes[0].step_info[1][0]
         scansize = (
-            float(notes["FastScanSize"]) * NANOMETER_UNIT_CONVERSION,
-            float(notes["SlowScanSize"]) * NANOMETER_UNIT_CONVERSION,
+            float(notes["FastScanSize"]) * _NANOMETER_UNIT_CONVERSION,
+            float(notes["SlowScanSize"]) * _NANOMETER_UNIT_CONVERSION,
         )
         # NOTE: aspect is redundant to scansize
         # self.aspect = float(self.notes["SlowRatio"]) / float(self.notes["FastRatio"])
-        defl_sens = float(notes["InvOLS"]) * NANOMETER_UNIT_CONVERSION
+        defl_sens = float(notes["InvOLS"]) * _NANOMETER_UNIT_CONVERSION
         t_step = volumes[0].step_info[-1][0]
         trace = 1 if len(volumes) > 1 else None
         return cls(notes, images, volumes, k, defl_sens, t_step, scansize, trace)
@@ -1315,7 +1342,7 @@ class ARDFFile:
 
 
 # noinspection PyUnboundLocalVariable
-def parse_nanoscope_header(header_lines: Iterable[str]):
+def _parse_nanoscope_header(header_lines: Iterable[str]):
     """Convert header from a Nanoscope file to a convenient nested dict
 
     header_lines can be an opened file object or a list of strings or anything
@@ -1380,7 +1407,7 @@ class NanoscopeImage:
             soft_scale_string = header["Ciao scan list"][0][soft_scale_name]
         except KeyError:
             soft_scale_string = header["Scanner list"][0][soft_scale_name]
-        soft_scale = float(soft_scale_string.split()[1]) / NANOMETER_UNIT_CONVERSION
+        soft_scale = float(soft_scale_string.split()[1]) / _NANOMETER_UNIT_CONVERSION
         unit_scale = hard_scale * soft_scale
         unit_offset = hard_offset * soft_scale
         return cls(
@@ -1407,7 +1434,7 @@ class NanoscopeImage:
         return z_floats
 
 
-def nanoscope_curve_scale(header, subheader, sens_key: str) -> float:
+def _nanoscope_curve_scale(header, subheader, sens_key: str) -> float:
     """nm per LSB of a force curve channel, checking the units the header declares."""
     sens_string = header["Ciao scan list"][0][sens_key]
     _, sens, sens_unit = sens_string.split()
@@ -1421,7 +1448,7 @@ def nanoscope_curve_scale(header, subheader, sens_key: str) -> float:
 
 
 @frozen
-class FFVReader:
+class _FFVReader:
     data: Buffer
     name: str
     ints: np.ndarray = field(repr=False)
@@ -1445,7 +1472,7 @@ class FFVReader:
         ints = np.ndarray(
             shape=(r, c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
-        scale = nanoscope_curve_scale(header, subheader, cls._soft_scale_map[name])
+        scale = _nanoscope_curve_scale(header, subheader, cls._soft_scale_map[name])
         return cls(data, name, ints, scale)
 
     def get_curve(self, r, c):
@@ -1456,7 +1483,7 @@ class FFVReader:
 
 
 @frozen
-class QNMDReader:
+class _QNMDReader:
     data: Buffer
     name: str
     ints: np.ndarray = field(repr=False)
@@ -1479,7 +1506,7 @@ class QNMDReader:
             shape=(r * c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
 
-        d_scale = nanoscope_curve_scale(header, subheader, "@Sens. DeflSens")
+        d_scale = _nanoscope_curve_scale(header, subheader, "@Sens. DeflSens")
         name = subheader["@4:Image Data"].split('"')[1]
         return cls(data, name, d_ints, shape, d_scale)
 
@@ -1507,14 +1534,14 @@ class QNMDReader:
 
 
 @frozen
-class QNMZReader:
+class _QNMZReader:
     name: str
     amp: float
     npts: int
     height_for_z: np.ndarray = field(repr=False)
 
     @classmethod
-    def parse(cls, header, d_reader: QNMDReader, height_for_z):
+    def parse(cls, header, d_reader: _QNMDReader, height_for_z):
         # QNM doesn't have its own height data, so it must be synthesized
         # I've chosen to do this by combining a height image with a sine wave
 
@@ -1544,10 +1571,10 @@ class QNMZReader:
 class NanoscopeVolume:
     name: str
     shape: Index
-    step_info: StepInfo
+    step_info: _StepInfo
     sync_dist: float | None
-    _zreader: FFVReader | QNMZReader
-    _dreader: FFVReader | QNMDReader
+    _zreader: _FFVReader | _QNMZReader
+    _dreader: _FFVReader | _QNMDReader
 
     @classmethod
     def parse(cls, header, sync_dist, z_reader, d_reader):
@@ -1574,8 +1601,8 @@ class NanoscopeVolume:
         slowpx = int(header["Ciao scan list"][0]["Lines"])
         shape = (slowpx, fastpx)
         # TODO: nonsquare images
-        x_step = scansize * factor / NANOMETER_UNIT_CONVERSION / (fastpx - 1)
-        y_step = scansize * factor / NANOMETER_UNIT_CONVERSION / (slowpx - 1)
+        x_step = scansize * factor / _NANOMETER_UNIT_CONVERSION / (fastpx - 1)
+        y_step = scansize * factor / _NANOMETER_UNIT_CONVERSION / (slowpx - 1)
 
         # self.scandown = {"Down": True, "Up": False}[
         #     header["FV"]["Deflection Error"]["Frame direction"]
@@ -1645,12 +1672,12 @@ class NanoscopeFile:
     def parse(cls, data: Buffer):
         cls.check_type(data)
         # End of header is demarcated by a SUB byte (26 = 0x1A)
-        header_end_pos = find_in_buffer(data, b"\x1a")
+        header_end_pos = _find_in_buffer(data, b"\x1a")
         if header_end_pos < 0:
             raise FileFormatError(
                 "No stop byte found, are you sure this is a Nanoscope file?"
             )
-        header = parse_nanoscope_header(
+        header = _parse_nanoscope_header(
             bytes(memoryview(data)[:header_end_pos]).decode("windows-1252").splitlines()
         )
 
@@ -1691,7 +1718,7 @@ class NanoscopeFile:
                 height_for_z = images["Height Sensor"].get_image()
             except KeyError:
                 height_for_z = images["Height"].get_image()
-            height_for_z *= NANOMETER_UNIT_CONVERSION
+            height_for_z *= _NANOMETER_UNIT_CONVERSION
             try:
                 sync_dist_str = csl["Sync Distance QNM"]
             except KeyError:
@@ -1702,11 +1729,11 @@ class NanoscopeFile:
                 NanoscopeVolume.parse(
                     header,
                     sync_dist,
-                    QNMZReader.parse(header, d_reader, height_for_z),
+                    _QNMZReader.parse(header, d_reader, height_for_z),
                     d_reader,
                 )
                 for d_reader in (
-                    QNMDReader.parse(header, data, d_subh, shape)
+                    _QNMDReader.parse(header, data, d_subh, shape)
                     for d_subh in deflections
                 )
             ]
@@ -1716,8 +1743,8 @@ class NanoscopeFile:
                 NanoscopeVolume.parse(
                     header,
                     sync_dist,
-                    FFVReader.parse(header, data, z_subh),
-                    FFVReader.parse(header, data, d_subh),
+                    _FFVReader.parse(header, data, z_subh),
+                    _FFVReader.parse(header, data, d_subh),
                 )
                 for z_subh, d_subh in zip(heights, deflections)
             ]
@@ -1748,9 +1775,9 @@ class NanoscopeFile:
 ###############################################
 
 
-NANOSURF_VALUE_REGEX = re.compile(r"(\S)\[(.*)\]\*\[(.*)\]")
-NANOSURF_LINE_POINTS_REGEX = re.compile(r"LineDim\d*Points")
-NANOSURF_PARAM_TYPES = {
+_NANOSURF_VALUE_REGEX = re.compile(r"(\S)\[(.*)\]\*\[(.*)\]")
+_NANOSURF_LINE_POINTS_REGEX = re.compile(r"LineDim\d*Points")
+_NANOSURF_PARAM_TYPES = {
     "Frame": str,
     "Points": int,
     "Lines": int,
@@ -1767,14 +1794,14 @@ NANOSURF_PARAM_TYPES = {
     "Dim2Name": str,
 }
 # frames of the raw curves and images, everything else is an analysis result
-NANOSURF_RAW_FRAMES = (
+_NANOSURF_RAW_FRAMES = (
     "Spec forward",
     "Spec backward",
     "Scan forward",
     "Scan backward",
 )
 # result frame -> image name and sign; adhesion is stored as a negative force
-NANOSURF_RESULT_IMAGES = {
+_NANOSURF_RESULT_IMAGES = {
     "MaxAdhesionOut00": ("MaxRetAdhesionForce", -1.0),
     "SnapInOut00": ("MaxExtAdhesionForce", -1.0),
     "MaxAdhesionOut10": ("MaxRetAdhesionHeight", 1.0),
@@ -1782,9 +1809,9 @@ NANOSURF_RESULT_IMAGES = {
 }
 
 
-def parse_nanosurf_value(string: str):
+def _parse_nanosurf_value(string: str):
     """Decode a typed Nanosurf value such as "D[25.03]*[N/m]" to (value, unit)"""
-    ty, val, unit = NANOSURF_VALUE_REGEX.search(string).groups()
+    ty, val, unit = _NANOSURF_VALUE_REGEX.search(string).groups()
     if ty == "D":
         val = float(val)
     elif ty == "B":
@@ -1797,16 +1824,16 @@ def parse_nanosurf_value(string: str):
     return val, unit
 
 
-def parse_nanosurf_line_points(section: dict[str, str]):
+def _parse_nanosurf_line_points(section: dict[str, str]):
     """List the point count of each line of a dataset section with ragged lines"""
     return [
         int(value)
         for key, value in section.items()
-        if NANOSURF_LINE_POINTS_REGEX.match(key)
+        if _NANOSURF_LINE_POINTS_REGEX.match(key)
     ]
 
 
-def parse_nanosurf_header(header_lines: Iterable[str]):
+def _parse_nanosurf_header(header_lines: Iterable[str]):
     """Convert header from a Nanosurf file to a convenient dict of sections
 
     The header is INI-like, a "[name]" line starting a section of "key=value"
@@ -1860,14 +1887,14 @@ def parse_nanosurf_header(header_lines: Iterable[str]):
                 datasets.append(ds[key])
 
     param = {}
-    for term, ty in NANOSURF_PARAM_TYPES.items():
+    for term, ty in _NANOSURF_PARAM_TYPES.items():
         param[term] = [ty(header[d][term]) for d in datasets if term in header[d]]
 
     # for spectroscopy with maps, lines are ragged
     line_points = []
     for d in datasets:
         h = header[d]
-        points = parse_nanosurf_line_points(h) if "LineDim0Min" in h else []
+        points = _parse_nanosurf_line_points(h) if "LineDim0Min" in h else []
         line_points.append(np.array(points, dtype=int))
     param["LinePoints"] = line_points
 
@@ -1893,7 +1920,7 @@ def parse_nanosurf_header(header_lines: Iterable[str]):
     image_center = []
     key = "DataSet\\Parameters\\Imaging"
     if key in header:
-        image_center, _ = parse_nanosurf_value(header[key]["ScanOffset"])
+        image_center, _ = _parse_nanosurf_value(header[key]["ScanOffset"])
 
     thermal_tune = None
     info = header.get("DataSet-Info", {})
@@ -1918,7 +1945,7 @@ def parse_nanosurf_header(header_lines: Iterable[str]):
 
 
 @frozen
-class NIDDataset:
+class _NIDDataset:
     data: Buffer
     name: str
     frame: str
@@ -1938,7 +1965,7 @@ class NIDDataset:
         bits = int(h["SaveBits"])
         unit_range = float(h["Dim2Range"])
         if line_points is None:
-            line_points = parse_nanosurf_line_points(h)
+            line_points = _parse_nanosurf_line_points(h)
         line_points = np.asarray(line_points, dtype=int)
         return cls(
             data=data,
@@ -1992,21 +2019,21 @@ class NIDDataset:
         return self._get_block_floats((lines, self.line_points[:n_lines] - 1))
 
 
-def nid_map_line_to_rc(line: int, nx: int) -> Index:
+def _nid_map_line_to_rc(line: int, nx: int) -> Index:
     # the map is scanned as a serpentine starting from the bottom row
     r, c = divmod(line, nx)
     return r, (c if r % 2 == 0 else nx - 1 - c)
 
 
-def nid_map_rc_to_line(r: int, c: int, nx: int) -> int:
+def _nid_map_rc_to_line(r: int, c: int, nx: int) -> int:
     return r * nx + (c if r % 2 == 0 else nx - 1 - c)
 
 
-def nid_map_from_lines(values: np.ndarray, shape: Index) -> np.ndarray:
+def _nid_map_from_lines(values: np.ndarray, shape: Index) -> np.ndarray:
     # lines that were never scanned have no value, so start from nan
     image = np.full(shape, np.nan, dtype=np.float32)
     for line, value in enumerate(values):
-        r, c = nid_map_line_to_rc(line, shape[1])
+        r, c = _nid_map_line_to_rc(line, shape[1])
         image[r, c] = value
     return image
 
@@ -2019,10 +2046,10 @@ class NIDVolume:
     k: float
     _zfactors: np.ndarray = field(repr=False)  # float32 fwd and bwd to nm
     _dfactors: np.ndarray = field(repr=False)
-    _zfwd: NIDDataset
-    _dfwd: NIDDataset
-    _zbwd: NIDDataset
-    _dbwd: NIDDataset
+    _zfwd: _NIDDataset
+    _dfwd: _NIDDataset
+    _zbwd: _NIDDataset
+    _dbwd: _NIDDataset
     nancurve: np.ndarray = field(repr=False)
 
     @classmethod
@@ -2034,7 +2061,7 @@ class NIDVolume:
         dbwd = spec["Spec backward", "Deflection"]
 
         def zfactor(d):
-            factor = nano_factor(d.unit, "m")
+            factor = _nano_factor(d.unit, "m")
             if factor is None:
                 raise FileFormatError(
                     "Expected curve data in a length.", d.frame, d.channel, d.unit
@@ -2044,9 +2071,9 @@ class NIDVolume:
         def dfactor(d):
             if d.unit == "V":
                 return defl_sens
-            if (factor := nano_factor(d.unit, "N")) is not None:
+            if (factor := _nano_factor(d.unit, "N")) is not None:
                 return factor / k
-            if (factor := nano_factor(d.unit, "m")) is not None:
+            if (factor := _nano_factor(d.unit, "m")) is not None:
                 return factor
             raise FileFormatError(
                 "Expected curve data in a force, a length or V.",
@@ -2063,7 +2090,7 @@ class NIDVolume:
             min(d.cur_line + 1, d.lines, len(d.line_points))
             for d in (zfwd, dfwd, zbwd, dbwd)
         )
-        nancurve = nan_curve(min(zfwd.points, zbwd.points))
+        nancurve = _nan_curve(min(zfwd.points, zbwd.points))
         return cls(
             "SpecMap",
             (ny, nx),
@@ -2102,7 +2129,7 @@ class NIDVolume:
         ny, nx = self.shape
         if not (0 <= r < ny and 0 <= c < nx):
             raise ValueError("Invalid index:", self.shape, (r, c))
-        line = nid_map_rc_to_line(r, c, nx)
+        line = _nid_map_rc_to_line(r, c, nx)
         if line >= self.n_lines:
             return self.nancurve
         return self._get_line_curve(line)
@@ -2111,13 +2138,13 @@ class NIDVolume:
         """Iterate over force curve indices in on-disk order"""
         nx = self.shape[1]
         for line in range(self.n_lines):
-            yield nid_map_line_to_rc(line, nx)
+            yield _nid_map_line_to_rc(line, nx)
 
     def iter_curves(self) -> Iterable[tuple[Index, ZDArrays]]:
         """Iterate over curves lazily in on-disk order."""
         nx = self.shape[1]
         for line in range(self.n_lines):
-            yield nid_map_line_to_rc(line, nx), self._get_line_curve(line)
+            yield _nid_map_line_to_rc(line, nx), self._get_line_curve(line)
 
     def get_all_curves(self) -> ZDArrays:
         """Eagerly load all curves into memory."""
@@ -2125,7 +2152,7 @@ class NIDVolume:
         n_min = min(n for line in range(self.n_lines) for n in self._line_npts(line))
         x = np.full(self.shape + (2, 2, n_min), np.nan, dtype=np.float32)
         for line in range(self.n_lines):
-            r, c = nid_map_line_to_rc(line, nx)
+            r, c = _nid_map_line_to_rc(line, nx)
             x[r, c] = self._get_line_curve(line, n_min)
         return np.moveaxis(x, 2, 0)
 
@@ -2135,7 +2162,7 @@ class NIDMapHeightImage:
     name: str
     shape: Index
     n_lines: int
-    _zfwd: NIDDataset
+    _zfwd: _NIDDataset
 
     @property
     def units(self) -> str:
@@ -2145,7 +2172,7 @@ class NIDMapHeightImage:
         """Get the image from disk."""
         # the extend curve ends at max force, and rows are zero filled past it
         heights = self._zfwd.get_line_ends(self.n_lines)
-        return nid_map_from_lines(heights, self.shape)
+        return _nid_map_from_lines(heights, self.shape)
 
 
 @frozen
@@ -2154,7 +2181,7 @@ class NIDMapImage:
     shape: Index
     n_lines: int
     sign: float
-    _dataset: NIDDataset
+    _dataset: _NIDDataset
 
     @property
     def units(self) -> str:
@@ -2164,7 +2191,7 @@ class NIDMapImage:
         """Get the image from disk."""
         values = self._dataset.get_column(0, self.n_lines)
         values *= self.sign
-        return nid_map_from_lines(values, self.shape)
+        return _nid_map_from_lines(values, self.shape)
 
 
 @frozen
@@ -2191,12 +2218,12 @@ class NIDFile:
     def parse(cls, data: Buffer):
         cls.check_type(data)
         # End of header is demarcated by the bytes b"#!"
-        header_end_pos = find_in_buffer(data, b"#!")
+        header_end_pos = _find_in_buffer(data, b"#!")
         if header_end_pos < 0:
             raise FileFormatError(
                 "No stop bytes found, are you sure this is a NID file?"
             )
-        header = parse_nanosurf_header(
+        header = _parse_nanosurf_header(
             bytes(memoryview(data)[:header_end_pos]).decode("utf-8").splitlines()
         )
 
@@ -2204,7 +2231,7 @@ class NIDFile:
         offset = header_end_pos + 2
         datasets = {}
         for name, points in zip(header["datasets"], header["param"]["LinePoints"]):
-            dataset = NIDDataset.parse(data, header[name], name, offset, points)
+            dataset = _NIDDataset.parse(data, header[name], name, offset, points)
             datasets[name] = dataset
             offset += dataset.nbytes
         nbytes = memoryview(data).nbytes
@@ -2213,19 +2240,19 @@ class NIDFile:
                 "Datasets overrun the end of the file.", offset, nbytes
             )
 
-        k, k_unit = parse_nanosurf_value(header["cantilever"]["Prop0"])
-        k_exponent = si_prefix_exponent(k_unit, "N/m")
+        k, k_unit = _parse_nanosurf_value(header["cantilever"]["Prop0"])
+        k_exponent = _si_prefix_exponent(k_unit, "N/m")
         if k_exponent is None:
             raise FileFormatError(
                 "Expected spring constant in a force per length.", k_unit
             )
         k *= 10.0**k_exponent
         defl_sens = (
-            float(header["cantilever"]["Sensitivity"]) * NANOMETER_UNIT_CONVERSION
+            float(header["cantilever"]["Sensitivity"]) * _NANOMETER_UNIT_CONVERSION
         )
         spectroscopy = header["DataSet\\Parameters\\Spectroscopy"]
-        mod_time, _ = parse_nanosurf_value(spectroscopy["FwModTime"])
-        mod_points, _ = parse_nanosurf_value(spectroscopy["FwModDatapoints"])
+        mod_time, _ = _parse_nanosurf_value(spectroscopy["FwModTime"])
+        mod_points, _ = _parse_nanosurf_value(spectroscopy["FwModDatapoints"])
         t_step = mod_time / mod_points
 
         spec_mode = header["DataSet\\SpecInfos\\SpecHeader"]["SpecMode"]
@@ -2253,19 +2280,19 @@ class NIDFile:
         n_map = volume.shape[0] * volume.shape[1]
         for d in datasets.values():
             if (
-                d.frame not in NANOSURF_RAW_FRAMES
+                d.frame not in _NANOSURF_RAW_FRAMES
                 and not d.frame.startswith("Slope")
                 and d.lines == n_map
                 and re.fullmatch(r"NameZ\d+", d.channel)
             ):
-                name, sign = NANOSURF_RESULT_IMAGES.get(d.frame, (d.frame, 1.0))
+                name, sign = _NANOSURF_RESULT_IMAGES.get(d.frame, (d.frame, 1.0))
                 images[name] = NIDMapImage(name, volume.shape, volume.n_lines, sign, d)
 
         # map extents are inclusive of the outermost points, so pitch is span/(n-1)
         xmin, xmax, ymin, ymax, nx, ny = header["spec_map"][0][:6]
         scansize = (
-            float((xmax - xmin) * nx / (nx - 1) * NANOMETER_UNIT_CONVERSION),
-            float((ymax - ymin) * ny / (ny - 1) * NANOMETER_UNIT_CONVERSION),
+            float((xmax - xmin) * nx / (nx - 1) * _NANOMETER_UNIT_CONVERSION),
+            float((ymax - ymin) * ny / (ny - 1) * _NANOMETER_UNIT_CONVERSION),
         )
         return cls(header, images, [volume], k, defl_sens, t_step, scansize)
 

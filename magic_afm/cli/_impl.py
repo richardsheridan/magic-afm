@@ -42,8 +42,8 @@ from magic_afm.calculation import (
     PROPERTY_UNITS_DICT,
     FitFix,
     FitMode,
-    calc_properties_imap,
-    process_force_curve,
+    fit_curve_properties,
+    prepare_force_curve,
 )
 from magic_afm.data_readers import SUFFIX_FVFILE_MAP, FVFile
 
@@ -181,11 +181,11 @@ def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe,
     nan_counter = count(1)
 
     procfun = partial(
-        process_force_curve,
+        prepare_force_curve,
         fit_mode=co["fit_mode"],
         s_ratio=defl_sens / fvfile.defl_sens,
     )
-    calcfun = partial(calc_properties_imap, **{**co, "k": k})
+    calcfun = partial(fit_curve_properties, **{**co, "k": k})
     chunksize = 8
     for rc_zd_chunk in _chunk_producer(procfun, v.iter_curves(), chunksize):
         if prepare_flag:
