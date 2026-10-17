@@ -148,11 +148,11 @@ class ForceCurveData:
     fit_mode: Optional[calculation.FitMode] = None
     f_fit: Optional[np.ndarray] = None
     d_fit: Optional[np.ndarray] = None
-    defl: Optional[np.ndarray] = None
-    ind: Optional[np.ndarray] = None
-    z_tru: Optional[np.ndarray] = None
-    mindelta: Optional[np.ndarray] = None
-    a_c: Optional[np.ndarray] = None
+    defl: Optional[float] = None
+    ind: Optional[float] = None
+    z_tru: Optional[float] = None
+    mindelta: Optional[float] = None
+    a_c: Optional[float] = None
     sens: Optional[np.ndarray] = None
     sse: Optional[np.ndarray] = None
 
@@ -2413,15 +2413,11 @@ def calculate_force_data(
     )[0]
 
     sens = (parms_perturb["M"] - parms["M"]) / parms["M"] / eps
-    optionsdict = asdict(options)
-    optionsdict.pop("tau")
-    (
-        deflection,
-        indentation,
-        z_true_surface,
-        mindelta,
-        a_c,
-    ) = calculation.calc_def_ind_ztru_ac(d, parms, split=split, **optionsdict)
+    deflection, indentation, a_c = calculation.max_load_quantities(
+        d, parms, options.k, options.fit_mode, split=split
+    )
+    mindelta = calculation.pull_off_delta(parms, options.k)
+    z_true_surface = calculation.true_surface_z(parms, options.k)
     return ForceCurveData(
         zxr=zxr,
         dxr=dxr,

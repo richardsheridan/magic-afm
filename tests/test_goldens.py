@@ -98,7 +98,7 @@ FINGERPRINT_STRIDE = {"raw": 100, "resampled": 32}
 #   IndentationRatio  nid: max rel 2.45e-5 (abs 1.3e-4); synthetic: 0
 #   parms.delta_shift synthetic soft BOTH: rel 9.9e-8 (abs 3e-10 nm, 1 ulp)
 # The nid fitted parameters are bitwise equal, so the Indentation spread arises after
-# the fit, in calc_def_ind_ztru_ac (delta_curve over schwarz_wrap, jitted only with
+# the fit, in max_load_quantities (delta_curve over schwarz_wrap, jitted only with
 # numba), on float32 parameters. Those two fields get rtol 1e-4, about 4x the spread.
 # (Casting the nid curves to float64 does not shrink it: the fits then differ by up to
 # 1% in M between the envs, so their agreement here depends on the float32 input path.)

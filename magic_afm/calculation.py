@@ -1117,25 +1117,10 @@ def fitfun(
     return parms, parms_err, sse, d_fit
 
 
-def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
-    """Calculate deflection, indentation, z_true_surface given deflection data and parameters."""
-
-    assert fit_mode
-    force = d * k
-    n_pts_max = len(force) // 25
-    if fit_mode == FitMode.EXTEND:
-        maxforce = force[-n_pts_max:].mean()
-    elif fit_mode == FitMode.RETRACT:
-        maxforce = force[:n_pts_max].mean()
-    elif fit_mode == FitMode.BOTH:
-        split = kwargs["split"]
-        maxforce = force[split - n_pts_max // 2 : split + n_pts_max // 2].mean()
-    else:
-        raise ValueError("Unknown fit_mode: ", fit_mode)
-
-    maxdelta = delta_curve(
+def _delta_at(force, k, params):
+    return delta_curve(
         schwarz_wrap,
-        maxforce,
+        force,
         k,
         params["radius"],
         params["tau"],
@@ -1145,18 +1130,15 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
         params["force_shift"],
         params["lj_scale"],
     )
-    mindelta = delta_curve(
-        schwarz_wrap,
-        params["force_shift"] - params["fc"],
-        k,
-        params["radius"],
-        params["tau"],
-        params["M"],
-        params["fc"],
-        params["delta_shift"],
-        params["force_shift"],
-        params["lj_scale"],
-    )
+
+
+def pull_off_delta(params, k) -> float:
+    """Calculate the delta at the pull-off force given fitted parameters."""
+    return _delta_at(params["force_shift"] - params["fc"], k, params).item()
+
+
+def true_surface_z(params, k) -> float:
+    """Calculate the z of zero indentation force given fitted parameters."""
     # Identical on extend or retract, but in the case of `FitMode.BOTH` need to pick one
     zeroindforce = force_curve(
         red_retract,
@@ -1170,6 +1152,25 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
         params["force_shift"].squeeze(),
         params["lj_scale"].squeeze(),
     ).item()
+    return (params["delta_shift"] + zeroindforce / k).item()
+
+
+def max_load_quantities(d, params, k, fit_mode, split=None):
+    """Calculate deflection, indentation and contact radius at maximum load."""
+
+    assert fit_mode
+    force = d * k
+    n_pts_max = len(force) // 25
+    if fit_mode == FitMode.EXTEND:
+        maxforce = force[-n_pts_max:].mean()
+    elif fit_mode == FitMode.RETRACT:
+        maxforce = force[:n_pts_max].mean()
+    elif fit_mode == FitMode.BOTH:
+        maxforce = force[split - n_pts_max // 2 : split + n_pts_max // 2].mean()
+    else:
+        raise ValueError("Unknown fit_mode: ", fit_mode)
+
+    maxdelta = _delta_at(maxforce, k, params)
 
     maxforce -= params["force_shift"]
     red_fc = (params["tau"] - 4) / 2
@@ -1181,12 +1182,8 @@ def calc_def_ind_ztru_ac(d, params, k, fit_mode, **kwargs):
     ) ** (-1 / 3)
 
     deflection = (maxforce + params["fc"]) / k
-    indentation = maxdelta - mindelta
-    z_true_surface = params["delta_shift"] + zeroindforce / k
-    return tuple(
-        x.item()
-        for x in (deflection, indentation, z_true_surface, mindelta, contact_radius)
-    )
+    indentation = maxdelta - pull_off_delta(params, k)
+    return tuple(x.item() for x in (deflection, indentation, contact_radius))
 
 
 def perturb_k(d, k, epsilon=1e-3):
@@ -1201,9 +1198,10 @@ def calc_properties_imap(z_d_s_rc, k_sens=True, **kwargs):
     parms, parms_err, sse, _ = fitfun(z, d, nan_on_error=True, **kwargs)
     if np.any(np.isnan(parms.item())):
         return rc, None, None, None
-    (deflection, indentation, z_true_surface, mindelta, a_c) = calc_def_ind_ztru_ac(
-        d, parms, **kwargs
+    deflection, indentation, a_c = max_load_quantities(
+        d, parms, kwargs["k"], kwargs["fit_mode"], split=split
     )
+    z_true_surface = true_surface_z(parms, kwargs["k"])
     if k_sens:
         k = kwargs.pop("k")
         eps = 1e-3
