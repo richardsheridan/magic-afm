@@ -31,6 +31,7 @@ from synthetic_files.arh5 import build_arh5_ffm, build_arh5_force_map
 from magic_afm.calculation import FitMode, prepare_force_curve
 
 ARH5_RELPATH = "test_cases/PDMS_SAA/ffm/rtrace0001.h5"
+BOTH_ARH5_RELPATH = "test_cases/PDMS_SAA/ffm/both0001.h5"
 
 # grid (rows, cols), points per half curve, captured directions
 FFM_CASES = {
@@ -111,8 +112,7 @@ def test_arh5_ffm_metadata_round_trips(ffm):
         np.testing.assert_allclose(fvfile.t_step, ffm.t_step, rtol=1e-12)
 
 
-# a retrace-only capture is left out: the reader calls its one volume Trace
-@pytest.mark.parametrize("capture", ["trace", "both"])
+@pytest.mark.parametrize("capture", ["trace", "retrace", "both"])
 def test_arh5_ffm_volumes_are_named_by_direction(tmp_path, capture):
     synthetic = build_arh5_ffm(tmp_path, capture=capture)
     with open_fvfile(synthetic.path) as fvfile:
@@ -315,3 +315,21 @@ def test_synthetic_arh5_has_the_structure_of_the_real_file(real_data_file, tmp_p
         )
     with h5py.File(synthetic.path, "r") as h5:
         assert h5_tree(h5) == real_tree
+
+
+# FastMapCapture is 2 (retrace only) in rtrace0001.h5 and 3 (both) in both0001.h5
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("relpath", "names", "trace"),
+    [
+        (ARH5_RELPATH, ["Retrace"], None),
+        (BOTH_ARH5_RELPATH, ["Trace", "Retrace"], 1),
+    ],
+    ids=["rtrace0001", "both0001"],
+)
+def test_real_arh5_names_volumes_by_captured_direction_and_reports_trace(
+    real_data_file, relpath, names, trace
+):
+    with open_fvfile(Path(real_data_file(relpath))) as fvfile:
+        assert [v.name for v in fvfile.volumes] == names
+        assert fvfile.trace == trace
