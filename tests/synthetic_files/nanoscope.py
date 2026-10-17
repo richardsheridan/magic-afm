@@ -168,6 +168,17 @@ def _header(sections, size: int) -> bytes:
     return text + b"\x1a" + bytes(size - len(text) - 1)
 
 
+def edit_nanoscope_header(path: Path, edit, size: int = PFC_HEADER_BYTES) -> None:
+    """Apply edit(lines) to the header lines of a capture, keeping its size."""
+    data = path.read_bytes()
+    end = data.index(b"\x1a")
+    lines = data[:end].decode("windows-1252").split("\r\n")
+    text = "\r\n".join(edit(lines)).encode("windows-1252")
+    assert len(text) < size
+    header = text + b"\x1a" + bytes(size - len(text) - 1)
+    path.write_bytes(header + data[size:])
+
+
 def _quantize(values: np.ndarray, lsb: float, dtype) -> tuple[np.ndarray, np.ndarray]:
     """Integer codes for values and what they decode to."""
     codes = np.rint(values / lsb)

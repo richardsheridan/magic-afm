@@ -51,6 +51,7 @@ import numpy as np
 import pytest
 from click.testing import CliRunner, Result
 from conftest import load_platform_goldens
+from synthetic_files.nanoscope import build_pfc, edit_nanoscope_header
 from test_goldens import TOLERANCES as T2_TOLERANCES
 
 from magic_afm.calculation import FitFix
@@ -617,6 +618,66 @@ def test_cli_rejects_an_unknown_suffix_as_a_usage_error(tmp_path):
     assert "scan.xyz" in result.output
     assert ".xyz" in result.output.replace("scan.xyz", "")
     assert not out.exists()
+
+
+def _insert_stray_header_line(lines):
+    i = lines.index("\\*Equipment list")
+    return lines[: i + 1] + ["Stray: 1"] + lines[i + 1 :]
+
+
+def build_bad_pfc(directory, kind):
+    """A .pfc the CLI cannot read: one that fails to parse, or an empty one."""
+    if kind == "empty":  # mmap refuses an empty file, so it fails to open
+        path = directory / "bad.000.pfc"
+        path.write_bytes(b"")
+        return path, "cannot mmap an empty file"
+    path = build_pfc(directory, (2, 2), filename="bad.000.pfc").path
+    edit_nanoscope_header(path, _insert_stray_header_line)
+    return path, "Stray: 1"
+
+
+def written_maps(stem):
+    return [export_name(stem, m) for m in DEFAULT_MAPS] + [options_name(stem)]
+
+
+@pytest.mark.parametrize("kind", ["unparsable", "empty"])
+@pytest.mark.parametrize("position", [0, 1, 2], ids=["first", "middle", "last"])
+def test_cli_reports_an_unreadable_file_and_still_fits_the_others(
+    tmp_path, kind, position
+):
+    """The bad file and its error go to stderr, every good file is written, exit 1."""
+    good = [
+        build_pfc(tmp_path, (2, 2), filename=f"good{i}.000.pfc").path for i in (0, 1)
+    ]
+    bad, error_text = build_bad_pfc(tmp_path, kind)
+    paths = [*good]
+    paths.insert(position, bad)
+    out = tmp_path / "out"
+    # invoke_cli puts its path argument last on the command line
+    result = invoke_cli(paths[-1], out, ["--verbose", *map(str, paths[:-1])])
+    assert result.exit_code == 1, result.output
+    assert str(bad) in result.stderr
+    assert error_text in result.stderr
+    # the bad file is reported in its turn: after the good files before it
+    before_bad = result.output[: result.output.index(str(bad))]
+    written_before = [g.stem for g in good if g.stem + "_options" in before_bad]
+    assert written_before == [g.stem for g in good[:position]]
+    assert sorted(p.name for p in out.iterdir()) == sorted(
+        written_maps("good0.000") + written_maps("good1.000")
+    )
+
+
+def test_cli_stop_on_error_raises_on_a_file_that_fails_to_parse(tmp_path):
+    """As for a failed fit: a RuntimeError naming the file, from the format error."""
+    from magic_afm.data_readers import FileFormatError
+
+    bad, _ = build_bad_pfc(tmp_path, "unparsable")
+    good = build_pfc(tmp_path, (2, 2), filename="good.000.pfc").path
+    out = tmp_path / "out"
+    with pytest.raises(RuntimeError, match=re.escape(str(bad))) as excinfo:
+        invoke_cli(good, out, ["--stop-on-error", str(bad)])  # bad comes first
+    assert isinstance(excinfo.value.__cause__, FileFormatError)
+    assert list(out.iterdir()) == []
 
 
 @pytest.mark.slow

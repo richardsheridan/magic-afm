@@ -41,6 +41,7 @@ from synthetic_files.nanoscope import (
     SPM_HEADER_BYTES,
     build_pfc,
     build_spm,
+    edit_nanoscope_header,
 )
 from synthetic_files.nid import build_nid
 
@@ -113,17 +114,6 @@ def _section(data: bytes, name: bytes) -> int:
     offset = data.find(name) - 8
     assert offset >= 0 and HEADER.unpack_from(data, offset)[2] == name
     return offset
-
-
-def _edit_nanoscope_header(path: Path, edit, size: int = PFC_HEADER_BYTES) -> None:
-    """Apply edit(lines) to the header lines of a capture, keeping its size."""
-    data = path.read_bytes()
-    end = data.index(b"\x1a")
-    lines = data[:end].decode("windows-1252").split("\r\n")
-    text = "\r\n".join(edit(lines)).encode("windows-1252")
-    assert len(text) < size
-    header = text + b"\x1a" + bytes(size - len(text) - 1)
-    path.write_bytes(header + data[size:])
 
 
 def _set_key(lines, section: str, key: str, value: str) -> list[str]:
@@ -241,7 +231,7 @@ def test_nanoscope_curve_sensitivity_in_an_unknown_unit_raises_format_error(
     tmp_path, build, size, key
 ):
     path = build(tmp_path).path
-    _edit_nanoscope_header(
+    edit_nanoscope_header(
         path,
         lambda lines: _replace_in_key(lines, "Ciao scan list", key, "nm/V", "nA/V"),
         size,
@@ -251,7 +241,7 @@ def test_nanoscope_curve_sensitivity_in_an_unknown_unit_raises_format_error(
 
 def test_nanoscope_curve_scale_in_an_unknown_unit_raises_format_error(tmp_path):
     path = build_pfc(tmp_path).path
-    _edit_nanoscope_header(
+    edit_nanoscope_header(
         path,
         lambda lines: _replace_in_key(
             lines, "Ciao force image list", "@4:Z scale", "V/LSB", "Arb/LSB"
@@ -294,7 +284,7 @@ def test_arh5_force_map_with_a_dwell_segment_raises_format_error(tmp_path):
 
 def test_nanoscope_pft_freq_not_in_khz_raises_format_error(tmp_path):
     path = build_pfc(tmp_path).path
-    _edit_nanoscope_header(
+    edit_nanoscope_header(
         path, lambda lines: _set_key(lines, "Ciao scan list", "PFT Freq", "1000 Hz")
     )
     assert_format_error(path, r"PFT Freq")
@@ -307,7 +297,7 @@ def test_nanoscope_header_line_without_backslash_raises_format_error(tmp_path):
         i = lines.index("\\*Equipment list")
         return lines[: i + 1] + ["Stray: 1"] + lines[i + 1 :]
 
-    _edit_nanoscope_header(path, insert_stray_line)
+    edit_nanoscope_header(path, insert_stray_line)
     assert_format_error(path, re.escape("Stray: 1"))
 
 
@@ -332,7 +322,7 @@ def test_nanoscope_skipped_point_capture_raises_format_error(tmp_path):
             lines, "Ciao force image list", "Data length", str(force_length // 4)
         )
 
-    _edit_nanoscope_header(path, skip_points)
+    edit_nanoscope_header(path, skip_points)
     # every other point of every other line: a quarter of the curves
     path.write_bytes(path.read_bytes()[: len(data) - force_length * 3 // 4])
     assert_format_error(path, r"(?i)skip|force/line")
