@@ -107,29 +107,37 @@ def _chunk_consumer(chunk):
 
 
 def threaded_opener(filenames):
-    """Yield the opened fvfiles and names while opening the next in a background thread.
+    """Yield the opened fvfiles (or the error opening one) and names while opening the next in a background thread.
 
     This generator goes out of its way to avoid opening more than 2 files at a time."""
     tpe = ThreadPoolExecutor()
-    fvfile: FVFile
+    fvfile: FVFile | Exception
 
     filenames = iter(filenames)
-    filename = next(filenames)
+    pending = _submit_open(tpe, next(filenames))
+    while pending is not None:
+        filename, fvfile_cls, fut = pending
+        next_filename = next(filenames, None)
+        try:
+            open_thing = fut.result()
+        except Exception as e:
+            pending = _submit_open(tpe, next_filename)
+            yield e, filename
+            continue
+        with open_thing:
+            try:
+                fvfile = fvfile_cls.parse(open_thing)
+            except Exception as e:
+                fvfile = e
+            pending = _submit_open(tpe, next_filename)
+            yield fvfile, filename
+
+
+def _submit_open(tpe, filename):
+    if filename is None:
+        return None
     fvfile_cls, opener = SUFFIX_FVFILE_MAP[filename.suffix.lower()]
-    fut = tpe.submit(opener, filename)
-    prev_filename = filename
-
-    for filename in filenames:
-        with fut.result() as open_thing:
-            fvfile = fvfile_cls.parse(open_thing)
-            fvfile_cls, opener = SUFFIX_FVFILE_MAP[filename.suffix.lower()]
-            fut = tpe.submit(opener, filename)
-            yield fvfile, prev_filename
-            prev_filename = filename
-
-    with fut.result() as open_thing:
-        fvfile = fvfile_cls.parse(open_thing)
-        yield fvfile, prev_filename
+    return filename, fvfile_cls, tpe.submit(opener, filename)
 
 
 def process_fvfile(fvfile, filename, output_type, output_path, verbose, co, ppe, pbar):
@@ -464,6 +472,8 @@ def main(
         disable=disable_progress,
     ):
         try:
+            if isinstance(fvfile, Exception):
+                raise fvfile
             with tqdm(
                 desc=f"Preparing to fit {filename.name} force curves",
                 smoothing=0.01,
