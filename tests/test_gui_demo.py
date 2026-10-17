@@ -15,10 +15,18 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import contextlib
 from itertools import islice
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+import trio
+import trio_parallel
+from test_cli import DEFAULT_MAPS
+from test_stopped_scans import RecordingProgressBar
+
+from magic_afm.calculation import FitFix, FitMode
 
 # objects other than a reader's parsed file that the GUI puts in GUIFVFile.fvfile, by
 # their name in magic_afm.gui._impl
@@ -64,3 +72,48 @@ def test_demo_curves_are_extend_and_retract_halves_of_float32():
         for part, want_part in zip(curve, want, strict=True):
             for half, want_half in zip(part, want_part, strict=True):
                 np.testing.assert_array_equal(half, want_half)
+
+
+def test_demo_property_maps_are_added_finite_and_named_without_direction(monkeypatch):
+    """Fitting the Demo adds every default map as a finite CalcExt image, no suffix."""
+    from magic_afm.gui import _impl as gui
+
+    shape = (4, 4)
+    monkeypatch.setattr(gui.DemoForceVolumeFile, "shape", shape)
+    monkeypatch.setattr(gui, "tqdm_tk", RecordingProgressBar)
+    monkeypatch.setattr(RecordingProgressBar, "instances", [])
+    monkeypatch.setattr(trio_parallel, "run_sync", trio.to_thread.run_sync)
+
+    opened_fvol = gui.DemoForceVolumeFile()
+    params = opened_fvol.initial_parameters
+    controller = gui.ForceVolumeController(MagicMock(), opened_fvol)
+    controller.axesimage = MagicMock(**{"get_size.return_value": shape})
+    controller.spinner_scope = contextlib.nullcontext
+    # the GUI's option defaults, fitting the extend half as the GUI smoke test does
+    options = gui.ForceCurveOptions(
+        fit_mode=FitMode.EXTEND,
+        fit_fix=FitFix.DEFAULTS,
+        disp_kind=gui.DispKind.zd,
+        k=params.k,
+        k_sens=True,
+        defl_sens=params.defl_sens,
+        sync_dist=params.sync_dist,
+        radius=20.0,
+        tau=0.0,
+        M=10 ** (6.0 - 9),
+        lj_scale=2.0,
+        vd=0.0,
+        li_per=0.0,
+        li_amp=0.0,
+        drag=0.0,
+        trace=params.trace,
+    )
+    with np.errstate(all="ignore"):
+        trio.run(controller.calc_prop_map_response, options)
+
+    calc = {name for name in opened_fvol.image_names if name.startswith("Calc")}
+    assert calc == {"CalcExt" + m for m in DEFAULT_MAPS}
+    not_finite = {
+        name: int((~np.isfinite(opened_fvol.get_image(name))).sum()) for name in calc
+    }
+    assert not_finite == dict.fromkeys(calc, 0)
