@@ -310,9 +310,7 @@ class GUIFVFile:
         return image
 
     def _get_volume(self, trace, sync_dist):
-        if trace is None:
-            trace = True
-        v = self.fvfile.volumes[not trace]
+        v = data_readers._select_volume(self.fvfile, trace)
         if sync_dist != self.fvfile.sync_dist:  # including None!=None
             v = evolve(v, sync_dist=sync_dist)
         return v

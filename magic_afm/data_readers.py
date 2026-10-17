@@ -447,6 +447,21 @@ class ARH5FFMVolume:
         return np.stack((z, d))
 
 
+_DIRECTION_NAMES = {0: "Retrace", 1: "Trace"}
+
+
+def _select_volume(fvfile: FVFile, trace: int | None) -> Volume:
+    """The volume named for trace, else the first if trace or directions are absent."""
+    names = [v.name for v in fvfile.volumes]
+    directions = [n for n in names if n in _DIRECTION_NAMES.values()]
+    if trace is None or not directions:
+        return fvfile.volumes[0]
+    wanted = _DIRECTION_NAMES[int(trace)]
+    if wanted not in names:
+        raise ValueError(f"Requested {wanted} but the file holds only {directions}")
+    return fvfile.volumes[names.index(wanted)]
+
+
 @frozen
 class ARH5File:
     headers: dict[str, Any] = field(repr=lambda x: f"<dict with {len(x)} entries>")
@@ -479,28 +494,23 @@ class ARH5File:
         volumes = []
         if "FFM" in h5data:
             # self.scandown = bool(self.notes["ScanDown"])
-            if "0" in h5data["FFM"]:
-                volumes.append(
-                    ARH5FFMVolume(
-                        "Trace",
-                        h5data["FFM"]["0"]["Raw"].shape[:2],
-                        h5data["FFM"]["0"]["Raw"],
-                        h5data["FFM"]["0"]["Defl"],
+            # FastMapCapture: 1 trace, 2 retrace, 3 both, stored in groups 0, 1
+            capture = int(notes.get("FastMapCapture", 3))
+            names = {1: ["Trace"], 2: ["Retrace"]}.get(capture, ["Trace", "Retrace"])
+            for group, name in zip("01", names):
+                if group in h5data["FFM"]:
+                    volumes.append(
+                        ARH5FFMVolume(
+                            name,
+                            h5data["FFM"][group]["Raw"].shape[:2],
+                            h5data["FFM"][group]["Raw"],
+                            h5data["FFM"][group]["Defl"],
+                        )
                     )
-                )
-            if "1" in h5data["FFM"]:
-                volumes.append(
-                    ARH5FFMVolume(
-                        "Retrace",
-                        h5data["FFM"]["1"]["Raw"].shape[:2],
-                        h5data["FFM"]["1"]["Raw"],
-                        h5data["FFM"]["1"]["Defl"],
-                    )
-                )
             if "Raw" in h5data["FFM"]:
                 volumes.append(
                     ARH5FFMVolume(
-                        "Trace",
+                        names[0],
                         h5data["FFM"]["Raw"].shape[:2],
                         h5data["FFM"]["Raw"],
                         h5data["FFM"]["Defl"],
@@ -512,7 +522,8 @@ class ARH5File:
             volumes.append(ARH5ForceMapVolume(h5data))
             npts = volumes[0].npts
         t_step = 1 / rate / npts
-        return cls(notes, images, volumes, k, defl_sens, t_step, scansize)
+        trace = 1 if len(volumes) > 1 else None
+        return cls(notes, images, volumes, k, defl_sens, t_step, scansize, trace=trace)
 
 
 @frozen
