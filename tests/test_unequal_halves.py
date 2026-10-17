@@ -164,3 +164,25 @@ def test_gui_readout_fits_an_unequal_half_curve(mode, cut):
         assert (out_ext, out_ret) == (n_ext, n_ret)
     assert (out_ext > out_ret) == (n_ext > n_ret)
     assert np.all(np.isfinite(data.parms.item()))
+
+
+@pytest.mark.parametrize("mode", t2.MODES, ids=lambda m: m.name)
+def test_gui_readout_resamples_equal_halves_exactly_as_before(mode):
+    from magic_afm.gui import _impl as gui
+
+    zxr, dxr = t2.demo_curve(**t2.SYNTHETIC_CASES["demo_r0_c0"])
+    assert sum(map(len, zxr)) > RESAMPLE_NPTS
+    frozen = (tuple(map(np.copy, zxr)), tuple(map(np.copy, dxr)))
+    want_ext = today_prepare_force_curve(((0, 0), frozen), FitMode.EXTEND, 1.0)
+    frozen = (tuple(map(np.copy, zxr)), tuple(map(np.copy, dxr)))
+    want_ret = today_prepare_force_curve(((0, 0), frozen), FitMode.RETRACT, 1.0)
+    options = gui_options(mode, t2.DEMO_K)
+    fvparams = gui.ForceVolumeParams(
+        k=t2.DEMO_K, defl_sens=5.0, sync_dist=0, trace=None
+    )
+    with np.errstate(all="ignore"):
+        data = gui.calculate_force_data(zxr, dxr, 1e-3, options, fvparams)
+    for got, want in zip(data.zxr, (want_ext[0], want_ret[0]), strict=True):
+        np.testing.assert_allclose(got, want, rtol=0, atol=0)
+    for got, want in zip(data.dxr, (want_ext[1], want_ret[1]), strict=True):
+        np.testing.assert_allclose(got, want, rtol=0, atol=0)
