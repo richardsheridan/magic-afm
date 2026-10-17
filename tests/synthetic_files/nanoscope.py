@@ -242,8 +242,6 @@ def build_pfc(
     """
     rows, cols = shape
     n_curves = rows * cols
-    if n_curves < 2:
-        raise ValueError("a capture needs two pixels, one to precede the other", shape)
     npts = 2 * points
     rate_str = _g(rate)
     if sample_points is None:
