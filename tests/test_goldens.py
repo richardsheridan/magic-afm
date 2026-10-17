@@ -62,6 +62,8 @@ DEFAULT_OPTIONS = dict(
     drag=0.0,
     k_sens=True,
 )
+# The same, less k_sens, which fit_curve_properties takes and fit_force_curve does not.
+FIT_OPTIONS = {k: v for k, v in DEFAULT_OPTIONS.items() if k != "k_sens"}
 
 # The maps the CLI exports at DEFAULT_OPTIONS: every property, and the parameters (and
 # their errors) that FitFix.DEFAULTS leaves free.
@@ -393,7 +395,7 @@ def test_fit_force_curve_raises_no_deprecation_warning(mode):
     z, d, split, _ = preprocess(((0, 0), curve), mode)
     with np.errstate(all="ignore"):
         parms, parms_err, sse, _ = calculation.fit_force_curve(
-            z, d, k=DEMO_K, fit_mode=mode, split=split, **DEFAULT_OPTIONS
+            z, d, k=DEMO_K, fit_mode=mode, split=split, **FIT_OPTIONS
         )
     assert np.all(np.isfinite(parms.item()))
     assert np.all(np.isfinite(parms_err.item()))

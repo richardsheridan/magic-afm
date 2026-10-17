@@ -132,7 +132,7 @@ def fitted_inputs(case, mode):
     z, d, split, _ = t2.preprocess(((0, 0), curve), mode)
     with np.errstate(all="ignore"):
         parms, *_ = calculation.fit_force_curve(
-            z, d, k=t2.DEMO_K, fit_mode=mode, split=split, **t2.DEFAULT_OPTIONS
+            z, d, k=t2.DEMO_K, fit_mode=mode, split=split, **t2.FIT_OPTIONS
         )
     if tau is not None:
         parms = parms.copy()
