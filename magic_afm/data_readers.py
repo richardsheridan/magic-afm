@@ -1505,7 +1505,6 @@ class _FFVReader:
         name = subheader["@4:Image Data"].split('"')[1]
         offset = int(subheader["Data offset"])
         length = int(subheader["Data length"])
-        # npts = int(subheader["Sample Points"])  # only QNM?
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
         bpp = _check_force_bpp(length, r * c, 2 * n_ext, header)
         ints = np.ndarray(
@@ -1537,7 +1536,6 @@ class _QNMDReader:
         r, c = shape
         length = int(subheader["Data length"])
         offset = int(subheader["Data offset"])
-        # npts = int(subheader["Sample Points"]) only at 2kHz?
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
         npts = 2 * n_ext
         bpp = _check_force_bpp(length, r * c, npts, header)
@@ -1761,12 +1759,13 @@ class NanoscopeFile:
                 sync_dist_str = csl["Sync Distance QNM"]
             except KeyError:
                 sync_dist_str = csl["Sync Distance"]
-            npts = sum(map(int, deflections[0]["Samps/line"].split()))
+            points_per_curve = sum(map(int, deflections[0]["Samps/line"].split()))
             try:
-                sample_points = float(csl["Sample Points"])
+                samples_per_period = float(csl["Sample Points"])
             except KeyError:
-                sample_points = 512 / rate
-            sync_dist = float(sync_dist_str) * npts / sample_points
+                # Sample Points times PFT Freq is 512 kHz in every real capture
+                samples_per_period = 512 / rate
+            sync_dist = float(sync_dist_str) * points_per_curve / samples_per_period
             volumes = [
                 NanoscopeVolume.parse(
                     header,
