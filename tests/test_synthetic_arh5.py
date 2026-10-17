@@ -282,7 +282,8 @@ def structure(fvfile):
         "volumes": [(type(v), v.shape) for v in fvfile.volumes],
         "volume names": [v.name for v in fvfile.volumes],
         "curve": [
-            tuple(np.shape(half) for half in v.get_curve(0, 0)) for v in fvfile.volumes
+            [tuple(map(np.shape, part)) for part in v.get_curve(0, 0)]
+            for v in fvfile.volumes
         ],
         "all curves": [
             tuple(np.shape(a) for a in v.get_all_curves()) for v in fvfile.volumes
@@ -302,7 +303,8 @@ def test_synthetic_arh5_has_the_structure_of_the_real_file(real_data_file, tmp_p
         real_structure = structure(real)
         real_note = real.headers
         shape = real.volumes[0].shape
-        points = real.volumes[0].get_curve(0, 0)[0].shape[-1]
+        # points per half curve: the length of the extend half of z
+        points = len(real.volumes[0].get_curve(0, 0)[0][0])
     # the real file kept only the retrace
     synthetic = build_arh5_ffm(tmp_path, shape, points, capture="retrace")
     with open_fvfile(synthetic.path) as fvfile:
