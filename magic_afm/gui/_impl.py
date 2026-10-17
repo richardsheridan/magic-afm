@@ -2386,7 +2386,7 @@ def calculate_force_data(
         raise ValueError("Unknown fit_mode: ", options.fit_mode)
 
     cancel_poller()
-    optionsdict = asdict(options)
+    optionsdict = calculation._fit_arguments(asdict(options))
     parms, parms_err, sse, d_fit = calculation.fit_force_curve(
         z,
         d,
