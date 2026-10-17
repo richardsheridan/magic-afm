@@ -364,7 +364,9 @@ class DemoForceVolumeFile(GUIFVFile):
         dret = fret / self.fvfile.k + gen.normal(scale=0.1, size=fret.size)
         zext = deltaext + dext + gen.normal(scale=0.01, size=fext.size)
         zret = deltaret + dret + gen.normal(scale=0.01, size=fret.size)
-        return (zext, zret), (dext, dret)
+        z = np.array((zext, zret), dtype=np.float32)
+        d = np.array((dext, dret), dtype=np.float32)
+        return (z[0], z[1]), (d[0], d[1])
 
     def get_image(self, image_name):
         if image_name in self._image_cache:

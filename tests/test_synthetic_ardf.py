@@ -379,7 +379,7 @@ def structure(fvfile):
         "trace": fvfile.trace,
         "curves": [sum(1 for _ in v.iter_indices()) for v in fvfile.volumes],
         "curve": [
-            tuple(np.shape(half) for half in v.get_curve(*rc))
+            [tuple(map(np.shape, part)) for part in v.get_curve(*rc)]
             for v, rc in zip(fvfile.volumes, first, strict=True)
         ],
         "all curves": [

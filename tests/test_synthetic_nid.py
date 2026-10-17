@@ -93,17 +93,15 @@ def test_nid_indices_come_in_acquisition_order(synthetic):
     assert indices == list(synthetic.volumes[0].order)
 
 
-def test_nid_get_curve_returns_the_points_nearest_the_surface(synthetic):
+def test_nid_get_curve_returns_each_half_as_stored(synthetic):
     expected = synthetic.volumes[0]
     rows, cols = expected.shape
     with open_fvfile(synthetic.path) as fvfile:
         volume = fvfile.volumes[0]
         for r in range(rows):
             for c in range(cols):
-                # both halves cut to the shorter one
-                n = min(expected.ext_points[r, c], expected.ret_points[r, c])
                 (zext, zret), (dext, dret) = volume.get_curve(r, c)
-                (ezext, ezret), (edext, edret) = expected.curve(r, c, n, n)
+                (ezext, ezret), (edext, edret) = expected.curve(r, c)
                 assert_float32_close(zext, ezext)
                 assert_float32_close(zret, ezret)
                 assert_float32_close(dext, edext)
@@ -116,10 +114,11 @@ def test_nid_iter_curves_matches_the_known_curves(synthetic):
         seen = []
         for (r, c), ((zext, zret), (dext, dret)) in fvfile.volumes[0].iter_curves():
             seen.append((r, c))
-            n = min(expected.ext_points[r, c], expected.ret_points[r, c])
-            (ezext, ezret), (edext, edret) = expected.curve(r, c, n, n)
-            assert_float32_close(np.stack([zext, zret]), np.stack([ezext, ezret]))
-            assert_float32_close(np.stack([dext, dret]), np.stack([edext, edret]))
+            (ezext, ezret), (edext, edret) = expected.curve(r, c)
+            assert_float32_close(zext, ezext)
+            assert_float32_close(zret, ezret)
+            assert_float32_close(dext, edext)
+            assert_float32_close(dret, edret)
     assert seen == list(expected.order)
 
 
@@ -156,15 +155,16 @@ def test_nid_stopped_map_yields_exactly_the_acquired_curves(stopped):
         acquired = [tuple(rc) for rc in np.argwhere(expected.acquired).tolist()]
         assert sorted(expected.order) == acquired
         for r, c in expected.order:
-            n = min(expected.ext_points[r, c], expected.ret_points[r, c])
             (zext, zret), (dext, dret) = volume.get_curve(r, c)
-            (ezext, ezret), (edext, edret) = expected.curve(r, c, n, n)
-            assert_float32_close(np.stack([zext, zret]), np.stack([ezext, ezret]))
-            assert_float32_close(np.stack([dext, dret]), np.stack([edext, edret]))
+            (ezext, ezret), (edext, edret) = expected.curve(r, c)
+            assert_float32_close(zext, ezext)
+            assert_float32_close(zret, ezret)
+            assert_float32_close(dext, edext)
+            assert_float32_close(dret, edret)
 
 
 def test_nid_stopped_map_get_curve_off_the_map_is_nan_of_the_row_length(stopped):
-    # both halves come back cut to the shorter of the forward and backward rows
+    # both NaN halves are as long as the shorter of the forward and backward rows
     synthetic, points = stopped
     expected = synthetic.volumes[0]
     with open_fvfile(synthetic.path) as fvfile:

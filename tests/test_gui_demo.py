@@ -15,6 +15,9 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from itertools import islice
+
+import numpy as np
 import pytest
 
 # objects other than a reader's parsed file that the GUI puts in GUIFVFile.fvfile, by
@@ -37,3 +40,27 @@ def test_gui_stand_in_file_exposes_fvfile_protocol_member(stand_in, member):
     from magic_afm.gui import _impl as gui
 
     assert hasattr(getattr(gui, STAND_INS[stand_in])(), member)
+
+
+def assert_halves_of_float32(curve):
+    assert type(curve) is tuple and len(curve) == 2, type(curve)
+    for part in curve:
+        assert type(part) is tuple and len(part) == 2, type(part)
+        for half in part:
+            assert isinstance(half, np.ndarray), type(half)
+            assert half.ndim == 1, half.shape
+            assert half.dtype == np.float32, half.dtype
+
+
+def test_demo_curves_are_extend_and_retract_halves_of_float32():
+    """Demo curves are ((z_ext, z_ret), (d_ext, d_ret)) of 1-D float32 arrays."""
+    from magic_afm.gui import _impl as gui
+
+    demo = gui.DemoForceVolumeFile()
+    assert_halves_of_float32(demo.get_curve(3, 5))
+    for (r, c), curve in islice(demo.iter_curves(), 3):
+        assert_halves_of_float32(curve)
+        want = demo.get_curve(r, c)
+        for part, want_part in zip(curve, want, strict=True):
+            for half, want_half in zip(part, want_part, strict=True):
+                np.testing.assert_array_equal(half, want_half)

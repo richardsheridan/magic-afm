@@ -375,7 +375,8 @@ def structure(fvfile):
         "class": type(fvfile),
         "volumes": [(v.name, v.shape) for v in fvfile.volumes],
         "curve": [
-            tuple(np.shape(half) for half in v.get_curve(1, 1)) for v in fvfile.volumes
+            [tuple(map(np.shape, part)) for part in v.get_curve(1, 1)]
+            for v in fvfile.volumes
         ],
         "all curves": [
             tuple(np.shape(a) for a in v.get_all_curves()) for v in fvfile.volumes

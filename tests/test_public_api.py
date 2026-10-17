@@ -91,7 +91,7 @@ PUBLIC = {
             "NIDFile",
             "SUFFIX_FVFILE_MAP",
             "Index",
-            "ZDArrays",
+            "Curve",
         }
     ),
     "magic_afm.async_tools": frozenset(
