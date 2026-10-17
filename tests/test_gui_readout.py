@@ -198,3 +198,45 @@ def test_gui_options_round_trip_through_the_options_json(case):
     options = gui_options(gui.DemoForceVolumeFile(), **ROUND_TRIP_OPTIONS[case])
     loaded = load_options(io.StringIO(dump_options(gui.options_dict(options))))
     assert gui.ForceCurveOptions(**loaded, disp_kind=options.disp_kind) == options
+
+
+TABLE_PIXELS = {"one point": PIXELS[:1], "several points": PIXELS + [(7, 2)]}
+
+
+def sens_cell_text(table):
+    """The text of the k-sensitivity column's value cell in a data table."""
+    cells = table.get_celld()
+    (col,) = [c for (r, c), cell in cells.items() if r == 0 and "dM" in text(cell)]
+    return text(cells[1, col])
+
+
+def text(cell):
+    return cell.get_text().get_text()
+
+
+@pytest.mark.parametrize("k_sens", [True, False], ids=["k_sens", "no_k_sens"])
+@pytest.mark.parametrize("pixels", TABLE_PIXELS.values(), ids=TABLE_PIXELS)
+def test_data_table_shows_the_readout_k_sensitivity(pixels, k_sens):
+    """The clicked points' table draws, its dM/dk cell showing the readout's value."""
+    from matplotlib.figure import Figure
+
+    from magic_afm.gui import _impl as gui
+
+    demo = gui.DemoForceVolumeFile()
+    options = gui_options(demo, k_sens=k_sens)
+    point_data = {
+        gui.ImagePoint(r=r, c=c, x=float(c), y=float(r)): readout(demo, (r, c), options)
+        for r, c in pixels
+    }
+    sens = [np.asarray(data.sens).item() for data in point_data.values()]
+
+    table = gui.draw_data_table(point_data, Figure().add_subplot())
+
+    assert table is not None
+    if len(sens) == 1:
+        expected = "{:.2e}".format(sens[0])
+    else:
+        expected = "{:.2e}±{:.2e}".format(np.mean(sens), np.std(sens, ddof=1))
+    if not k_sens:
+        assert expected.split("±")[0] == "0.00e+00"
+    assert sens_cell_text(table) == expected
