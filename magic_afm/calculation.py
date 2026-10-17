@@ -22,6 +22,45 @@ module should contain everything you need.
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+__all__ = [
+    "RESAMPLE_NPTS",
+    "PROPERTY_UNITS_DICT",
+    "PROPERTY_DTYPE",
+    "PARMS_UNITS_DICT",
+    "PARMS_DTYPE",
+    "FitMode",
+    "FitFix",
+    "gauss3x3",
+    "median3x1",
+    "median3x3",
+    "fillnan",
+    "flatten",
+    "planefit",
+    "offset",
+    "curve",
+    "MANIPULATIONS",
+    "resample_wrapper",
+    "laser_interference",
+    "hydrodynamic_drag",
+    "schwarz_red",
+    "lj_force",
+    "lj_gradient",
+    "red_extend",
+    "red_retract",
+    "red_both",
+    "force_curve",
+    "delta_curve",
+    "rapid_forcecurve_estimate",
+    "fit_force_curve",
+    "pull_off_delta",
+    "true_surface_z",
+    "max_load_quantities",
+    "perturb_k",
+    "fit_curve_properties",
+    "prepare_force_curve",
+    "warmup_jit_main",
+]
+
 import enum
 import traceback
 
@@ -39,7 +78,7 @@ try:
 except ImportError:
     jit = overload = lambda *a, **kw: lambda x: x
 else:
-    abs = np.fabs
+    from numpy import fabs as abs
 
 from ._env import get_int_env_var
 from ._vendored_lstsq import leastsq
@@ -50,11 +89,11 @@ from ._vendored_root import root_df_sane
 ###############################################
 
 
-EPS = float(np.finfo(np.float64).eps)
-RT_EPS = float(np.sqrt(EPS))
+_EPS = float(np.finfo(np.float64).eps)
+_RT_EPS = float(np.sqrt(_EPS))
 RESAMPLE_NPTS = get_int_env_var("MAFM_RESAMPLE_NPTS") or 512
 
-gkern = np.array([0.25, 0.5, 0.25], dtype=np.float32)
+_gkern = np.array([0.25, 0.5, 0.25], dtype=np.float32)
 
 
 PROPERTY_UNITS_DICT = {
@@ -122,14 +161,14 @@ def gauss3x3(img, *args):
         tmp[:3] = row[0]
         tmp[3:-3] = row
         tmp[-3:] = row[-1]
-        row[:] = np.convolve(tmp, gkern)[4:-4]
+        row[:] = np.convolve(tmp, _gkern)[4:-4]
     if rows != cols:
         tmp = np.empty(rows + 6, dtype=img.dtype)
     for col in img.transpose():
         tmp[:3] = col[0]
         tmp[3:-3] = col
         tmp[-3:] = col[-1]
-        col[:] = np.convolve(tmp, gkern)[4:-4]
+        col[:] = np.convolve(tmp, _gkern)[4:-4]
     return img
 
 
@@ -294,7 +333,7 @@ def resample_wrapper(X, npts, fourier=True, restore_trend=True):
 
 
 # can't cache because UUID cache busting https://github.com/numba/numba/issues/6284
-def secant(func, args, x0, x1):
+def _secant(func, args, x0, x1):
     """Secant method from scipy optimize but stripping np.isclose for speed
 
     Copyright (c) 2001-2002 Enthought, Inc.  2003-2019, SciPy Developers.
@@ -329,14 +368,14 @@ def secant(func, args, x0, x1):
     OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     """
     p0 = x0 * 1.0
-    tol = RT_EPS
+    tol = _RT_EPS
     maxiter = 50
     if x1 is not None:
         if x1 == x0:
             raise ValueError("x1 and x0 must be different")
         p1 = x1 * 1.0
     else:
-        eps = RT_EPS
+        eps = _RT_EPS
         p1 = x0 * (1 + eps)
         p1 += eps if p1 >= 0 else -eps
     q0 = func(p0, *args)
@@ -365,7 +404,7 @@ def secant(func, args, x0, x1):
 
 # can't cache because UUID cache busting https://github.com/numba/numba/issues/6284
 # noinspection PyUnboundLocalVariable
-def brentq(func, args, xa, xb):
+def _brentq(func, args, xa, xb):
     """Transliterated from SciPy Zeros/brentq.c
 
     :returns x where func(x,*args) == 0 or None if the bracket does not cross 0
@@ -401,7 +440,7 @@ def brentq(func, args, xa, xb):
     (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
     OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     """
-    xtol = RT_EPS
+    xtol = _RT_EPS
     maxiter = 50
     xpre = xa
     xcur = xb
@@ -479,7 +518,7 @@ def brentq(func, args, xa, xb):
 
 
 @jit(nopython=True, nogil=True, cache=True)
-def mylinspace(start, stop, num, endpoint):
+def _mylinspace(start, stop, num, endpoint):
     """np.linspace is surprisingly intensive, so trim the fat
 
     Copyright (c) 2005-2020, NumPy Developers.
@@ -525,12 +564,12 @@ def mylinspace(start, stop, num, endpoint):
 
 
 @jit(nopython=True, nogil=True, cache=True)
-def interp_with_offset(x, xp, fp, offset):
+def _interp_with_offset(x, xp, fp, offset):
     return np.interp(x, xp, fp) - offset
 
 
 @jit(nopython=True, nogil=True, cache=True)
-def mygradient(f, d):
+def _mygradient(f, d):
     """np.gradient is also surprisingly intensive, trim to 1d case
 
     Copyright (c) 2005-2020, NumPy Developers.
@@ -589,7 +628,7 @@ def mygradient(f, d):
 
 
 @jit(nopython=True, nogil=True, cache=True)
-def mygradient_uniform(f):
+def _mygradient_uniform(f):
     out = np.empty_like(f)
     out[1:-1] = (f[2:] - f[:-2]) / 2.0
     out[0] = f[1] - f[0]
@@ -597,7 +636,7 @@ def mygradient_uniform(f):
     return out
 
 
-def curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
+def _curve_fit(function, xdata, ydata, p0, sigma=None, bounds=None):
     """Wrap to match api of scipy.optimize.curve_fit
 
     This is faster (?!) and has no scipy dependency."""
@@ -667,7 +706,7 @@ def schwarz_red(red_f, red_fc, stable, offset):
 
 
 @jit(nopython=True, nogil=True, cache=True)
-def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale, split=None):
+def _schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale, split=None):
     """So that schwarz can be directly jammed into delta_curve"""
     return schwarz_red(red_force, red_fc, 1.0, 0.0)
 
@@ -678,15 +717,17 @@ def schwarz_wrap(red_force, red_fc, red_k, lj_delta_scale, split=None):
 
 
 # Exponents for LJ potential
-bigpow = 9
-lilpow = 3
-powrat = bigpow / lilpow
+_bigpow = 9
+_lilpow = 3
+_powrat = _bigpow / _lilpow
 
 # algebraically solved LJ parameters such that the minimum value is at delta=1
-prefactor = powrat ** (1 / (bigpow - lilpow))
-postfactor = 1 / (prefactor ** (-bigpow) - prefactor ** (-lilpow))  # such that lj(1)=1
+_prefactor = _powrat ** (1 / (_bigpow - _lilpow))
+_postfactor = 1 / (
+    _prefactor ** (-_bigpow) - _prefactor ** (-_lilpow)
+)  # such that lj(1)=1
 # delta of minimum slope
-lj_limit_factor = ((bigpow + 1) / (lilpow + 1)) ** (1 / (bigpow - lilpow))
+_lj_limit_factor = ((_bigpow + 1) / (_lilpow + 1)) ** (1 / (_bigpow - _lilpow))
 
 
 @jit(nopython=True, nogil=True, cache=True)
@@ -696,8 +737,8 @@ def lj_force(delta, delta_scale, force_scale, delta_offset, force_offset):
     Prefactor scaled such that minimum slope is at delta=1/delta_scale"""
     nondim_position = (delta - delta_offset) / delta_scale
     # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
-    attraction = np.divide(1, (prefactor * nondim_position) ** lilpow)
-    return postfactor * force_scale * (attraction**powrat - attraction) - force_offset
+    attraction = np.divide(1, (_prefactor * nondim_position) ** _lilpow)
+    return _postfactor * force_scale * (attraction**_powrat - attraction) - force_offset
 
 
 @jit(nopython=True, nogil=True, cache=True)
@@ -708,11 +749,12 @@ def lj_gradient(delta, delta_scale, force_scale, delta_offset, force_offset):
     nondim_position = (delta - delta_offset) / delta_scale
     # np.divide is a workaround for nondim_position=0 so that ZeroDivisionError -> inf
     attraction = np.divide(
-        lilpow * prefactor ** (-lilpow), nondim_position ** (lilpow + 1)
+        _lilpow * _prefactor ** (-_lilpow), nondim_position ** (_lilpow + 1)
     )
-    repulsion = bigpow * prefactor ** (-bigpow) * nondim_position ** (-bigpow - 1)
+    repulsion = _bigpow * _prefactor ** (-_bigpow) * nondim_position ** (-_bigpow - 1)
     return (
-        postfactor * force_scale * (attraction - repulsion) / delta_scale - force_offset
+        _postfactor * force_scale * (attraction - repulsion) / delta_scale
+        - force_offset
     )
 
 
@@ -748,14 +790,14 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     lj_f = np.atleast_1d(lj_f)  # Later parts can choke on scalars
 
     # Try to find where LJ gradient == red_k
-    # brentq is marginally faster with python scalars without jit
+    # _brentq is marginally faster with python scalars without jit
     red_d_min = float(np.min(red_delta))
     args = (lj_delta_scale, red_fc, lj_delta_offset, red_k)
     bracket = (
         red_d_min,
-        lj_limit_factor * lj_delta_scale + lj_delta_offset,
+        _lj_limit_factor * lj_delta_scale + lj_delta_offset,
     )
-    lj_end_pos = brentq(lj_gradient, args, *bracket)
+    lj_end_pos = _brentq(lj_gradient, args, *bracket)
     if np.isnan(lj_end_pos):
         # If root finding fails, put the end pos somewhere quasi-reasonable
         if lj_gradient(red_d_min, *args) <= 0:
@@ -774,11 +816,11 @@ def red_extend(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
     args = red_fc, 1.0, red_d_max
-    red_f_max = secant(schwarz_red, args, 0.0, red_fc)
+    red_f_max = _secant(schwarz_red, args, 0.0, red_fc)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
-    f = mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100, True)
+    f = _mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100, True)
     d = schwarz_red(f, red_fc, 1.0, 0.0)
 
     s_f = np.interp(red_delta, d, f, left=-np.inf)
@@ -820,11 +862,11 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
     red_d_max = np.max(red_delta)
     red_fc, red_d_max = float(red_fc), float(red_d_max)
     args = red_fc, 1.0, red_d_max
-    red_f_max = secant(schwarz_red, args, red_fc, 0.0)
+    red_f_max = _secant(schwarz_red, args, red_fc, 0.0)
 
     # because of noise in force channel, need points well beyond red_f_max
     # XXX: a total hack, would be nice to have a real stop and num for this linspace
-    f = mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100, False)
+    f = _mylinspace(red_fc, 1.5 * (red_f_max - red_fc) + red_fc, 100, False)
     d = schwarz_red(f, red_fc, 1.0, 0.0)
 
     # Use this endpoint in DMT case or if there is a problem with the slope finding
@@ -833,11 +875,11 @@ def red_retract(red_delta, red_fc, red_k, lj_delta_scale, split=None):
 
     if not_DMT:
         # Find slope == red_k between vertical and horizontal parts of unstable branch
-        f0 = mylinspace((7.0 * red_fc + 8.0) / 3.0, red_fc, 100, False)
+        f0 = _mylinspace((7.0 * red_fc + 8.0) / 3.0, red_fc, 100, False)
         d0 = schwarz_red(f0, red_fc, -1.0, 0.0)
-        df0dd0 = mygradient(f0, d0)
+        df0dd0 = _mygradient(f0, d0)
 
-        s_end_pos = brentq(interp_with_offset, (d0, df0dd0, red_k), d0[0], d0[-1])
+        s_end_pos = _brentq(_interp_with_offset, (d0, df0dd0, red_k), d0[0], d0[-1])
         if np.isnan(s_end_pos):
             s_end_pos = 0.0
         else:
@@ -975,7 +1017,7 @@ def rapid_forcecurve_estimate(delta, force, radius):
 ###############################################
 
 
-def fitfun(
+def fit_force_curve(
     z,
     d,
     k,
@@ -1065,7 +1107,7 @@ def fitfun(
             dout -= laser_interference(z, *li_parms)
         drag_factor = parms[-1]
         if drag_factor:
-            z_velocity = mygradient_uniform(z)
+            z_velocity = _mygradient_uniform(z)
             dout -= hydrodynamic_drag(z_velocity, drag_factor)
         if np.any(dout):
             # update initial guess each round
@@ -1092,7 +1134,7 @@ def fitfun(
         return dout
 
     try:
-        beta, cov, infodict, *_ = curve_fit(
+        beta, cov, infodict, *_ = _curve_fit(
             partial_force_curve, z, d, p0=p0, bounds=bounds
         )
         beta_err = infodict["uncertainties"]
@@ -1119,7 +1161,7 @@ def fitfun(
 
 def _delta_at(force, k, params):
     return delta_curve(
-        schwarz_wrap,
+        _schwarz_wrap,
         force,
         k,
         params["radius"],
@@ -1192,10 +1234,10 @@ def perturb_k(d, k, epsilon=1e-3):
     return d_new, k_new
 
 
-def calc_properties_imap(z_d_s_rc, k_sens=True, **kwargs):
+def fit_curve_properties(z_d_s_rc, k_sens=True, **kwargs):
     z, d, split, rc = z_d_s_rc
     kwargs["split"] = split
-    parms, parms_err, sse, _ = fitfun(z, d, nan_on_error=True, **kwargs)
+    parms, parms_err, sse, _ = fit_force_curve(z, d, nan_on_error=True, **kwargs)
     if np.any(np.isnan(parms.item())):
         return rc, None, None, None
     deflection, indentation, a_c = max_load_quantities(
@@ -1205,7 +1247,7 @@ def calc_properties_imap(z_d_s_rc, k_sens=True, **kwargs):
     if k_sens:
         k = kwargs.pop("k")
         eps = 1e-3
-        params_perturb, *_ = fitfun(
+        params_perturb, *_ = fit_force_curve(
             z, *perturb_k(d, k, eps), p0=parms, nan_on_error=True, **kwargs
         )
         if np.any(np.isnan(params_perturb.item())):
@@ -1230,7 +1272,7 @@ def calc_properties_imap(z_d_s_rc, k_sens=True, **kwargs):
     return rc, properties, parms, parms_err
 
 
-def process_force_curve(x, fit_mode, s_ratio):
+def prepare_force_curve(x, fit_mode, s_ratio):
     rc, (zxr_and_dxr) = x
     npts = sum(map(len, zxr_and_dxr[0]))
     if npts > RESAMPLE_NPTS:
@@ -1257,7 +1299,7 @@ def process_force_curve(x, fit_mode, s_ratio):
 
 
 def warmup_jit_main():
-    """Call jitted functions until check_jit output stabilizes"""
+    """Call jitted functions until _check_jit output stabilizes"""
     image = np.zeros((64, 64), dtype=np.float32)
     gauss3x3(image)
     median3x1(image)
@@ -1265,7 +1307,7 @@ def warmup_jit_main():
     median3x3(image)
 
 
-def check_jit():
+def _check_jit():
     for _ in globals().values():
         if hasattr(_, "get_metadata"):
             print(_)
@@ -1275,10 +1317,10 @@ def check_jit():
 _skip_warmup = False
 
 
-def warmup_jit_worker():
+def _warmup_jit_worker():
     """Replace uncacheable functions with jitted versions on-demand"""
     global red_extend, red_retract, red_both, force_curve, delta_curve
-    global brentq, secant, _check_force_model_inputs
+    global _brentq, _secant, _check_force_model_inputs
     global _skip_warmup
 
     if _skip_warmup:
@@ -1291,6 +1333,6 @@ def warmup_jit_worker():
     red_both = jit(red_both, **opts)
     force_curve = jit(force_curve, **opts)
     delta_curve = jit(delta_curve, **opts)
-    brentq = jit(brentq, **opts)
-    secant = jit(secant, **opts)
+    _brentq = jit(_brentq, **opts)
+    _secant = jit(_secant, **opts)
     _skip_warmup = True

@@ -26,7 +26,7 @@
 # tests/goldens/README.md for the golden sets.
 #
 # The model runs unjitted here, as in CLI workers at the default (no --jit).
-# warmup_jit_worker() rebinds module globals for the rest of the process, so the jitted
+# _warmup_jit_worker() rebinds module globals for the rest of the process, so the jitted
 # state of GUI workers and CLI --jit is fitted in a subprocess and held to the same
 # goldens and tolerances.
 
@@ -98,7 +98,7 @@ FINGERPRINT_STRIDE = {"raw": 100, "resampled": 32}
 #   IndentationRatio  nid: max rel 2.45e-5 (abs 1.3e-4); synthetic: 0
 #   parms.delta_shift synthetic soft BOTH: rel 9.9e-8 (abs 3e-10 nm, 1 ulp)
 # The nid fitted parameters are bitwise equal, so the Indentation spread arises after
-# the fit, in max_load_quantities (delta_curve over schwarz_wrap, jitted only with
+# the fit, in max_load_quantities (delta_curve over _schwarz_wrap, jitted only with
 # numba), on float32 parameters. Those two fields get rtol 1e-4, about 4x the spread.
 # (Casting the nid curves to float64 does not shrink it: the fits then differ by up to
 # 1% in M between the envs, so their agreement here depends on the float32 input path.)
@@ -119,7 +119,7 @@ FINGERPRINT_STRIDE = {"raw": 100, "resampled": 32}
 # (CASE_TOLERANCES). Tightening these is for a deliberate re-baseline after the planned
 # numerics changes (resampling, the numba and plain paths).
 #
-# For the jitted model: with warmup_jit_worker() (GUI workers, CLI --jit) the spread
+# For the jitted model: with _warmup_jit_worker() (GUI workers, CLI --jit) the spread
 # against the unjitted numba state is at most rel 3.2e-7 in Indentation and
 # IndentationRatio and nothing in the fitted parameters, so that state passes too.
 SHIFT_ATOL = 1e-5
@@ -195,13 +195,13 @@ def demo_curve(seed, **parms):
 
 def preprocess(rc_curve, fit_mode):
     """Resample and select a segment as the CLI does, with s_ratio 1."""
-    return calculation.process_force_curve(rc_curve, fit_mode=fit_mode, s_ratio=1.0)
+    return calculation.prepare_force_curve(rc_curve, fit_mode=fit_mode, s_ratio=1.0)
 
 
 def fit_one(z_d_s_rc, fit_mode, k):
     """Fit one preprocessed curve as a CLI worker does; NaN fields on failure."""
     with np.errstate(all="ignore"):  # cli_init sets this in every worker
-        _, properties, parms, parms_err = calculation.calc_properties_imap(
+        _, properties, parms, parms_err = calculation.fit_curve_properties(
             z_d_s_rc, fit_mode=fit_mode, k=k, **DEFAULT_OPTIONS
         )
     results = {"properties": properties, "parms": parms, "parms_err": parms_err}
@@ -346,7 +346,7 @@ import test_goldens as t2
 
 from magic_afm import calculation
 
-calculation.warmup_jit_worker()
+calculation._warmup_jit_worker()
 fits = {
     case: {mode.name: t2.fit_synthetic(case, mode) for mode in t2.MODES}
     for case in t2.SYNTHETIC_CASES
@@ -358,9 +358,9 @@ print(json.dumps({"jitted": jitted, "fits": fits}))
 
 @pytest.fixture(scope="module")
 def jitted_fits():
-    """Every synthetic fit, made after warmup_jit_worker() in a subprocess."""
+    """Every synthetic fit, made after _warmup_jit_worker() in a subprocess."""
     if importlib.util.find_spec("numba") is None:
-        pytest.skip("numba is not installed, so warmup_jit_worker() jits nothing")
+        pytest.skip("numba is not installed, so _warmup_jit_worker() jits nothing")
     proc = subprocess.run(
         [sys.executable, "-c", JITTED_FITS_SCRIPT, str(Path(__file__).parent)],
         capture_output=True,
@@ -392,7 +392,7 @@ def test_fitfun_raises_no_deprecation_warning(mode):
     curve = demo_curve(**SYNTHETIC_CASES["demo_r0_c0"])
     z, d, split, _ = preprocess(((0, 0), curve), mode)
     with np.errstate(all="ignore"):
-        parms, parms_err, sse, _ = calculation.fitfun(
+        parms, parms_err, sse, _ = calculation.fit_force_curve(
             z, d, k=DEMO_K, fit_mode=mode, split=split, **DEFAULT_OPTIONS
         )
     assert np.all(np.isfinite(parms.item()))

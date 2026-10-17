@@ -39,11 +39,11 @@ def cli_init(jit):
     if jit:
         import warnings
 
-        from .calculation import warmup_jit_worker
+        from .calculation import _warmup_jit_worker
 
         # hacked NumbaExperimentalWarning to be just Warning to avoid slowdown bug
         warnings.simplefilter("ignore", Warning, lineno=621)
-        warmup_jit_worker()
+        _warmup_jit_worker()
     from numpy import seterr
 
     seterr(all="ignore")

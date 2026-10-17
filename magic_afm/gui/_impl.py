@@ -1703,7 +1703,7 @@ class ForceVolumeController:
                     async_tools.to_sync_runner_map_unordered,
                     trio.to_thread.run_sync,
                     partial(
-                        calculation.process_force_curve,
+                        calculation.prepare_force_curve,
                         s_ratio=options.defl_sens
                         / self.opened_fvol.initial_parameters.defl_sens,
                         fit_mode=options.fit_mode,
@@ -1717,7 +1717,7 @@ class ForceVolumeController:
                 property_aiter = await pipeline_nursery.start(
                     async_tools.to_sync_runner_map_unordered,
                     trio_parallel.run_sync,
-                    partial(calculation.calc_properties_imap, **d),
+                    partial(calculation.fit_curve_properties, **d),
                     force_curve_aiter,
                     chunksize,
                 )
@@ -2387,7 +2387,7 @@ def calculate_force_data(
 
     cancel_poller()
     optionsdict = asdict(options)
-    parms, parms_err, sse, d_fit = calculation.fitfun(
+    parms, parms_err, sse, d_fit = calculation.fit_force_curve(
         z,
         d,
         cancel_poller=cancel_poller,
@@ -2401,7 +2401,7 @@ def calculate_force_data(
     eps = 1e-3
     d_new, k_new = calculation.perturb_k(d, options.k, eps)
     optionsdict.pop("k")
-    parms_perturb = calculation.fitfun(
+    parms_perturb = calculation.fit_force_curve(
         z,
         d_new,
         k_new,
@@ -2781,7 +2781,7 @@ async def main_task(root):
             def jit_callback(*a, **kw):
                 for _ in range(async_tools.cpu_bound_limiter.total_tokens):
                     # start workers while choosing data
-                    nursery.start_soon(tprs, calculation.warmup_jit_worker)
+                    nursery.start_soon(tprs, calculation._warmup_jit_worker)
 
             jit_menu.add_command(
                 label="Spend ~2 min to accelerate property maps",

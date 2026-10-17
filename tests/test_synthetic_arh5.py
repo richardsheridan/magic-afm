@@ -28,7 +28,7 @@ import pytest
 from synthetic_files import open_fvfile
 from synthetic_files.arh5 import build_arh5_ffm, build_arh5_force_map
 
-from magic_afm.calculation import FitMode, process_force_curve
+from magic_afm.calculation import FitMode, prepare_force_curve
 
 ARH5_RELPATH = "test_cases/PDMS_SAA/ffm/rtrace0001.h5"
 
@@ -207,18 +207,18 @@ def test_arh5_force_map_iter_curves_yields_what_get_curve_returns(force_map):
 
 
 # Left out: fit mode both, and curves long enough to be resampled, which with halves of
-# different lengths process_force_curve cannot join into one array.
+# different lengths prepare_force_curve cannot join into one array.
 @pytest.mark.parametrize(
     "fit_mode", [FitMode.EXTEND, FitMode.RETRACT], ids=lambda m: m.name.lower()
 )
 def test_arh5_force_map_iter_curves_feed_process_force_curve(force_map, fit_mode):
-    """The CLI passes each yielded curve to process_force_curve; it takes one half."""
+    """The CLI passes each yielded curve to prepare_force_curve; it takes one half."""
     expected = force_map.volumes[0]
     n_ext, n_ret = expected.ext_points.min(), expected.ret_points.min()
     half = 0 if fit_mode == FitMode.EXTEND else 1
     with open_fvfile(force_map.path) as fvfile:
         for rc, curve in fvfile.volumes[0].iter_curves():
-            z, d, split, out_rc = process_force_curve((rc, curve), fit_mode, 1.0)
+            z, d, split, out_rc = prepare_force_curve((rc, curve), fit_mode, 1.0)
             assert out_rc == rc
             assert split is None
             (ezext, ezret), (edext, edret) = expected.curve(*rc, n_ext, n_ret)
