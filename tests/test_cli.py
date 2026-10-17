@@ -142,28 +142,27 @@ DEFAULT_MAPS = (
     "lj_scaleErr",
 )
 
-# Units as written: fit units (nm, nN) for everything except the two maps with a factor,
-# IndentationModulus in Pa (M is GPa in the fit) and AdhesionForce in N (fc is nN). So
-# force_shift stays in nN although PARMS_UNITS_DICT says N, and lengths are nm although
-# it says m.
+# Units as written: the SI unit PROPERTY_UNITS_DICT or PARMS_UNITS_DICT declares, so
+# lengths in m (nm in the fit), forces in N (nN) and IndentationModulus in Pa (M is
+# GPa). SumSquaredError and lj_scale keep factor 1 pending a decision on their units.
 # exported map: (t2_goldens.json group, field, factor from fit units)
 EXPORT_FIELDS = {
-    "Deflection": ("properties", "Deflection", 1.0),
-    "Indentation": ("properties", "Indentation", 1.0),
-    "ContactRadius": ("properties", "ContactRadius", 1.0),
-    "TrueHeight": ("properties", "TrueHeight", 1.0),
+    "Deflection": ("properties", "Deflection", 1e-9),
+    "Indentation": ("properties", "Indentation", 1e-9),
+    "ContactRadius": ("properties", "ContactRadius", 1e-9),
+    "TrueHeight": ("properties", "TrueHeight", 1e-9),
     "IndentationRatio": ("properties", "IndentationRatio", 1.0),
     "SensIndMod_k": ("properties", "SensIndMod_k", 1.0),
     "SumSquaredError": ("properties", "SumSquaredError", 1.0),
     "IndentationModulus": ("parms", "M", 1e9),
     "AdhesionForce": ("parms", "fc", 1e-9),
-    "delta_shift": ("parms", "delta_shift", 1.0),
-    "force_shift": ("parms", "force_shift", 1.0),
+    "delta_shift": ("parms", "delta_shift", 1e-9),
+    "force_shift": ("parms", "force_shift", 1e-9),
     "lj_scale": ("parms", "lj_scale", 1.0),
     "IndentationModulusErr": ("parms_err", "M", 1e9),
     "AdhesionForceErr": ("parms_err", "fc", 1e-9),
-    "delta_shiftErr": ("parms_err", "delta_shift", 1.0),
-    "force_shiftErr": ("parms_err", "force_shift", 1.0),
+    "delta_shiftErr": ("parms_err", "delta_shift", 1e-9),
+    "force_shiftErr": ("parms_err", "force_shift", 1e-9),
     "lj_scaleErr": ("parms_err", "lj_scale", 1.0),
 }
 
