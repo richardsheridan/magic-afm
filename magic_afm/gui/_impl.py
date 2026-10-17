@@ -56,7 +56,7 @@ from matplotlib.colors import LogNorm, Normalize
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
 from matplotlib.table import Table
-from matplotlib.ticker import EngFormatter
+from matplotlib.ticker import EngFormatter, FuncFormatter
 from matplotlib.transforms import Bbox, BboxTransform
 from tqdm.std import tqdm as tqdm_std
 
@@ -71,6 +71,16 @@ except AttributeError:
 
 matplotlib.rcParams["savefig.dpi"] = 300
 LAYOUT_ENGINE: Literal["constrained"] = "constrained"
+SI_PREFIXABLE_UNITS = frozenset({"m", "N", "Pa", "V", "A", "s", "Hz", "rad"})
+
+
+def colourbar_formatter(unit):
+    """Label ticks with an SI prefix only when the unit is an SI symbol that takes one."""
+    if unit in SI_PREFIXABLE_UNITS:
+        return EngFormatter(unit, places=1)
+    suffix = f" {unit}" if unit else ""
+    return FuncFormatter(lambda x, pos=None: f"{x:.6g}{suffix}")
+
 
 COLORMAPS = [
     "viridis",
@@ -1842,7 +1852,7 @@ class ForceVolumeController:
                 )
                 self.display.navbar.update()  # let navbar catch new cax in fig for tooltips
 
-                colorbar.formatter = EngFormatter(unit, places=1)
+                colorbar.formatter = colourbar_formatter(unit)
                 colorbar.update_ticks()
 
                 self.display.fig.set_layout_engine(LAYOUT_ENGINE)
