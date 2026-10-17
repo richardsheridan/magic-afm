@@ -51,8 +51,7 @@ import numpy as np
 import pytest
 from click.testing import CliRunner, Result
 from conftest import load_platform_goldens
-from synthetic_files.nanoscope import build_pfc
-from test_format_errors import _edit_nanoscope_header
+from synthetic_files.nanoscope import build_pfc, edit_nanoscope_header
 from test_goldens import TOLERANCES as T2_TOLERANCES
 
 from magic_afm.calculation import FitFix
@@ -633,7 +632,7 @@ def build_bad_pfc(directory, kind):
         path.write_bytes(b"")
         return path, "cannot mmap an empty file"
     path = build_pfc(directory, (2, 2), filename="bad.000.pfc").path
-    _edit_nanoscope_header(path, _insert_stray_header_line)
+    edit_nanoscope_header(path, _insert_stray_header_line)
     return path, "Stray: 1"
 
 

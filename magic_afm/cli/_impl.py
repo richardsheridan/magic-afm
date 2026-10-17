@@ -107,7 +107,7 @@ def _chunk_consumer(chunk):
 
 
 def threaded_opener(filenames):
-    """Yield the opened fvfiles (or the error opening one) and names while opening the next in a background thread.
+    """Yield each fvfile, or the error opening it, and its name, opening the next ahead.
 
     This generator goes out of its way to avoid opening more than 2 files at a time."""
     tpe = ThreadPoolExecutor()
