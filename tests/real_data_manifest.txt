@@ -14,3 +14,4 @@
 8b0c33801893a653bdaa679d18e496d92bee0783192dac57fe3cd0132c164521  174080  61132  delta:dist=4+lzma2:dict=64MiB,lc=0,lp=2,pb=2  PS_PCL_SAA/QNM/maxscanrate.000.pfc
 599ea3eea928248978f1f80c609af9b965f52fb2524d8453d201c3d4c9362926  567296  181180  delta:dist=4+lzma2:dict=64MiB,lc=0,lp=2,pb=2  PS_PCL_SAA/QNM/onekhz.000.pfc
 79cf14f85de32fa3af8fc75182a4cb904dee07fd29275418de2a31bbdd359d71  6043328  2632704  delta:dist=4+lzma2:dict=64MiB,lc=0,lp=2,pb=2  20251216_141819_PVDF2_Film_U_00002.nid
+2b5fdf59464b488cb22419ae03f6f395662c808cb4ecd70d749e984ec5d3d98f  25004800  7757892  delta:dist=4+lzma2:dict=64MiB,lc=0,lp=2,pb=2  PDMS_SAA/ffm/rtrace0001.ARDF
