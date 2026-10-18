@@ -15,8 +15,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# Tolerances follow the per-format tests: ARDF and ARH5 store float32 metres, which
-# the readers scale to nm in float32 (rtol 1e-7); NID stores scaled integers, decoded in
+# Tolerances follow the per-format tests: ARDF and ARH5 store float32 metres, which the
+# readers scale to nm in float32 (rtol 1e-7); NID stores scaled integers, decoded in
 # float32 (rtol 1e-6 and an atol of 1e-6 of the largest magnitude).
 
 import os
@@ -325,8 +325,8 @@ def acquired_mask(volume) -> np.ndarray:
 def padded(expected, curves) -> np.ndarray:
     """(index, curve) pairs as (2, rows, cols, 2, n) arrays shaped like expected's.
 
-    Each half fills its own length from the start, the rest NaN, as the synthetic
-    volume holds them.
+    Each half fills its own length from the start, the rest NaN, as the synthetic volume
+    holds them.
     """
     n = max(expected.zext.shape[-1], expected.zret.shape[-1])
     out = np.full((2, *expected.shape, 2, n), np.nan)

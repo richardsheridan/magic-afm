@@ -157,8 +157,8 @@ class _Sections:
     """A file built section by section; CRCs are filled in once pointers are.
 
     Offsets are positions in the file. One run of bytes, the hole, can be left
-    unwritten: it is not held in memory, and the file holds zeros there, sparse
-    where the filesystem allows.
+    unwritten: it is not held in memory, and the file holds zeros there, sparse where
+    the filesystem allows.
     """
 
     def __init__(self):
@@ -303,8 +303,8 @@ def build_ardf(
     unit its ``VCHN`` declares and its curves are stored in, "m" or "nm", by default m.
     ``gap`` bytes of zeros, left unwritten so that the file is sparse where the
     filesystem allows, follow the file's text table, so that everything the file's
-    pointers address (the note, images, volumes, curves, thumbnails and texts) sits
-    that much further on.
+    pointers address (the note, images, volumes, curves, thumbnails and texts) sits that
+    much further on.
     """
     lines, cols = shape
     if lines < 2 or cols < 2:
