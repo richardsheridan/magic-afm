@@ -318,6 +318,60 @@ def test_spm_height_sensor_image_round_trips(spm):
             assert_float32_close(image.get_image(), spm.images[name] * 1e-9)
 
 
+# builder and points per half curve of each format, for the grid pitch cases
+PITCH_BUILDERS = {"pfc": (build_pfc, 128), "spm": (build_spm, 64)}
+# captures of one line, one column or one curve; kept out of the scan size cases, as
+# (4, 1) is tall
+THIN_GRIDS = [(1, 4), (4, 1), (1, 1)]
+
+
+def grid_id(shape):
+    return "x".join(map(str, shape))
+
+
+@pytest.mark.parametrize("shape", [(4, 4), (3, 6), (6, 3), *THIN_GRIDS], ids=grid_id)
+@pytest.mark.parametrize("fmt", PITCH_BUILDERS)
+def test_volume_step_is_the_scan_size_over_the_grid(tmp_path, fmt, shape):
+    """Each volume's x and y step in m is scansize over its columns and rows."""
+    builder, points = PITCH_BUILDERS[fmt]
+    synthetic = builder(tmp_path, shape, points)
+    with open_fvfile(synthetic.path) as fvfile:
+        fast, slow = fvfile.scansize
+        assert fvfile.volumes
+        for volume in fvfile.volumes:
+            assert volume.shape == synthetic.volumes[0].shape
+            rows, cols = volume.shape
+            (x_step, x_unit), (y_step, y_unit) = volume.step_info[:2]
+            assert (x_unit, y_unit) == ("m", "m")
+            np.testing.assert_allclose(x_step, fast * 1e-9 / cols, rtol=1e-12)
+            np.testing.assert_allclose(y_step, slow * 1e-9 / rows, rtol=1e-12)
+
+
+@pytest.mark.parametrize("shape", THIN_GRIDS, ids=grid_id)
+@pytest.mark.parametrize("fmt", PITCH_BUILDERS)
+def test_capture_of_one_line_or_one_column_reads_its_curves(tmp_path, fmt, shape):
+    builder, points = PITCH_BUILDERS[fmt]
+    synthetic = builder(tmp_path, shape, points)
+    expected = synthetic.volumes[0]
+    with open_fvfile(synthetic.path) as fvfile:
+        assert [v.shape for v in fvfile.volumes] == [expected.shape]
+        volume = fvfile.volumes[0]
+        for r, c in np.ndindex(expected.shape):
+            assert_same_curve(volume.get_curve(r, c), expected.curve(r, c))
+        assert list(volume.iter_indices()) == list(expected.order)
+        seen = []
+        for (r, c), curve in volume.iter_curves():
+            seen.append((r, c))
+            assert_same_curve(curve, expected.curve(r, c))
+        z, d = volume.get_all_curves()
+    assert seen == list(expected.order)
+    assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
+    assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+    if fmt == "pfc":
+        assert np.isfinite(z).all() and np.isfinite(d).all()
+        assert_curves_hold_their_own_records(d, synthetic.path)
+
+
 # builder and height image name of each format, for files that also hold a Phase image
 # on the unitless Sens. Phase soft scale of the real scan lists
 PHASE_BUILDERS = {"pfc": (build_pfc, "Height"), "spm": (build_spm, "Height Sensor")}
