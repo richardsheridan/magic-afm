@@ -1,8 +1,28 @@
 # Hooks run the tools from the pixi `lint` environment, so the versions match
-# `pixi run fmt` / `pixi run lint`. Install with `pixi run -e lint prek install`.
+# `pixi run fmt` / `pixi run lint`. Install with `pixi run -e lint prek install`,
+# which adds both the pre-commit and commit-msg shims.
+#
+# Local rules, untracked and shared by all worktrees, are executables in
+# `.git/local-hooks/<stage>.d/` (stage `pre-commit` or `commit-msg`); the
+# `local-rules-*` hooks run them through `tools/local_hooks.sh`.
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
 repos:
   - repo: local
     hooks:
+      - id: local-rules-pre-commit
+        name: local rules (pre-commit)
+        entry: tools/local_hooks.sh pre-commit
+        language: script
+        always_run: true
+        require_serial: true
+      - id: local-rules-commit-msg
+        name: local rules (commit-msg)
+        entry: tools/local_hooks.sh commit-msg
+        language: script
+        stages: [commit-msg]
+        always_run: true
+        require_serial: true
       - id: ruff-isort
         name: ruff import sorting
         entry: pixi run --frozen -e lint ruff check --select I --fix
