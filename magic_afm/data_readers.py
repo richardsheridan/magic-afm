@@ -1624,7 +1624,7 @@ class NanoscopeVolume:
     _dreader: _FFVReader | _QNMDReader
 
     @classmethod
-    def parse(cls, header, sync_dist, z_reader, d_reader):
+    def parse(cls, header, scansize, sync_dist, z_reader, d_reader):
         npts = int(header["Ciao force list"][0]["force/line"].split()[0])
         rate, unit = header["Ciao scan list"][0]["PFT Freq"].split()
         if unit.lower() != "khz":
@@ -1632,24 +1632,11 @@ class NanoscopeVolume:
         rate = float(rate) * 1000
         t_step = 1 / rate / npts
 
-        scansize, units = header["Ciao scan list"][0]["Scan Size"].split()
-        if units == "nm":
-            factor = 1.0
-        elif units == "pm":
-            factor = 0.001
-        elif units == "~m":  # microns?!
-            factor = 1000.0
-        else:
-            raise FileFormatError("unknown units:", units)
-        scansize = float(scansize)
-
-        # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
         fastpx = int(header["Ciao scan list"][0]["Samps/line"])
         slowpx = int(header["Ciao scan list"][0]["Lines"])
         shape = (slowpx, fastpx)
-        # TODO: nonsquare images
-        x_step = scansize * factor / _NANOMETER_UNIT_CONVERSION / (fastpx - 1)
-        y_step = scansize * factor / _NANOMETER_UNIT_CONVERSION / (slowpx - 1)
+        x_step = scansize[0] / _NANOMETER_UNIT_CONVERSION / fastpx
+        y_step = scansize[1] / _NANOMETER_UNIT_CONVERSION / slowpx
 
         # self.scandown = {"Down": True, "Up": False}[
         #     header["FV"]["Deflection Error"]["Frame direction"]
@@ -1751,6 +1738,20 @@ class NanoscopeFile:
             n_ext = subheader["Samps/line"].split()[0]
             _nonzero(int(n_ext), "Samps/line", "Ciao force image list")
 
+        scansize, units = csl["Scan Size"].split()
+        if units == "nm":
+            factor = 1.0
+        elif units == "pm":
+            factor = 0.001
+        elif units == "~m":  # microns?!
+            factor = 1000.0
+        else:
+            raise FileFormatError("unknown units:", units)
+
+        # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
+        ratio = float(scansize) * factor / max(fastpx, slowpx)
+        scansize = (fastpx * ratio, slowpx * ratio)
+
         images = {}
         for entry in header["Ciao image list"]:
             name = entry["@2:Image Data"].split('"')[1]
@@ -1791,6 +1792,7 @@ class NanoscopeFile:
             volumes = [
                 NanoscopeVolume.parse(
                     header,
+                    scansize,
                     sync_dist,
                     _QNMZReader.parse(header, d_reader, height_for_z),
                     d_reader,
@@ -1805,6 +1807,7 @@ class NanoscopeFile:
             volumes = [
                 NanoscopeVolume.parse(
                     header,
+                    scansize,
                     sync_dist,
                     _FFVReader.parse(header, data, z_subh),
                     _FFVReader.parse(header, data, d_subh),
@@ -1817,19 +1820,6 @@ class NanoscopeFile:
         npts = int(header["Ciao force list"][0]["force/line"].split()[0])
         t_step = 1 / (rate * 1000) / npts
 
-        scansize, units = csl["Scan Size"].split()
-        if units == "nm":
-            factor = 1.0
-        elif units == "pm":
-            factor = 0.001
-        elif units == "~m":  # microns?!
-            factor = 1000.0
-        else:
-            raise FileFormatError("unknown units:", units)
-
-        # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
-        ratio = float(scansize) * factor / max(fastpx, slowpx)
-        scansize = (fastpx * ratio, slowpx * ratio)
         return cls(header, images, volumes, k, defl_sens, t_step, scansize, sync_dist)
 
 
@@ -2321,6 +2311,12 @@ class NIDFile:
                 "Only single spectroscopy maps are supported.",
                 spec_mode,
                 len(header["spec_map"]),
+            )
+        nx, ny = header["spec_map"][0][4:6]
+        if nx < 2 or ny < 2:
+            raise FileFormatError(
+                f"spectroscopy map grid is {nx} columns by {ny} rows, expected at "
+                "least two of each"
             )
         # spectroscopy datasets are identified by frame and channel, not name
         spec = {(d.frame, d.channel): d for d in datasets.values()}
