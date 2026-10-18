@@ -331,3 +331,105 @@ def test_nanoscope_skipped_point_capture_raises_format_error(tmp_path):
 @pytest.mark.slow
 def test_real_nanoscope_skipped_point_capture_raises_format_error(real_data_file):
     assert_format_error(real_data_file(MAXSCANRATE_RELPATH), r"(?i)skip|force/line")
+
+
+NANOSCOPE_BUILDS = [(build_pfc, PFC_HEADER_BYTES), (build_spm, SPM_HEADER_BYTES)]
+
+
+@pytest.mark.parametrize(
+    "build, size, length",
+    [
+        (build_pfc, PFC_HEADER_BYTES, 33),
+        (build_pfc, PFC_HEADER_BYTES, 16),
+        (build_pfc, PFC_HEADER_BYTES, 48),
+        (build_pfc, PFC_HEADER_BYTES, 128),
+        (build_pfc, PFC_HEADER_BYTES, 256),
+        (build_spm, SPM_HEADER_BYTES, 65),
+        (build_spm, SPM_HEADER_BYTES, 16),
+        (build_spm, SPM_HEADER_BYTES, 48),
+        (build_spm, SPM_HEADER_BYTES, 128),
+        (build_spm, SPM_HEADER_BYTES, 256),
+    ],
+    ids=[
+        "pfc-2-bytes-and-1-over",
+        "pfc-1-byte",
+        "pfc-3-bytes",
+        "pfc-8-bytes",
+        "pfc-16-bytes",
+        "spm-4-bytes-and-1-over",
+        "spm-1-byte",
+        "spm-3-bytes",
+        "spm-8-bytes",
+        "spm-16-bytes",
+    ],
+)
+def test_nanoscope_image_length_not_whole_samples_of_2_or_4_bytes_raises_format_error(
+    tmp_path, build, size, length
+):
+    """A 4 x 4 image whose Data length is not 32 or 64 bytes fails to parse."""
+    path = build(tmp_path, (4, 4)).path
+    edit_nanoscope_header(
+        path,
+        lambda lines: _set_key(lines, "Ciao image list", "Data length", str(length)),
+        size,
+    )
+    with pytest.raises(data_readers.FileFormatError, match="Data length"):
+        with open_fvfile(path):
+            pass
+    assert_format_error(path, "Data length")
+
+
+@pytest.mark.parametrize("build, size", NANOSCOPE_BUILDS, ids=["pfc", "spm"])
+@pytest.mark.parametrize(
+    "section, key, pfc_value, spm_value",
+    [
+        ("Ciao image list", "Number of lines", "0", "0"),
+        ("Ciao image list", "Samps/line", "0", "0"),
+        ("Ciao scan list", "Samps/line", "0", "0"),
+        ("Ciao scan list", "Lines", "0", "0"),
+        ("Ciao scan list", "PFT Freq", "0 KHz", "0 kHz"),
+        ("Ciao force list", "force/line", "0 0", "0"),
+        ("Ciao force image list", "Samps/line", "0 0", "0 0"),
+    ],
+    ids=[
+        "image-Number-of-lines",
+        "image-Samps-line",
+        "scan-Samps-line",
+        "scan-Lines",
+        "PFT-Freq",
+        "force-line",
+        "force-image-Samps-line",
+    ],
+)
+def test_nanoscope_zero_count_or_rate_raises_format_error_naming_it(
+    tmp_path, build, size, section, key, pfc_value, spm_value
+):
+    """A zero count or rate the reader divides by fails to parse, naming its key."""
+    path = build(tmp_path).path
+    value = pfc_value if build is build_pfc else spm_value
+    edit_nanoscope_header(
+        path, lambda lines: _set_key(lines, section, key, value), size
+    )
+    assert_format_error(path, re.escape(key))
+
+
+@pytest.mark.parametrize("sample_points", ["0", "-1"])
+def test_pfc_sample_points_not_positive_raises_format_error(tmp_path, sample_points):
+    path = build_pfc(tmp_path).path
+    edit_nanoscope_header(
+        path,
+        lambda lines: _set_key(lines, "Ciao scan list", "Sample Points", sample_points),
+    )
+    assert_format_error(path, "Sample Points")
+
+
+def test_pfc_zero_pft_freq_without_sample_points_raises_format_error(tmp_path):
+    path = build_pfc(tmp_path).path
+
+    def zero_rate_no_sample_points(lines):
+        kept = [line for line in lines if not line.startswith("\\Sample Points:")]
+        assert len(kept) == len(lines) - 1
+        return _set_key(kept, "Ciao scan list", "PFT Freq", "0 KHz")
+
+    edit_nanoscope_header(path, zero_rate_no_sample_points)
+    assert_format_error(path, "PFT Freq")
