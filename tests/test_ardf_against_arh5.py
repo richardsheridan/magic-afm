@@ -15,9 +15,9 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# Both formats store the same float32 values and both readers scale them to nm the
-# same way, so curves and images agree exactly, and so does every metadata value, each
-# parsed from the same note text.
+# Both formats store the same float32 values and both readers scale them to nm the same
+# way, so curves and images agree exactly, and so does every metadata value, each parsed
+# from the same note text.
 
 from pathlib import Path
 
