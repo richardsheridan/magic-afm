@@ -1,4 +1,4 @@
-"""tools/local_hooks.sh runs the untracked local git hook rules for a stage."""
+"""tools/local_hooks.py runs the untracked local git hook rules for a stage."""
 
 # Copyright (C) Richard J. Sheridan
 #
@@ -15,84 +15,115 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parent.parent / "tools" / "local_hooks.sh"
-
-pytestmark = pytest.mark.skipif(
-    shutil.which("sh") is None or shutil.which("git") is None,
-    reason="local_hooks.sh needs sh and git on PATH",
-)
+SCRIPT = Path(__file__).resolve().parent.parent / "tools" / "local_hooks.py"
 
 
-@pytest.fixture
-def repo(tmp_path):
-    path = tmp_path / "repo"
-    subprocess.run(["git", "init", "-q", path.as_posix()], check=True)
-    return path
-
-
-def run_hooks(repo, *args, rules=None):
+def run_hooks(cwd, *args, rules=None):
     env = {
         k: v
         for k, v in os.environ.items()
         if not k.startswith("GIT_") and k != "MAFM_LOCAL_HOOKS"
     }
     if rules is not None:
-        env["MAFM_LOCAL_HOOKS"] = rules.as_posix()
+        env["MAFM_LOCAL_HOOKS"] = str(rules)
     return subprocess.run(
-        ["sh", SCRIPT.as_posix(), *args],
-        cwd=repo,
+        [sys.executable, str(SCRIPT), *args],
+        cwd=cwd,
         env=env,
         capture_output=True,
         text=True,
     )
 
 
-def add_rule(rules, stage, name, body):
+def add_rule(rules, stage, name, body, mode=0o644):
     rule = rules / f"{stage}.d" / name
     rule.parent.mkdir(parents=True, exist_ok=True)
-    rule.write_text(f"#!/bin/sh\n{body}\n", newline="\n")
-    rule.chmod(0o755)
+    rule.write_text(body, newline="\n")
+    rule.chmod(mode)
+    return rule
 
 
-def test_missing_stage_dir_exits_zero(repo, tmp_path):
+def log_rule(tag, exit_code=0):
+    """A Python rule that appends ``tag`` to order.txt in the cwd."""
+    return (
+        f"with open('order.txt', 'a') as f:\n    f.write({tag!r} + '\\n')\n"
+        f"raise SystemExit({exit_code})\n"
+    )
+
+
+def test_missing_stage_dir_exits_zero(tmp_path):
     rules = tmp_path / "rules"
-    add_rule(rules, "pre-commit", "10-fail", "exit 1")
-    result = run_hooks(repo, "commit-msg", "msg", rules=rules)
+    add_rule(rules, "pre-commit", "10-fail.py", "raise SystemExit(1)\n")
+    result = run_hooks(tmp_path, "commit-msg", "msg", rules=rules)
     assert result.returncode == 0, result.stderr
     assert result.stdout == result.stderr == ""
 
 
-def test_failing_rule_fails_and_is_named(repo, tmp_path):
+def test_failing_rule_fails_and_is_named(tmp_path):
     rules = tmp_path / "rules"
-    add_rule(rules, "commit-msg", "10-ok", "echo 10-ok >> order.txt")
-    add_rule(rules, "commit-msg", "20-bad", "echo 20-bad >> order.txt; exit 3")
-    add_rule(rules, "commit-msg", "30-after", "echo 30-after >> order.txt")
-    result = run_hooks(repo, "commit-msg", "msg", rules=rules)
+    add_rule(rules, "commit-msg", "10-ok.py", log_rule("10-ok"))
+    add_rule(rules, "commit-msg", "20-bad.py", log_rule("20-bad", exit_code=3))
+    add_rule(rules, "commit-msg", "30-after.py", log_rule("30-after"))
+    result = run_hooks(tmp_path, "commit-msg", "msg", rules=rules)
     assert result.returncode == 1
-    assert "local rule failed: 20-bad" in result.stderr
+    assert "local rule failed: 20-bad.py" in result.stderr
     assert "10-ok" not in result.stderr
     assert "30-after" not in result.stderr
-    order = (repo / "order.txt").read_text().split()
+    order = (tmp_path / "order.txt").read_text().split()
     assert order == ["10-ok", "20-bad", "30-after"]
 
 
-def test_args_reach_rule(repo, tmp_path):
+def test_args_reach_rule(tmp_path):
     rules = tmp_path / "rules"
-    add_rule(rules, "commit-msg", "10-args", "printf '%s\\n' \"$@\" > args.txt")
-    result = run_hooks(repo, "commit-msg", "a file", "-x", rules=rules)
+    body = "import json, sys\nopen('args.json', 'w').write(json.dumps(sys.argv[1:]))\n"
+    add_rule(rules, "commit-msg", "10-args.py", body)
+    result = run_hooks(tmp_path, "commit-msg", "a file", "-x", rules=rules)
     assert result.returncode == 0, result.stderr
-    assert (repo / "args.txt").read_text().splitlines() == ["a file", "-x"]
+    assert json.loads((tmp_path / "args.json").read_text()) == ["a file", "-x"]
 
 
-def test_default_rules_dir_is_in_git_common_dir(repo):
-    add_rule(repo / ".git" / "local-hooks", "pre-commit", "10-bad", "exit 1")
+def test_py_rule_runs_with_this_interpreter(tmp_path):
+    rules = tmp_path / "rules"
+    # not executable and no shebang: only the interpreter can run it
+    body = "import sys\nopen('python.txt', 'w').write(sys.executable)\n"
+    add_rule(rules, "pre-commit", "10-which.py", body)
+    result = run_hooks(tmp_path, "pre-commit", rules=rules)
+    assert result.returncode == 0, result.stderr
+    assert os.path.samefile((tmp_path / "python.txt").read_text(), sys.executable)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable bits")
+def test_posix_runs_executables_and_skips_the_rest(tmp_path):
+    rules = tmp_path / "rules"
+    add_rule(
+        rules, "commit-msg", "10-run", '#!/bin/sh\necho "$@" > ran.txt\n', mode=0o755
+    )
+    add_rule(rules, "commit-msg", "20-not-executable", "#!/bin/sh\nexit 1\n")
+    (rules / "commit-msg.d" / "30-dir").mkdir()
+    add_rule(rules, "commit-msg", "40-no-shebang", "not a program\n", mode=0o755)
+    result = run_hooks(tmp_path, "commit-msg", "msg", rules=rules)
+    assert result.returncode == 1
+    assert (tmp_path / "ran.txt").read_text() == "msg\n"
+    failures = [
+        line for line in result.stderr.splitlines() if line.startswith("local rule")
+    ]
+    assert failures == ["local rule failed: 40-no-shebang"]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_default_rules_dir_is_in_git_common_dir(tmp_path):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    add_rule(repo / ".git" / "local-hooks", "pre-commit", "10-bad.py", "exit(1)\n")
     result = run_hooks(repo, "pre-commit")
     assert result.returncode == 1
-    assert "local rule failed: 10-bad" in result.stderr
+    assert "local rule failed: 10-bad.py" in result.stderr

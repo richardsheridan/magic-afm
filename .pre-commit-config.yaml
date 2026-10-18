@@ -2,9 +2,10 @@
 # `pixi run fmt` / `pixi run lint`. Install with `pixi run -e lint prek install`,
 # which adds both the pre-commit and commit-msg shims.
 #
-# Local rules, untracked and shared by all worktrees, are executables in
+# Local rules, untracked and shared by all worktrees, are files in
 # `.git/local-hooks/<stage>.d/` (stage `pre-commit` or `commit-msg`); the
-# `local-rules-*` hooks run them through `tools/local_hooks.sh`.
+# `local-rules-*` hooks run them through `tools/local_hooks.py`, `*.py` rules with
+# the `lint` environment's Python and others directly (executables only on POSIX).
 default_install_hook_types: [pre-commit, commit-msg]
 default_stages: [pre-commit]
 repos:
@@ -12,14 +13,14 @@ repos:
     hooks:
       - id: local-rules-pre-commit
         name: local rules (pre-commit)
-        entry: tools/local_hooks.sh pre-commit
-        language: script
+        entry: pixi run --frozen -e lint python tools/local_hooks.py pre-commit
+        language: system
         always_run: true
         require_serial: true
       - id: local-rules-commit-msg
         name: local rules (commit-msg)
-        entry: tools/local_hooks.sh commit-msg
-        language: script
+        entry: pixi run --frozen -e lint python tools/local_hooks.py commit-msg
+        language: system
         stages: [commit-msg]
         always_run: true
         require_serial: true
