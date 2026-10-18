@@ -4,9 +4,13 @@ Usage: ``local_hooks.py <stage> [args...]``
 
 The rules live in ``$MAFM_LOCAL_HOOKS/<stage>.d/``, else in
 ``$(git rev-parse --git-common-dir)/local-hooks/<stage>.d/``, which worktrees share.
-Each file there runs in name order with the remaining arguments: ``*.py`` rules with
-this interpreter, anything else directly (on POSIX only if it is executable). Exits 1
-if any rule failed, 0 otherwise (including when the stage has no rules).
+Each rule file there runs in name order with the remaining arguments: for the
+``commit-msg`` stage that is the path of the commit message file, for ``pre-commit``
+nothing (a rule asks ``git diff --cached --name-only`` for the staged files). Names
+starting with ``.`` or ending with ``~`` are not rules. ``*.py`` rules run with this
+interpreter; anything else runs directly, on POSIX only if it is executable and on
+Windows only with a ``PATHEXT`` suffix. Exits 1 if any rule failed, 0 otherwise
+(including when the stage has no rules).
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -33,13 +37,28 @@ from pathlib import Path
 def rules_root():
     if root := os.environ.get("MAFM_LOCAL_HOOKS"):
         return Path(root)
-    common_dir = subprocess.run(
-        ["git", "rev-parse", "--git-common-dir"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    try:
+        common_dir = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as e:
+        sys.exit(f"local rules: cannot find the git common dir: {e}")
     return Path(common_dir) / "local-hooks"
+
+
+def is_rule(path):
+    """Whether ``path`` is a rule file this platform can run."""
+    if path.name.startswith(".") or path.name.endswith("~") or not path.is_file():
+        return False
+    if path.suffix == ".py":
+        return True
+    if os.name == "nt":
+        pathext = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+        return path.suffix.lower() in pathext.lower().split(";")
+    return os.access(path, os.X_OK)
 
 
 def main(argv):
@@ -51,18 +70,16 @@ def main(argv):
         return 0
     failed = False
     for rule in sorted(stage_dir.iterdir()):
-        if not rule.is_file():
+        if not is_rule(rule):
             continue
         if rule.suffix == ".py":
             cmd = [sys.executable, str(rule), *args]
-        elif os.name == "nt" or os.access(rule, os.X_OK):
-            cmd = [str(rule), *args]
         else:
-            continue
+            cmd = [str(rule), *args]
         try:
             returncode = subprocess.run(cmd).returncode
         except OSError as e:
-            print(e, file=sys.stderr)
+            print(f"{rule.name}: {e}", file=sys.stderr)
             returncode = 1
         if returncode:
             print(f"local rule failed: {rule.name}", file=sys.stderr)

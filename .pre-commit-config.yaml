@@ -4,8 +4,10 @@
 #
 # Local rules, untracked and shared by all worktrees, are files in
 # `.git/local-hooks/<stage>.d/` (stage `pre-commit` or `commit-msg`); the
-# `local-rules-*` hooks run them through `tools/local_hooks.py`, `*.py` rules with
-# the `lint` environment's Python and others directly (executables only on POSIX).
+# `local-rules-*` hooks run them through `tools/local_hooks.py`. A commit-msg rule
+# gets the path of the message file; a pre-commit rule gets no arguments and asks
+# `git diff --cached --name-only` for the staged files. See the script's docstring
+# for which files count as rules.
 default_install_hook_types: [pre-commit, commit-msg]
 default_stages: [pre-commit]
 repos:
@@ -16,14 +18,13 @@ repos:
         entry: pixi run --frozen -e lint python tools/local_hooks.py pre-commit
         language: system
         always_run: true
-        require_serial: true
+        pass_filenames: false
       - id: local-rules-commit-msg
         name: local rules (commit-msg)
         entry: pixi run --frozen -e lint python tools/local_hooks.py commit-msg
         language: system
         stages: [commit-msg]
         always_run: true
-        require_serial: true
       - id: ruff-isort
         name: ruff import sorting
         entry: pixi run --frozen -e lint ruff check --select I --fix

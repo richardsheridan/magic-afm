@@ -60,6 +60,17 @@ def log_rule(tag, exit_code=0):
     )
 
 
+def test_dotfiles_backups_and_dirs_are_not_rules(tmp_path):
+    rules = tmp_path / "rules"
+    add_rule(rules, "pre-commit", "10-ok.py", log_rule("10-ok"))
+    add_rule(rules, "pre-commit", ".hidden.py", log_rule("hidden", exit_code=1))
+    add_rule(rules, "pre-commit", "20-old.py~", log_rule("backup", exit_code=1))
+    (rules / "pre-commit.d" / "30-dir.py").mkdir()
+    result = run_hooks(tmp_path, "pre-commit", rules=rules)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "order.txt").read_text().split() == ["10-ok"]
+
+
 def test_missing_stage_dir_exits_zero(tmp_path):
     rules = tmp_path / "rules"
     add_rule(rules, "pre-commit", "10-fail.py", "raise SystemExit(1)\n")
@@ -119,7 +130,21 @@ def test_posix_runs_executables_and_skips_the_rest(tmp_path):
     assert failures == ["local rule failed: 40-no-shebang"]
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+@pytest.mark.skipif(os.name != "nt", reason="Windows PATHEXT rules")
+def test_windows_runs_pathext_files_and_skips_the_rest(tmp_path):
+    rules = tmp_path / "rules"
+    add_rule(rules, "commit-msg", "10-run.cmd", "@echo %1 > ran.txt\r\n")
+    add_rule(rules, "commit-msg", "20-notes.txt", "not a program\n")
+    add_rule(rules, "commit-msg", "30-script.sh", "#!/bin/sh\nexit 1\n")
+    result = run_hooks(tmp_path, "commit-msg", "msg", rules=rules)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "ran.txt").read_text().split() == ["msg"]
+
+
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+
+
+@needs_git
 def test_default_rules_dir_is_in_git_common_dir(tmp_path):
     repo = tmp_path / "repo"
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
@@ -127,3 +152,26 @@ def test_default_rules_dir_is_in_git_common_dir(tmp_path):
     result = run_hooks(repo, "pre-commit")
     assert result.returncode == 1
     assert "local rule failed: 10-bad.py" in result.stderr
+
+
+@needs_git
+def test_linked_worktree_shares_the_rules(tmp_path):
+    repo = tmp_path / "repo"
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [*git, "commit", "-q", "--allow-empty", "-m", "root"], cwd=repo, check=True
+    )
+    worktree = tmp_path / "wt"
+    subprocess.run([*git, "worktree", "add", "-q", str(worktree)], cwd=repo, check=True)
+    add_rule(repo / ".git" / "local-hooks", "pre-commit", "10-bad.py", "exit(1)\n")
+    result = run_hooks(worktree, "pre-commit")
+    assert result.returncode == 1
+    assert "local rule failed: 10-bad.py" in result.stderr
+
+
+def test_outside_a_repo_fails_with_a_message(tmp_path):
+    result = run_hooks(tmp_path, "pre-commit")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert result.stderr.startswith("local rules: cannot find the git common dir")
