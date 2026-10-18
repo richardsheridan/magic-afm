@@ -1624,32 +1624,10 @@ class NanoscopeVolume:
     _dreader: _FFVReader | _QNMDReader
 
     @classmethod
-    def parse(cls, header, sync_dist, z_reader, d_reader):
-        npts = int(header["Ciao force list"][0]["force/line"].split()[0])
-        rate, unit = header["Ciao scan list"][0]["PFT Freq"].split()
-        if unit.lower() != "khz":
-            raise FileFormatError(f"PFT Freq unit is {unit!r}, expected kHz")
-        rate = float(rate) * 1000
-        t_step = 1 / rate / npts
-
-        scansize, units = header["Ciao scan list"][0]["Scan Size"].split()
-        if units == "nm":
-            factor = 1.0
-        elif units == "pm":
-            factor = 0.001
-        elif units == "~m":  # microns?!
-            factor = 1000.0
-        else:
-            raise FileFormatError("unknown units:", units)
-        scansize = float(scansize)
-
-        # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
-        fastpx = int(header["Ciao scan list"][0]["Samps/line"])
-        slowpx = int(header["Ciao scan list"][0]["Lines"])
-        shape = (slowpx, fastpx)
-        # TODO: nonsquare images
-        x_step = scansize * factor / _NANOMETER_UNIT_CONVERSION / (fastpx - 1)
-        y_step = scansize * factor / _NANOMETER_UNIT_CONVERSION / (slowpx - 1)
+    def parse(cls, shape, scansize, t_step, sync_dist, z_reader, d_reader):
+        slowpx, fastpx = shape
+        x_step = scansize[0] / _NANOMETER_UNIT_CONVERSION / fastpx
+        y_step = scansize[1] / _NANOMETER_UNIT_CONVERSION / slowpx
 
         # self.scandown = {"Down": True, "Up": False}[
         #     header["FV"]["Deflection Error"]["Frame direction"]
@@ -1746,10 +1724,25 @@ class NanoscopeFile:
             raise FileFormatError(f"PFT Freq unit is {unit!r}, expected kHz")
         rate = _nonzero(float(ratestr), "PFT Freq", "Ciao scan list")
         force_line = header["Ciao force list"][0]["force/line"].split()[0]
-        _nonzero(int(force_line), "force/line", "Ciao force list")
+        npts = _nonzero(int(force_line), "force/line", "Ciao force list")
+        t_step = 1 / (rate * 1000) / npts
         for subheader in header["Ciao force image list"]:
             n_ext = subheader["Samps/line"].split()[0]
             _nonzero(int(n_ext), "Samps/line", "Ciao force image list")
+
+        scansize, units = csl["Scan Size"].split()
+        if units == "nm":
+            factor = 1.0
+        elif units == "pm":
+            factor = 0.001
+        elif units == "~m":  # microns?!
+            factor = 1000.0
+        else:
+            raise FileFormatError("unknown units:", units)
+
+        # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
+        ratio = float(scansize) * factor / max(fastpx, slowpx)
+        scansize = (fastpx * ratio, slowpx * ratio)
 
         images = {}
         for entry in header["Ciao image list"]:
@@ -1790,7 +1783,9 @@ class NanoscopeFile:
             sync_dist = float(sync_dist_str) * points_per_curve / samples_per_period
             volumes = [
                 NanoscopeVolume.parse(
-                    header,
+                    shape,
+                    scansize,
+                    t_step,
                     sync_dist,
                     _QNMZReader.parse(header, d_reader, height_for_z),
                     d_reader,
@@ -1804,7 +1799,9 @@ class NanoscopeFile:
             sync_dist = None
             volumes = [
                 NanoscopeVolume.parse(
-                    header,
+                    shape,
+                    scansize,
+                    t_step,
                     sync_dist,
                     _FFVReader.parse(header, data, z_subh),
                     _FFVReader.parse(header, data, d_subh),
@@ -1814,22 +1811,6 @@ class NanoscopeFile:
         # volumes = {v.name:v for v in volumes}
         k = float(header["Ciao force image list"][0]["Spring Constant"])
         defl_sens = float(csl["@Sens. DeflSens"].split()[1])
-        npts = int(header["Ciao force list"][0]["force/line"].split()[0])
-        t_step = 1 / (rate * 1000) / npts
-
-        scansize, units = csl["Scan Size"].split()
-        if units == "nm":
-            factor = 1.0
-        elif units == "pm":
-            factor = 0.001
-        elif units == "~m":  # microns?!
-            factor = 1000.0
-        else:
-            raise FileFormatError("unknown units:", units)
-
-        # TODO: tuple(map(float,header[""Ciao scan list""]["Aspect Ratio"].split(":")))
-        ratio = float(scansize) * factor / max(fastpx, slowpx)
-        scansize = (fastpx * ratio, slowpx * ratio)
         return cls(header, images, volumes, k, defl_sens, t_step, scansize, sync_dist)
 
 
@@ -2322,6 +2303,12 @@ class NIDFile:
                 spec_mode,
                 len(header["spec_map"]),
             )
+        xmin, xmax, ymin, ymax, nx, ny = header["spec_map"][0][:6]
+        if nx < 2 or ny < 2:
+            raise FileFormatError(
+                f"spectroscopy map grid is {nx:g} columns by {ny:g} rows, expected at "
+                "least two of each"
+            )
         # spectroscopy datasets are identified by frame and channel, not name
         spec = {(d.frame, d.channel): d for d in datasets.values()}
         volume = NIDVolume.parse(spec, header["spec_map"][0], k, defl_sens)
@@ -2349,7 +2336,6 @@ class NIDFile:
                 images[name] = NIDMapImage(name, volume.shape, volume.n_lines, sign, d)
 
         # map extents are inclusive of the outermost points, so pitch is span/(n-1)
-        xmin, xmax, ymin, ymax, nx, ny = header["spec_map"][0][:6]
         scansize = (
             float((xmax - xmin) * nx / (nx - 1) * _NANOMETER_UNIT_CONVERSION),
             float((ymax - ymin) * ny / (ny - 1) * _NANOMETER_UNIT_CONVERSION),

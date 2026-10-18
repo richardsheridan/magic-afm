@@ -188,6 +188,15 @@ def _set_nid_spring_constant_unit(lines, unit: str) -> list[str]:
     return lines[: found[0]] + [f"{value}]*[{unit}]"] + lines[found[0] + 1 :]
 
 
+def _set_nid_map_grid(lines, rows: int, cols: int) -> list[str]:
+    """Header lines with the column and row counts of the Map0 row set."""
+    found = [i for i, line in enumerate(lines) if line.startswith("Map0=")]
+    assert len(found) == 1, found
+    fields = lines[found[0]].split("=", 1)[1].split(";")
+    fields[4:6] = [str(cols), str(rows)]
+    return lines[: found[0]] + ["Map0=" + ";".join(fields)] + lines[found[0] + 1 :]
+
+
 def test_file_format_error_is_a_value_error():
     assert issubclass(data_readers.FileFormatError, ValueError)
 
@@ -216,6 +225,23 @@ def test_nid_spring_constant_in_an_unknown_unit_raises_format_error(tmp_path):
     path = build_nid(tmp_path).path
     _edit_nid_header(path, lambda lines: _set_nid_spring_constant_unit(lines, "lbf/in"))
     assert_format_error(path, re.escape("lbf/in"))
+
+
+@pytest.mark.parametrize(
+    "rows, cols",
+    [(3, 1), (1, 4), (1, 1), (3, 0), (0, 4)],
+    ids=["one-column", "one-row", "one-by-one", "no-columns", "no-rows"],
+)
+def test_nid_map_of_fewer_than_two_rows_or_columns_raises_format_error(
+    tmp_path, rows, cols
+):
+    """A map without two points along each axis fails to parse, naming its grid."""
+    path = build_nid(tmp_path, (3, 4)).path
+    _edit_nid_header(path, lambda lines: _set_nid_map_grid(lines, rows, cols))
+    with pytest.raises(data_readers.FileFormatError, match="grid"):
+        with open_fvfile(path):
+            pass
+    assert_format_error(path, "grid")
 
 
 @pytest.mark.parametrize(
