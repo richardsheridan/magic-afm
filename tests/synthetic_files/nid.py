@@ -201,6 +201,7 @@ def build_nid(
     k_unit: str = "N/m",
     save_bits: int = 32,
     scan_shape: Index = (8, 8),
+    header_bytes: int | None = None,
     filename: str = "synthetic.nid",
 ) -> SyntheticFile:
     """Write a NID spectroscopy map of shape (rows, cols) and say what it holds.
@@ -212,7 +213,8 @@ def build_nid(
     ``scan_size`` in nm along x then y, ``mod_time`` the seconds each ramp takes. The
     raw channels and the spring constant are written in ``z_unit``, ``defl_unit`` (a
     force, a length or "V") and ``k_unit``. ``scan_shape`` is the (lines, points) of the
-    scan image saved with the map.
+    scan image saved with the map. With ``header_bytes`` the header ends with a line of
+    spaces, which a reader skips as blank, so that ``#!`` starts at that offset.
     """
     rows, cols = shape
     if rows < 2 or cols < 2:
@@ -459,10 +461,15 @@ def build_nid(
         scan_size=scan_size,
         scan_shape=scan_shape,
     )
+    encoded = header.encode("utf-8")
+    if header_bytes is not None:
+        if header_bytes < len(encoded):
+            raise ValueError("header longer than header_bytes", len(encoded))
+        encoded += b" " * (header_bytes - len(encoded))
     dtype = f"<i{save_bits // 8}"
     path = Path(directory) / filename
     with path.open("wb") as f:
-        f.write(header.encode("utf-8"))
+        f.write(encoded)
         f.write(b"#!")
         for dataset in datasets:
             f.write(dataset.codes.astype(dtype).tobytes())
