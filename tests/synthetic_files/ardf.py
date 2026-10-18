@@ -90,6 +90,7 @@ dwell segments, are not built.
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import os
 import struct
 import zlib
 from pathlib import Path
@@ -153,14 +154,39 @@ def _note(lines: dict[str, str]) -> str:
 
 
 class _Sections:
-    """A file built section by section; CRCs are filled in once pointers are."""
+    """A file built section by section; CRCs are filled in once pointers are.
+
+    Offsets are positions in the file. One run of bytes, the hole, can be left
+    unwritten: it is not held in memory, and the file holds zeros there, sparse
+    where the filesystem allows.
+    """
 
     def __init__(self):
         self.buf = bytearray()
         self.crcs: list[tuple[int, int]] = []
+        self.hole_at = 0  # where the hole starts in buf
+        self.hole = 0
+
+    def tell(self) -> int:
+        """The file offset of the next section."""
+        return len(self.buf) + self.hole
+
+    def skip(self, nbytes: int) -> None:
+        """Leave nbytes unwritten before the next section."""
+        if self.hole:
+            raise ValueError("a file has one hole at most")
+        self.hole_at, self.hole = len(self.buf), nbytes
+
+    def _at(self, offset: int) -> int:
+        """Where a file offset lies in buf."""
+        if offset < self.hole_at:
+            return offset
+        if offset < self.hole_at + self.hole:
+            raise ValueError("offset lies in the hole", offset)
+        return offset - self.hole
 
     def add(self, name: bytes, payload: bytes = b"", flags: int = 0) -> int:
-        offset = len(self.buf)
+        offset = self.tell()
         size = HEADER.size + len(payload)
         self.buf += HEADER.pack(0, size, name, flags) + payload
         self.crcs.append((offset, size))
@@ -173,12 +199,13 @@ class _Sections:
         return offset
 
     def entry(self, table: int, slot: int, name: bytes, payload: bytes) -> int:
-        _, slots, stride = TABLE.unpack_from(self.buf, table + HEADER.size)
+        _, slots, stride = TABLE.unpack_from(self.buf, self._at(table) + HEADER.size)
         size = HEADER.size + len(payload)
         if not (slot < slots and size == stride):
             raise ValueError("entry does not fit the table", name, slot, size)
         offset = table + HEADER.size + TABLE.size + slot * stride
-        self.buf[offset : offset + size] = HEADER.pack(0, size, name, 0) + payload
+        at = self._at(offset)
+        self.buf[at : at + size] = HEADER.pack(0, size, name, 0) + payload
         self.crcs.append((offset, size))
         return offset
 
@@ -190,13 +217,18 @@ class _Sections:
         return self.add(b"TEXT", fields + encoded + padding)
 
     def patch(self, offset: int, fmt: struct.Struct, *values) -> None:
-        fmt.pack_into(self.buf, offset + HEADER.size, *values)
+        fmt.pack_into(self.buf, self._at(offset) + HEADER.size, *values)
 
-    def finish(self) -> bytes:
+    def write(self, path: Path) -> None:
+        """Fill in the CRCs and write the file, seeking over the hole."""
         for offset, size in self.crcs:
-            crc = zlib.crc32(self.buf[offset + 4 : offset + size])
-            struct.pack_into("<L", self.buf, offset, crc)
-        return bytes(self.buf)
+            at = self._at(offset)
+            crc = zlib.crc32(self.buf[at + 4 : at + size])
+            struct.pack_into("<L", self.buf, at, crc)
+        with open(path, "wb") as file:
+            file.write(self.buf[: self.hole_at])
+            file.seek(self.hole, os.SEEK_CUR)
+            file.write(self.buf[self.hole_at :])
 
 
 def _maps(raw, defl, drive, points, k, rng) -> dict[str, np.ndarray]:
@@ -256,6 +288,7 @@ def build_ardf(
     scan_size: tuple[float, float] = (1000.0, 1000.0),
     rate: float = 1000.0,
     channel_units: dict[str, str] | None = None,
+    gap: int = 0,
     filename: str = "synthetic.ARDF",
 ) -> SyntheticFile:
     """Write a fast force map ARDF file and say what it holds.
@@ -268,6 +301,10 @@ def build_ardf(
     along the fast then the slow axis, ``rate`` the curves per second. The volumes are
     named after the direction they hold. ``channel_units`` maps a channel name to the
     unit its ``VCHN`` declares and its curves are stored in, "m" or "nm", by default m.
+    ``gap`` bytes of zeros, left unwritten so that the file is sparse where the
+    filesystem allows, follow the file's text table, so that everything the file's
+    pointers address (the note, images, volumes, curves, thumbnails and texts) sits
+    that much further on.
     """
     lines, cols = shape
     if lines < 2 or cols < 2:
@@ -377,6 +414,7 @@ def build_ardf(
     f.add(b"ARDF")
     ftoc = f.table(b"FTOC", 32, 24, TABLE_FLAGS)
     ttoc = f.table(b"TTOC", 16, 32, TABLE_FLAGS)
+    f.skip(gap)
     f.entry(ttoc, 0, b"TOFF", TOFF.pack(0, f.text(0, _note(note))))
 
     image_tables = []
@@ -437,7 +475,7 @@ def build_ardf(
                     vdat = VDAT.pack(index, line, p, n_total, channel, *segments)
                     f.add(b"VDAT", vdat + data[line, p].astype("<f4").tobytes())
                 # the curve points on to whatever section follows it
-                f.patch(vset, VSET, *fields, len(f.buf))
+                f.patch(vset, VSET, *fields, f.tell())
                 previous[direction] = vset
                 force_index[direction] += 1
 
@@ -465,7 +503,7 @@ def build_ardf(
     f.entry(first_ttoc, 2, b"TOFF", TOFF.pack(2, f.text(2, END_TEXT)))
 
     path = Path(directory) / filename
-    path.write_bytes(f.finish())
+    f.write(path)
     return SyntheticFile(
         path=path,
         volumes=volumes,
