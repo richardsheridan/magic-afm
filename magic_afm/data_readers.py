@@ -240,6 +240,13 @@ def _check_force_bpp(length, ncurves, npts, header) -> int:
     return bpp
 
 
+def _nonzero(value, key, section):
+    """Value of a header count or rate the reader divides by, if it is not zero."""
+    if not value:
+        raise FileFormatError(f"{key} is zero in {section}")
+    return value
+
+
 def open_h5(path):
     import h5py
 
@@ -1428,9 +1435,14 @@ class NanoscopeImage:
     def parse_image(cls, data, header, h, name):
         length = int(h["Data length"])
         offset = int(h["Data offset"])
-        r = int(h["Number of lines"])
-        c = int(h["Samps/line"])
-        bpp = length // (r * c)
+        r = _nonzero(int(h["Number of lines"]), "Number of lines", name)
+        c = _nonzero(int(h["Samps/line"]), "Samps/line", name)
+        bpp, rem = divmod(length, r * c)
+        if rem or bpp not in (2, 4):
+            raise FileFormatError(
+                f"Data length {length} of image {name!r} is not {r} x {c} samples"
+                " of 2 or 4 bytes"
+            )
         value = h["@2:Z scale"]
         hard_scale = float(value.split()[-2]) / (2 ** (bpp * 8))
         hard_offset = float(h["@2:Z offset"].split()[-2]) / (2 ** (bpp * 8))
@@ -1726,13 +1738,18 @@ class NanoscopeFile:
         # \Aspect Ratio: 1:1
         # \Scan Size: 800 800 nm
         csl = header["Ciao scan list"][0]
-        fastpx = int(csl["Samps/line"])
-        slowpx = int(csl["Lines"])
+        fastpx = _nonzero(int(csl["Samps/line"]), "Samps/line", "Ciao scan list")
+        slowpx = _nonzero(int(csl["Lines"]), "Lines", "Ciao scan list")
         shape = slowpx, fastpx
         ratestr, unit = csl["PFT Freq"].split()
         if unit.lower() != "khz":
             raise FileFormatError(f"PFT Freq unit is {unit!r}, expected kHz")
-        rate = float(ratestr)
+        rate = _nonzero(float(ratestr), "PFT Freq", "Ciao scan list")
+        force_line = header["Ciao force list"][0]["force/line"].split()[0]
+        _nonzero(int(force_line), "force/line", "Ciao force list")
+        for subheader in header["Ciao force image list"]:
+            n_ext = subheader["Samps/line"].split()[0]
+            _nonzero(int(n_ext), "Samps/line", "Ciao force image list")
 
         images = {}
         for entry in header["Ciao image list"]:
@@ -1765,6 +1782,11 @@ class NanoscopeFile:
             except KeyError:
                 # Sample Points times PFT Freq is 512 kHz in every real capture
                 samples_per_period = 512 / rate
+            else:
+                if not samples_per_period > 0:
+                    raise FileFormatError(
+                        f"Sample Points is {samples_per_period:g}, expected positive"
+                    )
             sync_dist = float(sync_dist_str) * points_per_curve / samples_per_period
             volumes = [
                 NanoscopeVolume.parse(
