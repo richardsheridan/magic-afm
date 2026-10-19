@@ -756,7 +756,7 @@ class _ARDFVset:
     line: int
     point: int
     # vtype seems to differ between different FV modes.
-    # FMAP with ext;ret;dwell shows 0b10 = 2 everywhere.
+    # FMAP with ext;ret;away shows 0b10 = 2 everywhere.
     # FFM with just trace or just retrace shows 0b101 = 5 everywhere.
     # FFM storing both shows 0b1010 = 10 for trace
     # and 0b1011 = 11 for retrace.
@@ -912,10 +912,9 @@ class _ARDFFFMReader:
     array_offset: int  # hard to recover from views
     channels: list[int]  # [z, d]
     factors: np.ndarray = field(repr=False)  # float32 to nm, shaped to broadcast
-    # seg_offsets is weird. you'd think it would contain the starting index
-    # for each segment. However, it always has a trailing value of 1-nfloats,
-    # and nonexistent segments get a zero. For regular/FFM data, we'll just
-    # assume that the second offset maps to our "split" concept.
+    # seg_offsets holds each segment's start, then the index of the last sample,
+    # then zeros (see _ARDFForceMapReader.split). FFM curves have two segments of
+    # equal length, so the second offset maps to our "split" concept.
     seg_offsets: tuple
     up: bool
     trace: bool
@@ -1071,8 +1070,9 @@ class _ARDFForceMapReader:
         The offsets hold each segment's start, then the index of the last sample;
         a retract that is the last segment runs to that sample inclusive.
         """
-        start, ext, *rest = vdat.seg_offsets
-        ret = rest[0] if self.nseg > 2 else rest[self.nseg - 2] + 1
+        start, ext, ret, *_ = vdat.seg_offsets
+        if self.nseg == 2:
+            ret += 1
         return slice(start, ext), slice(ext, ret)
 
     def read_halves(self, vdat: _ARDFVdata, factor: float):
@@ -1143,21 +1143,23 @@ class _ARDFForceMapReader:
         the points nearest the surface.
         """
         n = 0xFFFFFFFF
-        vdats: dict[Index, list] = {}
+        vdats: dict[Index, tuple[_ARDFVdata, _ARDFVdata]] = {}
         for vset in self.traverse_vsets(self.vtoc.pointers[0]):
             if vset.vtype != self.vtype:
                 continue
-            x = vdats[vset.line, vset.point] = [None, None]
+            zvdat = dvdat = None
             for vdat in self.traverse_vdats(vset.offset + vset.size):
                 if vdat.channel == self.channels[self.zname][0]:
-                    x[0] = vdat  # zvdat
+                    zvdat = vdat
                 elif vdat.channel == self.channels["Defl"][0]:
-                    x[1] = vdat  # dvdat
-            if None in x:
+                    dvdat = vdat
+            if zvdat is None or dvdat is None:
+                x = [zvdat, dvdat]
                 raise FileFormatError(f"missing vdat channel: {x}, {self.channels}")
-            for half in self.split(vdat):
+            vdats[vset.line, vset.point] = zvdat, dvdat
+            for half in self.split(zvdat):
                 n = min(n, half.stop - half.start)
-        del vset, vdat, x
+        del vset, vdat
         x = np.full((2, self.lines, self.points, 2, n), np.nan, dtype=np.float32)
         for (r, c), vdat_pair in vdats.items():
             for i, (vdat, factor) in enumerate(
@@ -1257,7 +1259,7 @@ class ARDFVolume:
             args = (data, vtoc, lines, points, first_vset.vtype, channels, nseg)
             npts = (npts_by_nseg or {}).get(nseg)
             if npts is None:
-                # no usable note, so fall back on the longest acquired curve
+                # no usable note, so fall back on the longest acquired half
                 probe = _ARDFForceMapReader(*args, _nan_curve(0))
                 npts = max(
                     half.stop - half.start
@@ -1337,7 +1339,8 @@ class ARDFFile:
                 f"text table has {len(ttoc.entries)} entries, expected 1"
             )
         notes = _parse_ar_note(ttoc.decode_entry(0).splitlines())
-        # an untriggered half lasts half a ramp, at the fast or the slow map rate
+        # an untriggered half lasts half a ramp: a fast map's curves have two
+        # segments and ramp at FastMapZRate, a slow map's three at ForceScanRate
         npts_by_nseg: dict[int, int | None] = {}
         for nseg, key in ((2, "FastMapZRate"), (3, "ForceScanRate")):
             try:
