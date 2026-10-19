@@ -1750,9 +1750,6 @@ class NanoscopeFile:
         if unit.lower() != "khz":
             raise FileFormatError(f"PFT Freq unit is {unit!r}, expected kHz")
         rate = _nonzero(float(ratestr), "PFT Freq", "Ciao scan list")
-        force_line = cfl["force/line"].split()[0]
-        npts = _nonzero(int(force_line), "force/line", "Ciao force list")
-        t_step = 1 / (rate * 1000) / npts
         for subheader in header["Ciao force image list"]:
             n_ext = subheader["Samps/line"].split()[0]
             _nonzero(int(n_ext), "Samps/line", "Ciao force image list")
@@ -1825,6 +1822,8 @@ class NanoscopeFile:
                 )
             ]
         else:
+            # one PFT Freq period over the curves per line
+            t_step = 1 / (rate * 1000) / fastpx
             sync_dist = None
             # z from Height Sensor (the measured z) or else Height; d from Deflection
             # Error; sections of other names go unread
