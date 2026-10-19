@@ -445,12 +445,18 @@ _ASYLUM_BASE_UNITS = {
     "Adhesion": "N",
     "Force": "N",
     "YoungsJKR": "Pa",
+    "TriggerTime": "s",
+    "Seconds": "s",
+    "XLVDT": "m",
+    "YLVDT": "m",
 }
 
 
 def _asylum_units(name: str) -> str:
     """Unit of an Asylum image's values by its base name, or "V" when unknown."""
     base = name.removesuffix("Retrace").removesuffix("Trace")
+    if base not in _ASYLUM_BASE_UNITS:
+        base = base.removeprefix("Map")
     return _ASYLUM_BASE_UNITS.get(base, "V")
 
 
