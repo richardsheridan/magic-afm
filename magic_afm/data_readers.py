@@ -1784,14 +1784,12 @@ class NanoscopeFile:
         if not is_ffv:
             deflections = header["Ciao force image list"]
             # QNM data doesn't contain height data which we synthesize from an image
-            if "Height Sensor" in images:
-                height_for_z = images["Height Sensor"].get_image()
-            elif "Height" in images:
-                height_for_z = images["Height"].get_image()
-            else:
+            height_image = images.get("Height Sensor", images.get("Height"))
+            if height_image is None:
                 raise FileFormatError(
                     "No Height Sensor or Height image to build z from"
                 )
+            height_for_z = height_image.get_image()
             height_for_z *= _NANOMETER_UNIT_CONVERSION
             try:
                 sync_dist_str = csl["Sync Distance QNM"]
