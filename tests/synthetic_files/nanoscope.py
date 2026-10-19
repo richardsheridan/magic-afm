@@ -76,13 +76,15 @@ more), while the ramp script lines of the real file, ``Segment Samples`` 1041, 2
 match better as stored than with every other row reversed, so the builder stores every
 line the same way.
 
-Two arguments write what the real files hold and today's reader gets wrong, for
-tests of a fix: ``scan_list_grid`` writes a Ciao scan list grid unlike the rest,
-as a second real force volume has (16 x 8 where every other key says 8 x 8), and
-``invalid_pixels`` writes INT32_MIN over the extend half of Peak Force Error,
-the second Deflection Error and Height Sensor and into the image, as the real
-file does at one pixel while its header says ``Invalid Data Flag: None``. The
-expected extend halves and image are NaN at those pixels.
+Three arguments write what other real files hold. ``scan_list_grid`` writes a Ciao
+scan list grid unlike the rest, as a second real force volume has (16 x 8 where every
+other key says 8 x 8); the force list gives the grid. ``force_sections`` writes another
+set or order of force sections, as that file's Deflection Error, Height Sensor,
+Deflection Error and Height Sensor, whose repeats hold the same values as the first.
+``invalid_pixels`` writes INT32_MIN over the extend half of Peak Force Error, the second
+Deflection Error and Height Sensor and into the image, as the real file does at one
+pixel while its header says ``Invalid Data Flag: None``.
+The expected z extend half and image are NaN at those pixels; the deflection, from the first Deflection Error, holds real values there.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -101,7 +103,7 @@ expected extend halves and image are NaN at those pixels.
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -116,10 +118,21 @@ INPUT_VOLTS = 24.576
 HEIGHT_FULL_SCALE = 354.4026
 # Sample Points times PFT Freq in every real capture
 PFC_SAMPLE_RATE_KHZ = 512.0
+# the drive frequency over PFT Freq in every real capture (976.5625 Hz at 1 kHz)
+PFC_DRIVE_FRACTION = 1000 / 1024
+# the kHz per LSB of the drive frequency lines of the real captures
+DRIVE_KHZ_PER_LSB = "0.0000001164"
 PFC_HEADER_BYTES = 40960
 # the Sens. Phase soft scale of every real scan list: a factor of 1 with no unit
 PHASE_SENS = "1.000000"
 SPM_HEADER_BYTES = 80960
+# the force sections of the real force volume, in its order
+SPM_FORCE_SECTIONS = (
+    "deflection",
+    "peak force error",
+    "deflection 2.5 V",
+    "height sensor",
+)
 
 
 def _g(x: float) -> str:
@@ -228,6 +241,8 @@ def build_pfc(
     amplitude: float = 75.0,
     extend_marker: bool = True,
     phase_image: bool = False,
+    drive_frequency: float | None = None,
+    drive_frequency_line: bool = True,
     filename: str = "synthetic.000.pfc",
 ) -> SyntheticFile:
     """Write a PeakForce capture of shape (rows, cols) and say what it holds.
@@ -242,11 +257,20 @@ def build_pfc(
     the INT16_MIN marker of the real captures. ``phase_image`` adds a Phase image
     after the Height image, on the scan list's unitless ``Sens. Phase`` soft scale
     (``V 1.000000 `` in the real files), so its values are in V.
+    ``drive_frequency`` in kHz is written on the ``@2:DriveFrequency3SoftHarmoniX``
+    line of the scan list (by default ``rate`` x 1000 / 1024, as in the real
+    captures), beside a ``@3:`` line of 0.005 kHz; one period of it spans a curve.
+    ``drive_frequency_line=False`` leaves the ``@2:`` line out, keeping the ``@3:``
+    line, and a curve then spans one period of ``rate``.
     """
     rows, cols = shape
     n_curves = rows * cols
     npts = 2 * points
     rate_str = _g(rate)
+    if drive_frequency is None:
+        drive_frequency = float(rate_str) * PFC_DRIVE_FRACTION
+    drive_str = _fixed(drive_frequency)
+    period = 1 / (float(drive_str if drive_frequency_line else rate_str) * 1e3)
     if sample_points is None:
         sample_points = round(PFC_SAMPLE_RATE_KHZ / float(rate_str))
     sync_str = _g(sync_distance)
@@ -342,6 +366,12 @@ def build_pfc(
         scan_list["Sync Distance QNM"] = qnm_str
     if phase_image:
         scan_list["@Sens. Phase"] = f"V {PHASE_SENS} "
+    drive_key = "DriveFrequency3SoftHarmoniX"
+    if drive_frequency_line:
+        scan_list[f"@2:{drive_key}"] = (
+            f"V ({DRIVE_KHZ_PER_LSB} kHz/LSB) {drive_str} kHz"
+        )
+    scan_list[f"@3:{drive_key}"] = f"V ({DRIVE_KHZ_PER_LSB} kHz/LSB) 0.005000000 kHz"
     sections = [
         (
             "Force file list",
@@ -410,7 +440,7 @@ def build_pfc(
         images=images,
         k=float(k_str),
         defl_sens=float(sens_str),
-        t_step=1 / (float(rate_str) * 1e3 * npts),
+        t_step=period / npts,
         scansize=(fast, slow),
         image_units=image_units,
         sync_dist=lag,
@@ -430,7 +460,9 @@ def build_spm(
     ramp_rate: float = 1.00469,
     scan_list_grid: Index | None = None,
     invalid_pixels: Iterable[Index] = (),
+    invalid_samples: Iterable[tuple[str, Index, int, int]] = (),
     phase_image: bool = False,
+    force_sections: Sequence[str] = SPM_FORCE_SECTIONS,
     filename: str = "synthetic.0_00000.spm",
 ) -> SyntheticFile:
     """Write a force volume of shape (rows, cols) and say what it holds.
@@ -439,10 +471,21 @@ def build_spm(
     ``defl_sens`` and ``z_sens`` (of the Height Sensor) in nm/V, ``scan_size``
     the fast axis in nm, ``ramp_rate`` the ramps per second. ``scan_list_grid``
     (rows, cols) replaces the grid of the Ciao scan list alone; ``invalid_pixels``
-    lists the (row, col) of pixels marked invalid. Both write what the reader
-    gets wrong today; see the module docstring. ``phase_image`` adds a Phase image
-    after the Height Sensor image, on the scan list's unitless ``Sens. Phase`` soft
-    scale (``V 1.000000 `` in the real files), so its values are in V.
+    lists the (row, col) of pixels marked invalid; see the module docstring.
+    ``invalid_samples`` lists (channel, (row, col), half, point) samples to write as
+    INT32_MIN in the "deflection" or "height sensor" channel, half 0 the extend and 1
+    the retract, point counted in the curve as read (the extend in time order); the
+    expected curve is NaN there. The channels written after them from those two
+    ("other deflection", "other height sensor") carry the marks too.
+    ``phase_image`` adds a Phase image after the Height Sensor image, on the scan
+    list's unitless ``Sens. Phase`` soft scale (``V 1.000000 `` in the real files),
+    so its values are in V. ``force_sections`` lists the force sections in file
+    order, each one of: "deflection" (Deflection Error at 0.5 V full scale),
+    "deflection 2.5 V" (the same values at 2.5 V, marked at invalid pixels),
+    "height sensor", "peak force error", "other deflection" and "other height
+    sensor" (those names holding each half reversed), and "height error" and
+    "adhesion" (names of neither, on a sensitivity the scan list lacks). The
+    expected volume pairs the values of "deflection" with those of "height sensor".
     """
     rows, cols = shape
     scan_rows, scan_cols = shape if scan_list_grid is None else scan_list_grid
@@ -482,18 +525,71 @@ def build_spm(
         for channel in (error, deflection_2v5, height):
             channel[r, c, 0] = INT32_MIN
         image_codes[r, c] = INT32_MIN
-        zext[r, c] = dext[r, c] = image[r, c] = np.nan
+        zext[r, c] = image[r, c] = np.nan
+    marked = {
+        "deflection": (deflection, dext, dret),
+        "height sensor": (height, zext, zret),
+    }
+    for name, (r, c), half, point in invalid_samples:
+        channel, ext, ret = marked[name]
+        # the extend half is stored from the surface outward, the reverse of time order
+        stored_point = points - 1 - point if half == 0 else point
+        channel[r, c, half, stored_point] = INT32_MIN
+        (ext, ret)[half][r, c, point] = np.nan
 
     # Image Data, sensitivity, Bytes/pixel, full scale of the Z scale and FV scale
     # lines, values
     defl = 'S [DeflectionError] "Deflection Error"'
     full = full_scale
-    channels = [
-        (defl, "Sens. DeflSens", 2, "0.5000000", "2.500000", deflection),
-        ('S [] "Peak Force Error"', "Sens. ForceDeflSens", 2, full, full, error),
-        (defl, "Sens. DeflSens", 2, "2.500000", "2.500000", deflection_2v5),
-        ('S [ZSensor] "Height Sensor"', "Sens. ZsensSens", 4, full, full, height),
-    ]
+    sections_by_name = {
+        "deflection": (defl, "Sens. DeflSens", 2, "0.5000000", "2.500000", deflection),
+        "peak force error": (
+            'S [] "Peak Force Error"',
+            "Sens. ForceDeflSens",
+            2,
+            full,
+            full,
+            error,
+        ),
+        "deflection 2.5 V": (
+            defl,
+            "Sens. DeflSens",
+            2,
+            "2.500000",
+            "2.500000",
+            deflection_2v5,
+        ),
+        "height sensor": (
+            'S [ZSensor] "Height Sensor"',
+            "Sens. ZsensSens",
+            4,
+            full,
+            full,
+            height,
+        ),
+        # the same names holding other values: each half reversed
+        "other deflection": (
+            defl,
+            "Sens. DeflSens",
+            2,
+            "2.500000",
+            "2.500000",
+            np.ascontiguousarray(deflection[..., ::-1]),
+        ),
+        "other height sensor": (
+            'S [ZSensor] "Height Sensor"',
+            "Sens. ZsensSens",
+            4,
+            full,
+            full,
+            np.ascontiguousarray(height[..., ::-1]),
+        ),
+        # names that are neither a deflection nor a height, on a sensitivity the scan
+        # list does not have
+        "height error": ('S [] "Height Error"', "Sens. Unknown", 2, full, full, error),
+        "adhesion": ('S [] "Adhesion"', "Sens. Unknown", 2, full, full, error),
+    }
+    channels = [sections_by_name[name] for name in force_sections]
     offset = SPM_HEADER_BYTES
     force_sections = []
     for image_data, sens, bytes_per_pixel, value, fv_value, data in channels:

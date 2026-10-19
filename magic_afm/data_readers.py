@@ -226,16 +226,16 @@ def _select_volume(fvfile: FVFile, trace: int | None) -> Volume:
     return fvfile.volumes[names.index(wanted)]
 
 
-def _check_force_bpp(length, ncurves, npts, header) -> int:
-    """Bytes per point of a force section that holds ncurves curves of npts points."""
+def _check_force_bpp(length, ncurves, npts, grid) -> int:
+    """Bytes per point of a force section that holds ncurves curves of npts points.
+
+    grid names the header keys the caller took ncurves from, with their values.
+    """
     bpp, rem = divmod(length, ncurves * npts)
     if rem or bpp not in (2, 4):
-        force_line = header.get("Ciao force list", [{}])[0].get("force/line")
-        samps_line = header["Ciao scan list"][0].get("Samps/line")
         raise FileFormatError(
             f"force data length {length} does not fit {ncurves} curves of {npts}"
-            f" points; the capture may skip points (force/line: {force_line}"
-            f" against Samps/line: {samps_line})"
+            f" points; the capture may skip points ({grid})"
         )
     return bpp
 
@@ -1503,15 +1503,24 @@ class NanoscopeImage:
 
     def get_image(self) -> np.ndarray:
         with memoryview(self.data) as v:  # assert data is open, and hold it open
-            z_floats = np.ndarray(
+            z_ints = np.ndarray(
                 shape=self.shape,
                 dtype=f"<i{self.bpp}",
                 buffer=v,
                 offset=self.offset,
-            ).astype("f4", copy=True)
+            )
+            z_floats = _nanoscope_floats(z_ints)
         z_floats *= self.unit_scale
         z_floats += self.unit_offset
         return z_floats
+
+
+def _nanoscope_floats(ints: np.ndarray) -> np.ndarray:
+    """Samples as float32, NaN at each INT32_MIN a 4-byte section marks invalid."""
+    floats = ints.astype("f4")
+    if ints.dtype.itemsize == 4:
+        floats[ints == np.iinfo(np.int32).min] = np.nan
+    return floats
 
 
 def _nanoscope_curve_scale(header, subheader, sens_key: str) -> float:
@@ -1540,14 +1549,15 @@ class _FFVReader:
     }
 
     @classmethod
-    def parse(cls, header, data, subheader):
-        c = int(header["Ciao scan list"][0]["Samps/line"])
-        r = int(header["Ciao scan list"][0]["Lines"])
+    def parse(cls, header, data, subheader, shape):
+        r, c = shape
         name = subheader["@4:Image Data"].split('"')[1]
         offset = int(subheader["Data offset"])
         length = int(subheader["Data length"])
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
-        bpp = _check_force_bpp(length, r * c, 2 * n_ext, header)
+        cfl = header["Ciao force list"][0]
+        grid = f"FV Lines: {cfl['FV Lines']}, force/line: {cfl['force/line']}"
+        bpp = _check_force_bpp(length, r * c, 2 * n_ext, grid)
         ints = np.ndarray(
             shape=(r, c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
@@ -1556,7 +1566,7 @@ class _FFVReader:
 
     def get_curve(self, r, c):
         with memoryview(self.data):  # assert data is open, and hold it open
-            f = self.ints[r, c].astype("f4")
+            f = _nanoscope_floats(self.ints[r, c])
         f *= self.scale
         return f[0, ::-1], f[1]
 
@@ -1579,7 +1589,10 @@ class _QNMDReader:
         offset = int(subheader["Data offset"])
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
         npts = 2 * n_ext
-        bpp = _check_force_bpp(length, r * c, npts, header)
+        force_line = header["Ciao force list"][0]["force/line"]
+        samps_line = header["Ciao scan list"][0]["Samps/line"]
+        grid = f"force/line: {force_line} against Samps/line: {samps_line}"
+        bpp = _check_force_bpp(length, r * c, npts, grid)
         d_ints = np.ndarray(
             shape=(r * c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
@@ -1736,6 +1749,15 @@ class NanoscopeFile:
             bytes(memoryview(data)[:header_end_pos]).decode("windows-1252").splitlines()
         )
 
+        if "Ciao image list" not in header:
+            raise FileFormatError(
+                "No Ciao image list in the header; a single force-curve file"
+                " holds none and is not supported"
+            )
+        for section in ("Ciao scan list", "Ciao force list", "Ciao force image list"):
+            if section not in header:
+                raise FileFormatError(f"No {section} in the header")
+
         # Header items that I should be reading someday
         # \Frame direction: Down
         # \Line Direction: Retrace
@@ -1745,16 +1767,27 @@ class NanoscopeFile:
         # \Aspect Ratio: 1:1
         # \Scan Size: 800 800 nm
         csl = header["Ciao scan list"][0]
-        fastpx = _nonzero(int(csl["Samps/line"]), "Samps/line", "Ciao scan list")
-        slowpx = _nonzero(int(csl["Lines"]), "Lines", "Ciao scan list")
+        cfl = header["Ciao force list"][0]
+        # deflection and height data are separate "force images", first of each name
+        force_sections = {}
+        for subheader in header["Ciao force image list"]:
+            name = subheader["@4:Image Data"].split('"')[1]
+            force_sections.setdefault(name, subheader)
+        # any section with Height in its name marks a force volume, else QNM
+        is_ffv = any("Height" in name for name in force_sections)
+        if is_ffv:
+            fv_lines = int(cfl["FV Lines"].split()[0])
+            slowpx = _nonzero(fv_lines, "FV Lines", "Ciao force list")
+            fv_cols = int(cfl["force/line"].split()[0])
+            fastpx = _nonzero(fv_cols, "force/line", "Ciao force list")
+        else:
+            fastpx = _nonzero(int(csl["Samps/line"]), "Samps/line", "Ciao scan list")
+            slowpx = _nonzero(int(csl["Lines"]), "Lines", "Ciao scan list")
         shape = slowpx, fastpx
         ratestr, unit = csl["PFT Freq"].split()
         if unit.lower() != "khz":
             raise FileFormatError(f"PFT Freq unit is {unit!r}, expected kHz")
         rate = _nonzero(float(ratestr), "PFT Freq", "Ciao scan list")
-        force_line = header["Ciao force list"][0]["force/line"].split()[0]
-        npts = _nonzero(int(force_line), "force/line", "Ciao force list")
-        t_step = 1 / (rate * 1000) / npts
         for subheader in header["Ciao force image list"]:
             n_ext = subheader["Samps/line"].split()[0]
             _nonzero(int(n_ext), "Samps/line", "Ciao force image list")
@@ -1777,28 +1810,32 @@ class NanoscopeFile:
         for entry in header["Ciao image list"]:
             name = entry["@2:Image Data"].split('"')[1]
             images[name] = NanoscopeImage.parse_image(data, header, entry, name)
-        # deflection and height data are separate "force images"
-        # we've got to pair them up
-        heights = []
-        deflections = []
-        for subheader in header["Ciao force image list"]:
-            name = subheader["@4:Image Data"].split('"')[1]
-            if "Height" in name:
-                heights.append(subheader)
-            else:
-                deflections.append(subheader)
-        if not heights:
+        if not is_ffv:
+            deflections = header["Ciao force image list"]
             # QNM data doesn't contain height data which we synthesize from an image
-            try:
-                height_for_z = images["Height Sensor"].get_image()
-            except KeyError:
-                height_for_z = images["Height"].get_image()
+            height_image = images.get("Height Sensor", images.get("Height"))
+            if height_image is None:
+                raise FileFormatError(
+                    "No Height Sensor or Height image to build z from"
+                )
+            height_for_z = height_image.get_image()
             height_for_z *= _NANOMETER_UNIT_CONVERSION
             try:
                 sync_dist_str = csl["Sync Distance QNM"]
             except KeyError:
                 sync_dist_str = csl["Sync Distance"]
             points_per_curve = sum(map(int, deflections[0]["Samps/line"].split()))
+            # one PeakForce period, from the drive frequency if the header has it
+            drive_key = "@2:DriveFrequency3SoftHarmoniX"
+            drive_rate = rate
+            if drive_key in csl:
+                *_, drive_str, drive_unit = csl[drive_key].split()
+                if drive_unit.lower() != "khz":
+                    raise FileFormatError(
+                        f"{drive_key} unit is {drive_unit!r}, expected kHz"
+                    )
+                drive_rate = _nonzero(float(drive_str), drive_key, "Ciao scan list")
+            t_step = 1 / (drive_rate * 1000) / points_per_curve
             try:
                 samples_per_period = float(csl["Sample Points"])
             except KeyError:
@@ -1825,17 +1862,27 @@ class NanoscopeFile:
                 )
             ]
         else:
+            # one PFT Freq period over the curves per line
+            t_step = 1 / (rate * 1000) / fastpx
             sync_dist = None
+            # z from Height Sensor (the measured z) or else Height; d from Deflection
+            # Error; sections of other names go unread
+            z_subh = force_sections.get("Height Sensor", force_sections.get("Height"))
+            if z_subh is None:
+                raise FileFormatError("no Height Sensor or Height force section")
+            try:
+                d_subh = force_sections["Deflection Error"]
+            except KeyError:
+                raise FileFormatError("no Deflection Error force section") from None
             volumes = [
                 NanoscopeVolume.parse(
                     shape,
                     scansize,
                     t_step,
                     sync_dist,
-                    _FFVReader.parse(header, data, z_subh),
-                    _FFVReader.parse(header, data, d_subh),
+                    _FFVReader.parse(header, data, z_subh, shape),
+                    _FFVReader.parse(header, data, d_subh, shape),
                 )
-                for z_subh, d_subh in zip(heights, deflections)
             ]
         # volumes = {v.name:v for v in volumes}
         k = float(header["Ciao force image list"][0]["Spring Constant"])

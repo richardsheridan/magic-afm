@@ -39,6 +39,8 @@ from synthetic_files.nanoscope import (
 
 PFC_RELPATH = "test_cases/PS_PCL_SAA/QNM/onekhz.000.pfc"
 SPM_RELPATH = "test_cases/A1_OCSOH-PMMA21k_300421.0_300425.spm"
+# a force volume whose Ciao scan list grid (16 x 8) is not its 8 x 8 grid
+STALE_GRID_SPM_RELPATH = "test_cases/DOE4_20nN_80nm.0_00012.spm"
 
 # grid (rows, cols), points per half curve, other builder arguments
 PFC_CASES = {
@@ -61,8 +63,6 @@ PFC_CASES = {
 # Left out of the scan size test: "tall-128". The reader takes Scan Size as the longer
 # side, the builder as the fast axis; no real file says which.
 SCANSIZE_CASES = [case for case in PFC_CASES if case != "tall-128"]
-# Left out everywhere: t_step. The reader divides the drive period by force/line, the
-# curves per line, not by the points per curve.
 
 # grid (rows, cols), points per half curve
 SPM_CASES = {
@@ -73,10 +73,9 @@ SPM_CASES = {
 }
 # Left out of the scan size test: "tall-64", as for a capture.
 SPM_SCANSIZE_CASES = [case for case in SPM_CASES if case != "tall-64"]
-# Left out everywhere: t_step. The reader takes it from PFT Freq and force/line, the
+# Left out of the synthetic force volume tests: t_step. The reader takes it from PFT Freq and force/line, the
 # curves per line; the builder from the Scan rate of the ramps, which no real file
-# settles either. The builder's stale scan list grid and invalid pixels are checked only
-# as the builder writes them.
+# settles either.
 
 
 def assert_float32_close(actual, expected):
@@ -131,6 +130,56 @@ def test_pfc_lag_of_the_deflection_round_trips(tmp_path, case):
         np.testing.assert_allclose(
             fvfile.volumes[0].sync_dist, synthetic.sync_dist, rtol=1e-12
         )
+
+
+def assert_time_step(fvfile, t_step):
+    """The file's time step and every volume's are t_step seconds."""
+    np.testing.assert_allclose(fvfile.t_step, t_step, rtol=1e-12)
+    for volume in fvfile.volumes:
+        step, unit = volume.step_info[2]
+        assert unit == "s"
+        np.testing.assert_allclose(step, t_step, rtol=1e-12)
+
+
+@pytest.mark.parametrize("case", list(PFC_CASES))
+def test_pfc_time_step_is_one_drive_period_over_the_points_per_curve(tmp_path, case):
+    synthetic = build_pfc_case(tmp_path, case)
+    with open_fvfile(synthetic.path) as fvfile:
+        assert_time_step(fvfile, synthetic.t_step)
+
+
+@pytest.mark.parametrize(
+    "drive_frequency, t_step",
+    [(0.9765625, 4.0e-6), (0.9, 1 / 900 / 256)],
+    ids=["976.5625-Hz", "900-Hz"],
+)
+def test_pfc_time_step_is_the_written_drive_period_over_256_points(
+    tmp_path, drive_frequency, t_step
+):
+    """The period comes from the drive frequency line, not the PFT Freq of 1 kHz."""
+    synthetic = build_pfc(
+        tmp_path, (4, 4), 128, rate=1.0, drive_frequency=drive_frequency
+    )
+    with open_fvfile(synthetic.path) as fvfile:
+        assert_time_step(fvfile, t_step)
+
+
+def _drop_drive_lines(lines):
+    kept = [line for line in lines if "DriveFrequency3SoftHarmoniX:" not in line]
+    assert len(kept) == len(lines) - 1
+    return kept
+
+
+@pytest.mark.parametrize(
+    "edit", [None, _drop_drive_lines], ids=["only-group-3", "no-drive-line"]
+)
+def test_pfc_without_a_drive_frequency_takes_the_period_from_pft_freq(tmp_path, edit):
+    """1 / (1 kHz) over 256 points."""
+    synthetic = build_pfc(tmp_path, (4, 4), 128, rate=1.0, drive_frequency_line=False)
+    if edit is not None:
+        edit_nanoscope_header(synthetic.path, edit)
+    with open_fvfile(synthetic.path) as fvfile:
+        assert_time_step(fvfile, 1 / 1000 / 256)
 
 
 def test_pfc_without_sample_points_takes_512_khz_over_pft_freq(tmp_path):
@@ -450,7 +499,7 @@ def test_spm_builder_marks_invalid_pixels_as_the_real_file_does(tmp_path):
     expected = synthetic.volumes[0]
     for half, nan in (
         (expected.zext, True),
-        (expected.dext, True),
+        (expected.dext, False),
         (expected.zret, False),
         (expected.dret, False),
     ):
@@ -484,6 +533,120 @@ def test_spm_builder_can_write_a_stale_scan_list_grid(tmp_path):
     ]
     assert lengths == [8 * 8 * 2 * points * 4] * 4
     assert synthetic.volumes[0].shape == (8, 8)
+
+
+# grid (rows, cols) of the file, and of its Ciao scan list alone
+FORCE_LIST_GRID_CASES = {
+    "stale-scan-list": ((8, 8), (8, 16)),
+    "transposed-scan-list": ((3, 6), (6, 3)),
+    "zero-scan-list": ((4, 4), (0, 0)),
+}
+
+
+@pytest.mark.parametrize("case", FORCE_LIST_GRID_CASES)
+def test_spm_grid_comes_from_the_force_list(tmp_path, case):
+    """Rows are the force list's FV Lines and columns its force/line."""
+    shape, scan_list_grid = FORCE_LIST_GRID_CASES[case]
+    synthetic = build_spm(tmp_path, shape, 16, scan_list_grid=scan_list_grid)
+    expected = synthetic.volumes[0]
+    with open_fvfile(synthetic.path) as fvfile:
+        assert [v.shape for v in fvfile.volumes] == [shape]
+        np.testing.assert_allclose(fvfile.scansize, synthetic.scansize, rtol=1e-12)
+        volume = fvfile.volumes[0]
+        (x_step, _), (y_step, _) = volume.step_info[:2]
+        z, d = volume.get_all_curves()
+    fast, slow = synthetic.scansize
+    rows, cols = shape
+    np.testing.assert_allclose(x_step, fast * 1e-9 / cols, rtol=1e-12)
+    np.testing.assert_allclose(y_step, slow * 1e-9 / rows, rtol=1e-12)
+    assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
+    assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+
+
+# force sections in file order, unlike the A1 file's
+FORCE_SECTION_CASES = {
+    "repeated": ("deflection", "height sensor", "deflection 2.5 V", "height sensor"),
+    "later-deflection-differs": (
+        "deflection",
+        "height sensor",
+        "other deflection",
+        "height sensor",
+    ),
+    "later-height-sensor-differs": (
+        "deflection",
+        "height sensor",
+        "deflection 2.5 V",
+        "other height sensor",
+    ),
+    "peak-force-error-first": ("peak force error", "deflection", "height sensor"),
+    "height-error-first": ("height error", "deflection", "height sensor"),
+    "unknown-name-first": ("adhesion", "deflection", "height sensor"),
+}
+
+
+@pytest.mark.parametrize("case", FORCE_SECTION_CASES)
+def test_spm_pairs_the_first_deflection_error_with_the_first_height(tmp_path, case):
+    """One volume, from the first of each name; sections of other names go unread."""
+    sections = FORCE_SECTION_CASES[case]
+    synthetic = build_spm(tmp_path, (4, 4), 16, force_sections=sections)
+    expected = synthetic.volumes[0]
+    with open_fvfile(synthetic.path) as fvfile:
+        assert [(v.name, v.shape) for v in fvfile.volumes] == [
+            ("Deflection Error", (4, 4))
+        ]
+        z, d = fvfile.volumes[0].get_all_curves()
+    assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
+    assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+
+
+def assert_nan_where_expected(actual, expected):
+    """NaN exactly where the expected values are, close to them elsewhere."""
+    np.testing.assert_array_equal(np.isnan(actual), np.isnan(expected))
+    if not np.isnan(expected).all():
+        assert_float32_close(actual, expected)
+
+
+# samples written as INT32_MIN: channel, pixel, half (0 extend, 1 retract), point
+INVALID_SAMPLES = [
+    ("height sensor", (0, 1), 1, 5),
+    ("height sensor", (2, 0), 0, 0),
+    ("deflection", (2, 3), 0, 3),
+    ("deflection", (3, 0), 1, 0),
+    ("deflection", (3, 3), 0, 15),
+]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"invalid_pixels": [(1, 2)]}, {"invalid_samples": INVALID_SAMPLES}],
+    ids=["invalid-pixel", "invalid-samples"],
+)
+def test_spm_int32_min_force_samples_read_nan(tmp_path, kwargs):
+    """Each INT32_MIN sample of z or deflection, in either half, reads NaN."""
+    synthetic = build_spm(tmp_path, (4, 4), 16, **kwargs)
+    expected = synthetic.volumes[0]
+    with open_fvfile(synthetic.path) as fvfile:
+        volume = fvfile.volumes[0]
+        curves = {(r, c): volume.get_curve(r, c) for r, c in np.ndindex(volume.shape)}
+        z, d = volume.get_all_curves()
+    for (r, c), ((zext, zret), (dext, dret)) in curves.items():
+        (ezext, ezret), (edext, edret) = expected.curve(r, c)
+        for actual, half in (
+            (zext, ezext),
+            (zret, ezret),
+            (dext, edext),
+            (dret, edret),
+        ):
+            assert_nan_where_expected(actual, half)
+    assert_nan_where_expected(z, np.stack([expected.zext, expected.zret], axis=2))
+    assert_nan_where_expected(d, np.stack([expected.dext, expected.dret], axis=2))
+
+
+def test_spm_int32_min_image_pixels_read_nan(tmp_path):
+    synthetic = build_spm(tmp_path, (4, 4), 16, invalid_pixels=[(1, 2)])
+    with open_fvfile(synthetic.path) as fvfile:
+        image = fvfile.images["Height Sensor"].get_image()
+    assert_nan_where_expected(image, synthetic.images["Height Sensor"] * 1e-9)
 
 
 def header_layout(headers):
@@ -592,8 +755,20 @@ def test_synthetic_pfc_has_the_structure_of_the_real_file(real_data_file, tmp_pa
     with open_fvfile(synthetic.path) as fvfile:
         assert structure(fvfile) == real_structure
         assert_keys_in_real_file(fvfile.headers, real_headers)
-        for key in ("Sample Points", "PFT Freq"):
+        for key in (
+            "Sample Points",
+            "PFT Freq",
+            "@2:DriveFrequency3SoftHarmoniX",
+            "@3:DriveFrequency3SoftHarmoniX",
+        ):
             assert fvfile.headers["Ciao scan list"][0][key] == scan_list[key]
+
+
+@pytest.mark.slow
+def test_real_pfc_time_step_is_one_drive_period_over_256_points(real_data_file):
+    """1 / (976.5625 Hz) / 256 = 4 us."""
+    with open_fvfile(Path(real_data_file(PFC_RELPATH))) as fvfile:
+        assert_time_step(fvfile, 4.0e-6)
 
 
 @pytest.mark.slow
@@ -625,3 +800,73 @@ def test_synthetic_spm_has_the_structure_of_the_real_file(real_data_file, tmp_pa
     with open_fvfile(synthetic.path) as fvfile:
         assert structure(fvfile) == real_structure
         assert_keys_in_real_file(fvfile.headers, real_headers)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "relpath, t_step",
+    [(SPM_RELPATH, 3.125e-5), (STALE_GRID_SPM_RELPATH, 6.25e-5)],
+    ids=["A1", "DOE4"],
+)
+def test_real_spm_time_step_is_unchanged_by_its_drive_frequency(
+    real_data_file, relpath, t_step
+):
+    with open_fvfile(Path(real_data_file(relpath))) as fvfile:
+        assert_time_step(fvfile, t_step)
+
+
+@pytest.mark.slow
+def test_real_spm_with_a_stale_scan_list_has_the_force_list_grid(real_data_file):
+    """One 8 x 8 volume over 500 x 500 nm, steps of 62.5 nm."""
+    with open_fvfile(Path(real_data_file(STALE_GRID_SPM_RELPATH))) as fvfile:
+        assert [(v.name, v.shape) for v in fvfile.volumes] == [
+            ("Deflection Error", (8, 8))
+        ]
+        np.testing.assert_allclose(fvfile.scansize, (500.0, 500.0), rtol=1e-12)
+        steps = fvfile.volumes[0].step_info[:2]
+    assert [unit for _, unit in steps] == ["m", "m"]
+    np.testing.assert_allclose([step for step, _ in steps], 62.5e-9, rtol=1e-12)
+
+
+@pytest.mark.slow
+def test_real_spm_with_a_stale_scan_list_has_a_z_ramp_in_each_half(real_data_file):
+    """Each half of every z spans over 10 nm and runs steadily one way."""
+    with open_fvfile(Path(real_data_file(STALE_GRID_SPM_RELPATH))) as fvfile:
+        z, _ = fvfile.volumes[0].get_all_curves()
+    index = np.arange(z.shape[-1])
+    for r, c, half in np.ndindex(z.shape[:3]):
+        curve = z[r, c, half].astype(np.float64)
+        assert np.ptp(curve) > 10.0, ((r, c, half), np.ptp(curve))
+        assert abs(np.corrcoef(index, curve)[0, 1]) > 0.9, (r, c, half)
+    assert z.shape[:3] == (8, 8, 2)
+
+
+# the one pixel of the real force volume whose z extend half and image are INT32_MIN
+SPM_INVALID_PIXEL = (12, 3)
+
+
+@pytest.mark.slow
+def test_real_spm_invalid_pixel_has_a_nan_z_extend_and_real_deflection(real_data_file):
+    """Only its z extend half is NaN; its z retract and its deflection are real."""
+    with open_fvfile(Path(real_data_file(SPM_RELPATH))) as fvfile:
+        volume = fvfile.volumes[0]
+        (zext, zret), (dext, dret) = volume.get_curve(*SPM_INVALID_PIXEL)
+        z, d = volume.get_all_curves()
+    assert np.isnan(zext).all()
+    for half in (zret, dext, dret):
+        assert np.isfinite(half).all()
+    nan_z = np.zeros(z.shape, dtype=bool)
+    nan_z[(*SPM_INVALID_PIXEL, 0)] = True
+    np.testing.assert_array_equal(np.isnan(z), nan_z)
+    assert np.isfinite(d).all()
+
+
+@pytest.mark.slow
+def test_real_spm_height_sensor_image_is_nan_at_its_invalid_pixel_only(
+    real_data_file,
+):
+    with open_fvfile(Path(real_data_file(SPM_RELPATH))) as fvfile:
+        image = fvfile.images["Height Sensor"].get_image()
+    invalid = np.zeros(image.shape, dtype=bool)
+    invalid[SPM_INVALID_PIXEL] = True
+    np.testing.assert_array_equal(np.isnan(image), invalid)
