@@ -226,17 +226,13 @@ def _select_volume(fvfile: FVFile, trace: int | None) -> Volume:
     return fvfile.volumes[names.index(wanted)]
 
 
-def _check_force_bpp(length, ncurves, npts, header, ffv=False) -> int:
-    """Bytes per point of a force section that holds ncurves curves of npts points."""
+def _check_force_bpp(length, ncurves, npts, grid) -> int:
+    """Bytes per point of a force section that holds ncurves curves of npts points.
+
+    grid names the header keys the caller took ncurves from, with their values.
+    """
     bpp, rem = divmod(length, ncurves * npts)
     if rem or bpp not in (2, 4):
-        cfl = header.get("Ciao force list", [{}])[0]
-        force_line = cfl.get("force/line")
-        if ffv:
-            grid = f"FV Lines: {cfl.get('FV Lines')}, force/line: {force_line}"
-        else:
-            samps_line = header["Ciao scan list"][0].get("Samps/line")
-            grid = f"force/line: {force_line} against Samps/line: {samps_line}"
         raise FileFormatError(
             f"force data length {length} does not fit {ncurves} curves of {npts}"
             f" points; the capture may skip points ({grid})"
@@ -1521,7 +1517,9 @@ class _FFVReader:
         offset = int(subheader["Data offset"])
         length = int(subheader["Data length"])
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
-        bpp = _check_force_bpp(length, r * c, 2 * n_ext, header, ffv=True)
+        cfl = header["Ciao force list"][0]
+        grid = f"FV Lines: {cfl['FV Lines']}, force/line: {cfl['force/line']}"
+        bpp = _check_force_bpp(length, r * c, 2 * n_ext, grid)
         ints = np.ndarray(
             shape=(r, c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
@@ -1553,7 +1551,10 @@ class _QNMDReader:
         offset = int(subheader["Data offset"])
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
         npts = 2 * n_ext
-        bpp = _check_force_bpp(length, r * c, npts, header)
+        force_line = header["Ciao force list"][0]["force/line"]
+        samps_line = header["Ciao scan list"][0]["Samps/line"]
+        grid = f"force/line: {force_line} against Samps/line: {samps_line}"
+        bpp = _check_force_bpp(length, r * c, npts, grid)
         d_ints = np.ndarray(
             shape=(r * c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
@@ -1720,14 +1721,13 @@ class NanoscopeFile:
         # \Scan Size: 800 800 nm
         csl = header["Ciao scan list"][0]
         cfl = header["Ciao force list"][0]
-        # deflection and height data are separate "force images"
-        # a force volume pairs the first height with the first deflection error
+        # deflection and height data are separate "force images", first of each name
         force_sections = {}
-        is_ffv = False
         for subheader in header["Ciao force image list"]:
             name = subheader["@4:Image Data"].split('"')[1]
-            is_ffv = is_ffv or "Height" in name
             force_sections.setdefault(name, subheader)
+        # any section with Height in its name marks a force volume, else QNM
+        is_ffv = any("Height" in name for name in force_sections)
         if is_ffv:
             fv_lines = int(cfl["FV Lines"].split()[0])
             slowpx = _nonzero(fv_lines, "FV Lines", "Ciao force list")
@@ -1806,6 +1806,8 @@ class NanoscopeFile:
             ]
         else:
             sync_dist = None
+            # z from Height Sensor (the measured z) or else Height; d from Deflection
+            # Error; sections of other names go unread
             z_subh = force_sections.get("Height Sensor", force_sections.get("Height"))
             if z_subh is None:
                 raise FileFormatError("no Height Sensor or Height force section")
