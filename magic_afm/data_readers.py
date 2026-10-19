@@ -1788,6 +1788,17 @@ class NanoscopeFile:
             except KeyError:
                 sync_dist_str = csl["Sync Distance"]
             points_per_curve = sum(map(int, deflections[0]["Samps/line"].split()))
+            # one PeakForce period, from the drive frequency if the header has it
+            drive_key = "@2:DriveFrequency3SoftHarmoniX"
+            drive_rate = rate
+            if drive_key in csl:
+                *_, drive_str, drive_unit = csl[drive_key].split()
+                if drive_unit.lower() != "khz":
+                    raise FileFormatError(
+                        f"{drive_key} unit is {drive_unit!r}, expected kHz"
+                    )
+                drive_rate = _nonzero(float(drive_str), drive_key, "Ciao scan list")
+            t_step = 1 / (drive_rate * 1000) / points_per_curve
             try:
                 samples_per_period = float(csl["Sample Points"])
             except KeyError:
