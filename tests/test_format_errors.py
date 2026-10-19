@@ -512,3 +512,95 @@ def test_pfc_zero_pft_freq_without_sample_points_raises_format_error(tmp_path):
 
     edit_nanoscope_header(path, zero_rate_no_sample_points)
     assert_format_error(path, "PFT Freq")
+
+
+def _drop_sections(lines, section: str) -> list[str]:
+    """Header lines without any section of this name."""
+    out, dropping, dropped = [], False, 0
+    for line in lines:
+        if line.startswith("\\*"):
+            dropping = line == f"\\*{section}"
+            dropped += dropping
+        if not dropping:
+            out.append(line)
+    assert dropped, section
+    return out
+
+
+def _scale_all_keys(lines, section: str, key: str, divisor: int) -> list[str]:
+    """Header lines with the integer key of every section of this name divided."""
+    out, current, done = [], None, 0
+    for line in lines:
+        if line.startswith("\\*"):
+            current = line[2:]
+        elif current == section and line.startswith(f"\\{key}:"):
+            value = int(line.split(":", 1)[1])
+            assert value % divisor == 0, (key, value, divisor)
+            line = f"\\{key}: {value // divisor}"
+            done += 1
+        out.append(line)
+    assert done, (section, key)
+    return out
+
+
+NANOSCOPE_SECTIONS = (
+    "Ciao image list",
+    "Ciao scan list",
+    "Ciao force list",
+    "Ciao force image list",
+)
+
+
+@pytest.mark.parametrize(
+    "section", NANOSCOPE_SECTIONS, ids=[s.replace(" ", "-") for s in NANOSCOPE_SECTIONS]
+)
+@pytest.mark.parametrize("build, size", NANOSCOPE_BUILDS, ids=["pfc", "spm"])
+def test_nanoscope_without_a_header_section_raises_format_error_naming_it(
+    tmp_path, build, size, section
+):
+    """Parsing a file that lacks a section the reader needs fails, naming it."""
+    path = build(tmp_path).path
+    edit_nanoscope_header(path, lambda lines: _drop_sections(lines, section), size)
+    with pytest.raises(data_readers.FileFormatError, match=re.escape(section)):
+        with open_fvfile(path):
+            pass
+    assert_format_error(path, re.escape(section))
+
+
+@pytest.mark.parametrize("build, size", NANOSCOPE_BUILDS, ids=["pfc", "spm"])
+def test_nanoscope_single_curve_file_raises_format_error_naming_image_list(
+    tmp_path, build, size
+):
+    """One curve under a stale grid and no image list is refused for the list."""
+    rows, cols = 4, 4
+    path = build(tmp_path, (rows, cols)).path
+
+    def single_curve(lines):
+        lines = _drop_sections(lines, "Ciao image list")
+        lines = _set_key(lines, "Force file list", "Start context", "FOL")
+        return _scale_all_keys(
+            lines, "Ciao force image list", "Data length", rows * cols
+        )
+
+    edit_nanoscope_header(path, single_curve, size)
+    match = re.escape("Ciao image list")
+    with pytest.raises(data_readers.FileFormatError, match=match):
+        with open_fvfile(path):
+            pass
+    assert_format_error(path, match)
+
+
+def test_pfc_without_a_height_sensor_or_height_image_raises_format_error(tmp_path):
+    """The pfc builds z from one of these images; without either it fails to parse."""
+    path = build_pfc(tmp_path).path
+    edit_nanoscope_header(
+        path,
+        lambda lines: _replace_in_key(
+            lines, "Ciao image list", "@2:Image Data", '"Height"', '"Topography"'
+        ),
+    )
+    match = r"(?s)(?=.*Height Sensor)(?=.*Height(?! Sensor))"
+    with pytest.raises(data_readers.FileFormatError, match=match):
+        with open_fvfile(path):
+            pass
+    assert_format_error(path, match)
