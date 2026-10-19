@@ -316,6 +316,22 @@ def test_nanoscope_pft_freq_not_in_khz_raises_format_error(tmp_path):
     assert_format_error(path, r"PFT Freq")
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["V (0.0000001164 kHz/LSB) 976.5625 Hz", "V (0.0000001164 kHz/LSB) 0 kHz"],
+    ids=["not-khz", "zero"],
+)
+def test_pfc_drive_frequency_not_in_khz_or_zero_raises_format_error(tmp_path, value):
+    path = build_pfc(tmp_path).path
+    edit_nanoscope_header(
+        path,
+        lambda lines: _set_key(
+            lines, "Ciao scan list", "@2:DriveFrequency3SoftHarmoniX", value
+        ),
+    )
+    assert_format_error(path, "DriveFrequency3SoftHarmoniX")
+
+
 def test_nanoscope_header_line_without_backslash_raises_format_error(tmp_path):
     path = build_pfc(tmp_path).path
 
@@ -417,7 +433,7 @@ NANOSCOPE_ZERO_CASES = {
     "scan-Samps-line": ("Ciao scan list", "Samps/line", {"pfc": "0"}),
     "scan-Lines": ("Ciao scan list", "Lines", {"pfc": "0"}),
     "PFT-Freq": ("Ciao scan list", "PFT Freq", {"pfc": "0 KHz", "spm": "0 kHz"}),
-    "force-line": ("Ciao force list", "force/line", {"pfc": "0 0", "spm": "0"}),
+    "force-line": ("Ciao force list", "force/line", {"spm": "0"}),
     "FV-Lines": ("Ciao force list", "FV Lines", {"spm": "0"}),
     "force-image-Samps-line": (
         "Ciao force image list",

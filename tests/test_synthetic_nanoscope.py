@@ -63,8 +63,6 @@ PFC_CASES = {
 # Left out of the scan size test: "tall-128". The reader takes Scan Size as the longer
 # side, the builder as the fast axis; no real file says which.
 SCANSIZE_CASES = [case for case in PFC_CASES if case != "tall-128"]
-# Left out everywhere: t_step. The reader divides the drive period by force/line, the
-# curves per line, not by the points per curve.
 
 # grid (rows, cols), points per half curve
 SPM_CASES = {
@@ -132,6 +130,56 @@ def test_pfc_lag_of_the_deflection_round_trips(tmp_path, case):
         np.testing.assert_allclose(
             fvfile.volumes[0].sync_dist, synthetic.sync_dist, rtol=1e-12
         )
+
+
+def assert_time_step(fvfile, t_step):
+    """The file's time step and every volume's are t_step seconds."""
+    np.testing.assert_allclose(fvfile.t_step, t_step, rtol=1e-12)
+    for volume in fvfile.volumes:
+        step, unit = volume.step_info[2]
+        assert unit == "s"
+        np.testing.assert_allclose(step, t_step, rtol=1e-12)
+
+
+@pytest.mark.parametrize("case", list(PFC_CASES))
+def test_pfc_time_step_is_one_drive_period_over_the_points_per_curve(tmp_path, case):
+    synthetic = build_pfc_case(tmp_path, case)
+    with open_fvfile(synthetic.path) as fvfile:
+        assert_time_step(fvfile, synthetic.t_step)
+
+
+@pytest.mark.parametrize(
+    "drive_frequency, t_step",
+    [(0.9765625, 4.0e-6), (0.9, 1 / 900 / 256)],
+    ids=["976.5625-Hz", "900-Hz"],
+)
+def test_pfc_time_step_is_the_written_drive_period_over_256_points(
+    tmp_path, drive_frequency, t_step
+):
+    """The period comes from the drive frequency line, not the PFT Freq of 1 kHz."""
+    synthetic = build_pfc(
+        tmp_path, (4, 4), 128, rate=1.0, drive_frequency=drive_frequency
+    )
+    with open_fvfile(synthetic.path) as fvfile:
+        assert_time_step(fvfile, t_step)
+
+
+def _drop_drive_lines(lines):
+    kept = [line for line in lines if "DriveFrequency3SoftHarmoniX:" not in line]
+    assert len(kept) == len(lines) - 1
+    return kept
+
+
+@pytest.mark.parametrize(
+    "edit", [None, _drop_drive_lines], ids=["only-group-3", "no-drive-line"]
+)
+def test_pfc_without_a_drive_frequency_takes_the_period_from_pft_freq(tmp_path, edit):
+    """1 / (1 kHz) over 256 points."""
+    synthetic = build_pfc(tmp_path, (4, 4), 128, rate=1.0, drive_frequency_line=False)
+    if edit is not None:
+        edit_nanoscope_header(synthetic.path, edit)
+    with open_fvfile(synthetic.path) as fvfile:
+        assert_time_step(fvfile, 1 / 1000 / 256)
 
 
 def test_pfc_without_sample_points_takes_512_khz_over_pft_freq(tmp_path):
@@ -707,8 +755,20 @@ def test_synthetic_pfc_has_the_structure_of_the_real_file(real_data_file, tmp_pa
     with open_fvfile(synthetic.path) as fvfile:
         assert structure(fvfile) == real_structure
         assert_keys_in_real_file(fvfile.headers, real_headers)
-        for key in ("Sample Points", "PFT Freq"):
+        for key in (
+            "Sample Points",
+            "PFT Freq",
+            "@2:DriveFrequency3SoftHarmoniX",
+            "@3:DriveFrequency3SoftHarmoniX",
+        ):
             assert fvfile.headers["Ciao scan list"][0][key] == scan_list[key]
+
+
+@pytest.mark.slow
+def test_real_pfc_time_step_is_one_drive_period_over_256_points(real_data_file):
+    """1 / (976.5625 Hz) / 256 = 4 us."""
+    with open_fvfile(Path(real_data_file(PFC_RELPATH))) as fvfile:
+        assert_time_step(fvfile, 4.0e-6)
 
 
 @pytest.mark.slow
@@ -740,6 +800,19 @@ def test_synthetic_spm_has_the_structure_of_the_real_file(real_data_file, tmp_pa
     with open_fvfile(synthetic.path) as fvfile:
         assert structure(fvfile) == real_structure
         assert_keys_in_real_file(fvfile.headers, real_headers)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "relpath, t_step",
+    [(SPM_RELPATH, 3.125e-5), (STALE_GRID_SPM_RELPATH, 6.25e-5)],
+    ids=["A1", "DOE4"],
+)
+def test_real_spm_time_step_is_unchanged_by_its_drive_frequency(
+    real_data_file, relpath, t_step
+):
+    with open_fvfile(Path(real_data_file(relpath))) as fvfile:
+        assert_time_step(fvfile, t_step)
 
 
 @pytest.mark.slow

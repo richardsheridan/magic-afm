@@ -118,6 +118,10 @@ INPUT_VOLTS = 24.576
 HEIGHT_FULL_SCALE = 354.4026
 # Sample Points times PFT Freq in every real capture
 PFC_SAMPLE_RATE_KHZ = 512.0
+# the drive frequency over PFT Freq in every real capture (976.5625 Hz at 1 kHz)
+PFC_DRIVE_FRACTION = 1000 / 1024
+# the kHz per LSB of the drive frequency lines of the real captures
+DRIVE_KHZ_PER_LSB = "0.0000001164"
 PFC_HEADER_BYTES = 40960
 # the Sens. Phase soft scale of every real scan list: a factor of 1 with no unit
 PHASE_SENS = "1.000000"
@@ -237,6 +241,8 @@ def build_pfc(
     amplitude: float = 75.0,
     extend_marker: bool = True,
     phase_image: bool = False,
+    drive_frequency: float | None = None,
+    drive_frequency_line: bool = True,
     filename: str = "synthetic.000.pfc",
 ) -> SyntheticFile:
     """Write a PeakForce capture of shape (rows, cols) and say what it holds.
@@ -251,11 +257,20 @@ def build_pfc(
     the INT16_MIN marker of the real captures. ``phase_image`` adds a Phase image
     after the Height image, on the scan list's unitless ``Sens. Phase`` soft scale
     (``V 1.000000 `` in the real files), so its values are in V.
+    ``drive_frequency`` in kHz is written on the ``@2:DriveFrequency3SoftHarmoniX``
+    line of the scan list (by default ``rate`` x 1000 / 1024, as in the real
+    captures), beside a ``@3:`` line of 0.005 kHz; one period of it spans a curve.
+    ``drive_frequency_line=False`` leaves the ``@2:`` line out, keeping the ``@3:``
+    line, and a curve then spans one period of ``rate``.
     """
     rows, cols = shape
     n_curves = rows * cols
     npts = 2 * points
     rate_str = _g(rate)
+    if drive_frequency is None:
+        drive_frequency = float(rate_str) * PFC_DRIVE_FRACTION
+    drive_str = _fixed(drive_frequency)
+    period = 1 / (float(drive_str if drive_frequency_line else rate_str) * 1e3)
     if sample_points is None:
         sample_points = round(PFC_SAMPLE_RATE_KHZ / float(rate_str))
     sync_str = _g(sync_distance)
@@ -351,6 +366,12 @@ def build_pfc(
         scan_list["Sync Distance QNM"] = qnm_str
     if phase_image:
         scan_list["@Sens. Phase"] = f"V {PHASE_SENS} "
+    drive_key = "DriveFrequency3SoftHarmoniX"
+    if drive_frequency_line:
+        scan_list[f"@2:{drive_key}"] = (
+            f"V ({DRIVE_KHZ_PER_LSB} kHz/LSB) {drive_str} kHz"
+        )
+    scan_list[f"@3:{drive_key}"] = f"V ({DRIVE_KHZ_PER_LSB} kHz/LSB) 0.005000000 kHz"
     sections = [
         (
             "Force file list",
@@ -419,7 +440,7 @@ def build_pfc(
         images=images,
         k=float(k_str),
         defl_sens=float(sens_str),
-        t_step=1 / (float(rate_str) * 1e3 * npts),
+        t_step=period / npts,
         scansize=(fast, slow),
         image_units=image_units,
         sync_dist=lag,
