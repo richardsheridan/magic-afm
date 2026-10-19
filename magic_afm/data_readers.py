@@ -453,10 +453,12 @@ _ASYLUM_BASE_UNITS = {
 
 
 def _asylum_units(name: str) -> str:
-    """Unit of an Asylum image's values by its base name, or "V" when unknown."""
-    base = name.removesuffix("Retrace").removesuffix("Trace")
-    if base not in _ASYLUM_BASE_UNITS:
-        base = base.removeprefix("Map")
+    """Unit of an Asylum image's values by its base name, or "V" when unknown.
+
+    The base name drops a fast map's scan direction suffix and a slow map's "Map"
+    prefix, so MapHeight and HeightRetrace are both in m.
+    """
+    base = name.removeprefix("Map").removesuffix("Retrace").removesuffix("Trace")
     return _ASYLUM_BASE_UNITS.get(base, "V")
 
 
