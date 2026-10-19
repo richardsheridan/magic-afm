@@ -48,30 +48,27 @@ those curves, the ``VTOC`` slots past them are zeros, and each ``IBOX`` has zero
 the missing lines' ``IDAT`` sections would be. The expected images are NaN on those
 lines, as the file holds no value there.
 
-The layout, field values, flags, padding and note keys follow twelve real files
-from one instrument: 32 x 32 maps of 1000 + 1000 point curves with the trace,
-the retrace or both kept, taken from line 0 or from the last line, complete or
-stopped after 16 to 19 lines; maps of 64 lines of 32 points and of 32 lines of
-64 points; scans twice as long along one axis as along the other; and 2500 +
-2500 point curves. Built with the same settings, each comes out with the same
-sections, sizes (texts aside), fields and links as the real file. The ``Drive``
-channel of the real files sits about 1.1 um above ``Raw``, varying by about 10
-nm from curve to curve; the builder adds a constant. The Height and ZSensor
-images are minus the largest Drive and Raw value of each curve, as in the real
-files; Force and Adhesion are close to the Asylum ones but not baseline
-corrected; the thumbnails are scaled nearest-neighbour copies, where the real
-ones are interpolated and wrap around. No reader looks at the thumbnails, the
-image notes or the meaning of the flags, ``GAMI``, ``MLOV`` or ``XDEF``, which
-are copied as found. No real file settles: whether a ``TEXT`` whose text ends
-just on a multiple of 8 bytes gets 8 zero bytes after it, as the builder
-writes, or none; how a ``VNAM`` grows for names longer than 17 characters;
-whether an ``IDAT`` is padded when a line has an odd number of points; how a
-thumbnail's shorter side is rounded for aspect ratios other than 1 and 2;
-whether a scan can stop part way along a line (the builder stops after whole
-lines); or a stopped scan that kept both directions, which the builder writes
-as a complete one cut short. The main note's ``FMapScanPoints`` and
-``FMapScanLines`` are the settings of a slow force map, not this grid, so the
-builder leaves them out.
+The layout, field values, flags, padding and note keys follow twelve real files from one
+instrument: 32 x 32 maps of 1000 + 1000 point curves with the trace, the retrace or both
+kept, taken from line 0 or from the last line, complete or stopped after 16 to 19 lines;
+maps of 64 lines of 32 points and of 32 lines of 64 points; scans twice as long along
+one axis as along the other; and 2500 + 2500 point curves. Built with the same settings,
+each comes out with the same sections, sizes (texts aside), fields and links as the real
+file. The ``Drive`` channel of the real files sits about 1.1 um above ``Raw``, varying
+by about 10 nm from curve to curve; the builder adds a constant. The Height and ZSensor
+images are minus the largest Drive and Raw value of each curve, as in the real files;
+Force and Adhesion are close to the Asylum ones but not baseline corrected; the
+thumbnails are scaled nearest-neighbour copies, where the real ones are interpolated and
+wrap around. No reader looks at the thumbnails, the image notes or the meaning of the
+flags, ``GAMI``, ``MLOV`` or ``XDEF``, which are copied as found. No real file settles:
+whether a ``TEXT`` whose text ends just on a multiple of 8 bytes gets 8 zero bytes after
+it, as the builder writes, or none; how a ``VNAM`` grows for names longer than 17
+characters; whether an ``IDAT`` is padded when a line has an odd number of points; how a
+thumbnail's shorter side is rounded for aspect ratios other than 1 and 2; whether a scan
+can stop part way along a line (the builder stops after whole lines); or a stopped scan
+that kept both directions, which the builder writes as a complete one cut short. The
+main note's ``FMapScanPoints`` and ``FMapScanLines`` are the settings of a slow force
+map, not this grid, so the builder leaves them out.
 
 A slow force map, written with ``slow_map``, follows one real file of 5 lines of 6
 points. Its single volume has a ``VDEF`` naming the segments "Ext;Ret;Away;", channels
@@ -79,17 +76,17 @@ points. Its single volume has a ``VDEF`` naming the segments "Ext;Ret;Away;", ch
 retract and Away segments: a ramp stops early once the force triggers, and the Away
 segment carries the tip further from the surface after the retract. Each ``VDAT`` gives
 where the extend, retract and Away segments start and the index of the last point. The
-curves snake: the first line taken runs from its last point, the next from point 0,
-and so on, and each curve's index is its place on the grid, line by line, whatever the
-order it was taken in. An ``XDAT`` with the experiment's values for the curve follows
-each curve's ``VDAT`` sections. The note gives the ramp rate, ``ForceScanRate``, and
-the sample rate, ``NumPtsPerSec``, so an untriggered curve has ``NumPtsPerSec /
-ForceScanRate / 2`` points per half; its ``FastMapZRate`` is a fast force map setting
-left over in the note, which says nothing of this map. The images' note sits after the
-last image and no texts end the file. The images are named ``MapHeight`` and
-``MapAdhesion``, as in the real file. No real file
-settles which way the first line of a slow map runs when its line count is even, nor
-how a slow map stopped part way or one with a dwell segment is laid out.
+curves snake: the first line taken runs from its last point, the next from point 0, and
+so on, and each curve's index is its place on the grid, line by line, whatever the order
+it was taken in. An ``XDAT`` with the experiment's values for the curve follows each
+curve's ``VDAT`` sections. The note gives the ramp rate, ``ForceScanRate``, and the
+sample rate, ``NumPtsPerSec``, so an untriggered curve has
+``NumPtsPerSec / ForceScanRate / 2`` points per half; its ``FastMapZRate`` is a fast
+force map setting left over in the note, which says nothing of this map. The images'
+note sits after the last image and no texts end the file. The images are named
+``MapHeight`` and ``MapAdhesion``, as in the real file. No real file settles which way
+the first line of a slow map runs when its line count is even, nor how a slow map
+stopped part way or one with a dwell segment is laid out.
 """
 
 # Copyright (C) Richard J. Sheridan

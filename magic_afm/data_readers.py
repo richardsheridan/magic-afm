@@ -400,7 +400,8 @@ class ARH5ForceMapVolume:
         self.minret = np.min(self.extretlens - self.extlens)
 
         # We only care about 2 channels, Defl and z (Raw if recorded, else ZSnsr)
-        # Convert channels array to a map that can be used to index into ForceMap data by name
+        # Convert channels array to a map that can be used to index into ForceMap data
+        # by name
         chanmap = {
             key: index for index, key in enumerate(self.force_curves.attrs["Channels"])
         }
@@ -920,9 +921,9 @@ class _ARDFFFMReader:
     array_offset: int  # hard to recover from views
     channels: list[int]  # [z, d]
     factors: np.ndarray = field(repr=False)  # float32 to nm, shaped to broadcast
-    # seg_offsets holds each segment's start, then the index of the last sample,
-    # then zeros (see _ARDFForceMapReader.split). FFM curves have two segments of
-    # equal length, so the second offset maps to our "split" concept.
+    # seg_offsets holds each segment's start, then the index of the last sample, then
+    # zeros (see _ARDFForceMapReader.split). FFM curves have two segments of equal
+    # length, so the second offset maps to our "split" concept.
     seg_offsets: tuple
     up: bool
     trace: bool
@@ -1075,8 +1076,8 @@ class _ARDFForceMapReader:
     def split(self, vdat: _ARDFVdata) -> tuple[slice, slice]:
         """Slices of a curve's extend and retract segments.
 
-        The offsets hold each segment's start, then the index of the last sample;
-        a retract that is the last segment runs to that sample inclusive.
+        The offsets hold each segment's start, then the index of the last sample; a
+        retract that is the last segment runs to that sample inclusive.
         """
         start, ext, ret, *_ = vdat.seg_offsets
         if self.nseg == 2:
@@ -1347,8 +1348,8 @@ class ARDFFile:
                 f"text table has {len(ttoc.entries)} entries, expected 1"
             )
         notes = _parse_ar_note(ttoc.decode_entry(0).splitlines())
-        # an untriggered half lasts half a ramp: a fast map's curves have two
-        # segments and ramp at FastMapZRate, a slow map's three at ForceScanRate
+        # an untriggered half lasts half a ramp: a fast map's curves have two segments
+        # and ramp at FastMapZRate, a slow map's three at ForceScanRate
         npts_by_nseg: dict[int, int | None] = {}
         for nseg, key in ((2, "FastMapZRate"), (3, "ForceScanRate")):
             try:

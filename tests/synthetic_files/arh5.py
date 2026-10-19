@@ -18,14 +18,17 @@ slow one, the lines, or the fast one; the builder puts the lines first, as the r
 does. Which value of ``FastMapCapture`` means trace only is a guess (1; the real files
 say 2 for retrace only and 3 for both).
 
-A slow force map (``ForceMap/0``) has curves of different lengths, so each is
-its own (channels, points) dataset named ``"r:c"``, beside an int32 ``Segments``
-dataset of (rows, cols, 3) indices: where the extend and retract segments end, then
-the index of the curve's last sample, which closes the away segment. The channels are
-``Raw``, ``Defl`` and ``ZSnsr``, and z is ``Raw``. The sample rate is ``NumPtsPerSec``;
-the note also keeps ``FastMapZRate`` from the fast-map settings, which a slow map does
-not use. The Segments convention and the channels follow a real conversion of a 5 x 6
-slow map, and so do the image names: ``MapHeight`` and ``MapAdhesion``, then per-curve values ``TriggerTime`` and ``Seconds`` in s, ``XLVDT`` and ``YLVDT`` in m, and ``HeaterTemperature`` and ``HeaterHumidity``, NaN without a heater. The meaning of ``"r:c"`` is not checked against one.
+A slow force map (``ForceMap/0``) has curves of different lengths, so each is its own
+(channels, points) dataset named ``"r:c"``, beside an int32 ``Segments`` dataset of
+(rows, cols, 3) indices: where the extend and retract segments end, then the index of
+the curve's last sample, which closes the away segment. The channels are ``Raw``,
+``Defl`` and ``ZSnsr``, and z is ``Raw``. The sample rate is ``NumPtsPerSec``; the note
+also keeps ``FastMapZRate`` from the fast-map settings, which a slow map does not use.
+The Segments convention and the channels follow a real conversion of a 5 x 6 slow map,
+and so do the image names: ``MapHeight`` and ``MapAdhesion``, then per-curve values
+``TriggerTime`` and ``Seconds`` in s, ``XLVDT`` and ``YLVDT`` in m, and
+``HeaterTemperature`` and ``HeaterHumidity``, NaN without a heater. The meaning of
+``"r:c"`` is not checked against one.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -249,14 +252,13 @@ def build_arh5_force_map(
 ) -> SyntheticFile:
     """Write a slow force map ARH5 file and say what it holds.
 
-    ``points`` are the extend and retract points of a full curve;
-    ``ext_points`` and ``ret_points`` (an int or a (rows, cols) array) give each
-    curve's own lengths, by default ``points``. Each curve ends with
-    ``away_points`` more as the tip keeps withdrawing. ``channels`` are the
-    stored channels in order; z is ``Raw``, or ``ZSnsr`` when ``Raw`` is left out.
-    ``samples_per_second`` is the note's ``NumPtsPerSec``, and ``fast_map_rate``
-    its ``FastMapZRate``, a fast-map setting that has no bearing on this map.
-    Other arguments are as for build_arh5_ffm.
+    ``points`` are the extend and retract points of a full curve; ``ext_points`` and
+    ``ret_points`` (an int or a (rows, cols) array) give each curve's own lengths, by
+    default ``points``. Each curve ends with ``away_points`` more as the tip keeps
+    withdrawing. ``channels`` are the stored channels in order; z is ``Raw``, or
+    ``ZSnsr`` when ``Raw`` is left out. ``samples_per_second`` is the note's
+    ``NumPtsPerSec``, and ``fast_map_rate`` its ``FastMapZRate``, a fast-map setting
+    that has no bearing on this map. Other arguments are as for build_arh5_ffm.
     """
     rng = np.random.default_rng(seed)
     ext_points = point_counts(shape, points[0] if ext_points is None else ext_points)

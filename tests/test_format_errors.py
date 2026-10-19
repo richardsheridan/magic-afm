@@ -421,8 +421,8 @@ def test_nanoscope_image_length_not_whole_samples_of_2_or_4_bytes_raises_format_
     assert_format_error(path, "Data length")
 
 
-# id: section, key and its zero value in each format whose reader takes the key; a
-# force volume takes its grid from the force list, a capture from the scan list
+# id: section, key and its zero value in each format whose reader takes the key; a force
+# volume takes its grid from the force list, a capture from the scan list
 NANOSCOPE_ZERO_CASES = {
     "image-Number-of-lines": (
         "Ciao image list",
