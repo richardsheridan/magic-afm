@@ -19,11 +19,13 @@ does. Which value of ``FastMapCapture`` means trace only is a guess (1; the real
 say 2 for retrace only and 3 for both).
 
 A slow force map (``ForceMap/0``) has curves of different lengths, so each is
-its own (channels, points) dataset named ``"r:c"``, beside a ``Segments``
-dataset of (rows, cols, 3) indices where the extend, retract and away segments
-end. No real force-map conversion was at hand, so that layout follows what the
-reader expects: the channel order, the meaning of ``"r:c"``, the Segments
-dtype, the image names and the timing keys are not checked against one.
+its own (channels, points) dataset named ``"r:c"``, beside an int32 ``Segments``
+dataset of (rows, cols, 3) indices: where the extend and retract segments end, then
+the index of the curve's last sample, which closes the away segment. The channels are
+``Raw``, ``Defl`` and ``ZSnsr``, and z is ``Raw``. The sample rate is ``NumPtsPerSec``;
+the note also keeps ``FastMapZRate`` from the fast-map settings, which a slow map does
+not use. The Segments convention and the channels follow a real conversion of a 5 x 6
+slow map; the meaning of ``"r:c"`` and the image names are not checked against one.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -96,7 +98,7 @@ def _common_note(shape, k, invols, scan_size):
     return lines, expected
 
 
-def _maps(zext, zret, dext, dret, k, rng) -> dict[str, np.ndarray]:
+def _maps(zext, dext, dret, k, rng) -> dict[str, np.ndarray]:
     """Per-pixel maps the Asylum software computes, in m, N and Pa."""
     z_top = np.nanmax(zext, axis=-1) * 1e-9
     young = rng.uniform(1e6, 1e7, z_top.shape)
@@ -183,7 +185,7 @@ def build_arh5_ffm(
             chunks = (1, min(cols, 16), n_total)
             for name, data in (("Defl", defl), ("Drive", drive), ("Raw", raw)):
                 group.create_dataset(name, data=data, chunks=chunks)
-            for name, image in _maps(zext, zret, dext, dret, k, rng).items():
+            for name, image in _maps(zext, dext, dret, k, rng).items():
                 image_group.create_dataset(
                     name + direction, data=image, chunks=image.shape
                 )
@@ -223,11 +225,13 @@ def build_arh5_force_map(
     ext_points=None,
     ret_points=None,
     away_points: int = 8,
+    channels: tuple[str, ...] = ("Raw", "Defl", "ZSnsr"),
+    samples_per_second: float = 2000.0,
+    fast_map_rate: float = 6.1996,
     seed: int = 0,
     k: float = 0.462,
     invols: float = 55.471,
     scan_size: tuple[float, float] = (1000.0, 1000.0),
-    rate: float = 1.0,
     filename: str = "synthetic.h5",
 ) -> SyntheticFile:
     """Write a slow force map ARH5 file and say what it holds.
@@ -235,19 +239,22 @@ def build_arh5_force_map(
     ``points`` are the extend and retract points of a full curve;
     ``ext_points`` and ``ret_points`` (an int or a (rows, cols) array) give each
     curve's own lengths, by default ``points``. Each curve ends with
-    ``away_points`` more as the tip keeps withdrawing. ``rate`` is the curves
-    per second at full length; other arguments are as for build_arh5_ffm.
+    ``away_points`` more as the tip keeps withdrawing. ``channels`` are the
+    stored channels in order; z is ``Raw``, or ``ZSnsr`` when ``Raw`` is left out.
+    ``samples_per_second`` is the note's ``NumPtsPerSec``, and ``fast_map_rate``
+    its ``FastMapZRate``, a fast-map setting that has no bearing on this map.
+    Other arguments are as for build_arh5_ffm.
     """
     rng = np.random.default_rng(seed)
     ext_points = point_counts(shape, points[0] if ext_points is None else ext_points)
     ret_points = point_counts(shape, points[1] if ret_points is None else ret_points)
     note, expected = _common_note(shape, k, invols, scan_size)
-    samples_str = _g(rate * sum(points))
+    samples_str = _g(samples_per_second)
     note.update(
         {
             "NumPtsPerSec": samples_str,
             "FMapScanDown": " 0",
-            "FastMapZRate": f" {_g(rate)}",
+            "FastMapZRate": f" {_g(fast_map_rate)}",
         }
     )
     zext, zret, dext, dret = force_curves(
@@ -257,28 +264,38 @@ def build_arh5_force_map(
     with h5py.File(path, "w") as f:
         f.attrs.create("Note", _note(note), dtype=ASCII)
         group = f.create_group("ForceMap/0")
-        group.attrs.create("Channels", _strings(["Raw", "Defl", "ZSnsr"]), dtype=ASCII)
+        group.attrs.create("Channels", _strings(channels), dtype=ASCII)
+        zname = "Raw" if "Raw" in channels else "ZSnsr"
         segments = np.stack(
             [
                 ext_points,
                 ext_points + ret_points,
-                ext_points + ret_points + away_points,
+                ext_points + ret_points + away_points - 1,
             ],
             axis=-1,
         ).astype(np.int32)
         group.create_dataset("Segments", data=segments)
+        zsnsr_ext = zext.copy()
         for r, c in np.ndindex(shape):
             ne, nr = ext_points[r, c], ret_points[r, c] + away_points
             z = np.concatenate([zext[r, c, :ne], zret[r, c, :nr]]) * 1e-9
             d = np.concatenate([dext[r, c, :ne], dret[r, c, :nr]]) * 1e-9
-            curve = np.stack([z + DRIVE_OFFSET, d, z]).astype(np.float32)
+            signals = {"Raw": z + DRIVE_OFFSET, "Defl": d, "ZSnsr": z}
+            stored = {
+                name: signals[name].astype(np.float32)
+                for name in ("Raw", "Defl", "ZSnsr")
+            }
+            curve = np.stack([stored[name] for name in channels])
             group.create_dataset(f"{r}:{c}", data=curve)
             # what the stored float32 metres are in nm
-            stored = curve.astype(np.float64) * 1e9
-            zext[r, c, :ne], zret[r, c, :nr] = stored[2, :ne], stored[2, ne:]
-            dext[r, c, :ne], dret[r, c, :nr] = stored[1, :ne], stored[1, ne:]
+            z_nm = stored[zname].astype(np.float64) * 1e9
+            d_nm = stored["Defl"].astype(np.float64) * 1e9
+            zsnsr_ext[r, c, :ne] = stored["ZSnsr"][:ne].astype(np.float64) * 1e9
+            zext[r, c, :ne], zret[r, c, :nr] = z_nm[:ne], z_nm[ne:]
+            dext[r, c, :ne], dret[r, c, :nr] = d_nm[:ne], d_nm[ne:]
         image_group = f.create_group("Image")
-        for name, image in _maps(zext, zret, dext, dret, k, rng).items():
+        # the maps the software computes come from the Z sensor
+        for name, image in _maps(zsnsr_ext, dext, dret, k, rng).items():
             image_group.create_dataset(name + "Trace", data=image, chunks=image.shape)
         images = {name: image[()] for name, image in image_group.items()}
     # the away segment is not part of the curve

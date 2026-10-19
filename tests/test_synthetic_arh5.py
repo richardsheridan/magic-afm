@@ -26,9 +26,10 @@ import h5py
 import numpy as np
 import pytest
 from synthetic_files import open_fvfile
-from synthetic_files.arh5 import build_arh5_ffm, build_arh5_force_map
+from synthetic_files.arh5 import ASCII, build_arh5_ffm, build_arh5_force_map
 
 from magic_afm.calculation import FitMode, prepare_force_curve
+from magic_afm.data_readers import FileFormatError
 
 ARH5_RELPATH = "test_cases/PDMS_SAA/ffm/rtrace0001.h5"
 BOTH_ARH5_RELPATH = "test_cases/PDMS_SAA/ffm/both0001.h5"
@@ -62,10 +63,6 @@ FORCE_MAP_CASES = {
         {"ext_points": RAGGED_EXT, "ret_points": RAGGED_RET_EVEN},
     ),
 }
-# Cases with every curve as long as the shortest of its halves. When the shortest extend
-# and retract halves differ, as in "ragged", t_step counts only the shortest halves'
-# points.
-UNIFORM_FORCE_MAP_CASES = ["square-32", "wide-20"]
 
 
 def assert_float32_close(actual, expected):
@@ -166,12 +163,52 @@ def test_arh5_force_map_metadata_round_trips(force_map):
         assert_metadata(fvfile, force_map)
 
 
-@pytest.mark.parametrize("case", UNIFORM_FORCE_MAP_CASES)
-def test_arh5_force_map_t_step_round_trips(tmp_path, case):
-    shape, points, kwargs = FORCE_MAP_CASES[case]
-    synthetic = build_arh5_force_map(tmp_path, shape, points, **kwargs)
+def test_arh5_force_map_t_step_is_one_over_num_pts_per_sec(force_map):
+    """t_step is 1/NumPtsPerSec whatever the curve lengths."""
+    with open_fvfile(force_map.path) as fvfile:
+        np.testing.assert_allclose(fvfile.t_step, force_map.t_step, rtol=1e-12)
+
+
+def edit_note(path: Path, key: str, value: str | None) -> None:
+    """Set the note's key to value, or drop its line when value is None."""
+    with h5py.File(path, "r+") as f:
+        lines = [
+            line
+            for line in f.attrs["Note"].splitlines()
+            if line.partition(":")[0] != key
+        ]
+        if value is not None:
+            lines.append(f"{key}:{value}")
+        f.attrs.create("Note", "\n".join(lines).encode(), dtype=ASCII)
+
+
+def test_arh5_force_map_opens_without_fast_map_z_rate(tmp_path):
+    """A slow map's note needs no FastMapZRate; t_step is still 1/NumPtsPerSec."""
+    synthetic = build_arh5_force_map(tmp_path)
+    edit_note(synthetic.path, "FastMapZRate", None)
     with open_fvfile(synthetic.path) as fvfile:
         np.testing.assert_allclose(fvfile.t_step, synthetic.t_step, rtol=1e-12)
+        assert [v.name for v in fvfile.volumes] == ["FMAP"]
+
+
+@pytest.mark.parametrize("value", [None, "0"], ids=["missing", "zero"])
+def test_arh5_force_map_without_a_sample_rate_raises_format_error_naming_it(
+    tmp_path, value
+):
+    path = build_arh5_force_map(tmp_path).path
+    edit_note(path, "NumPtsPerSec", value)
+    with pytest.raises(FileFormatError, match="NumPtsPerSec"):
+        with open_fvfile(path):
+            pass
+
+
+def test_arh5_force_map_without_raw_reads_z_from_zsnsr(tmp_path):
+    synthetic = build_arh5_force_map(tmp_path, channels=("Defl", "ZSnsr"))
+    expected = synthetic.volumes[0]
+    with open_fvfile(synthetic.path) as fvfile:
+        volume = fvfile.volumes[0]
+        for r, c in np.ndindex(expected.shape):
+            assert_same_curve(volume.get_curve(r, c), expected.curve(r, c))
 
 
 def test_arh5_force_map_indices_cover_the_grid_once(force_map):
