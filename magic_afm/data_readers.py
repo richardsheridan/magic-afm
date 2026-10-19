@@ -1143,7 +1143,7 @@ class _ARDFForceMapReader:
         the points nearest the surface.
         """
         n = 0xFFFFFFFF
-        vdats = {}
+        vdats: dict[Index, list] = {}
         for vset in self.traverse_vsets(self.vtoc.pointers[0]):
             if vset.vtype != self.vtype:
                 continue
