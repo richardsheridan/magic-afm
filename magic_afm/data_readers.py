@@ -1720,6 +1720,15 @@ class NanoscopeFile:
             bytes(memoryview(data)[:header_end_pos]).decode("windows-1252").splitlines()
         )
 
+        if "Ciao image list" not in header:
+            raise FileFormatError(
+                "No Ciao image list in the header; a single force-curve file"
+                " holds none and is not supported"
+            )
+        for section in ("Ciao scan list", "Ciao force list", "Ciao force image list"):
+            if section not in header:
+                raise FileFormatError(f"No {section} in the header")
+
         # Header items that I should be reading someday
         # \Frame direction: Down
         # \Line Direction: Retrace
@@ -1775,10 +1784,14 @@ class NanoscopeFile:
         if not is_ffv:
             deflections = header["Ciao force image list"]
             # QNM data doesn't contain height data which we synthesize from an image
-            try:
+            if "Height Sensor" in images:
                 height_for_z = images["Height Sensor"].get_image()
-            except KeyError:
+            elif "Height" in images:
                 height_for_z = images["Height"].get_image()
+            else:
+                raise FileFormatError(
+                    "No Height Sensor or Height image to build z from"
+                )
             height_for_z *= _NANOMETER_UNIT_CONVERSION
             try:
                 sync_dist_str = csl["Sync Distance QNM"]
