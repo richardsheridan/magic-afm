@@ -1480,19 +1480,18 @@ class NanoscopeImage:
                 buffer=v,
                 offset=self.offset,
             )
-            invalid = _nanoscope_invalid(z_ints)
-            z_floats = z_ints.astype("f4", copy=True)
+            z_floats = _nanoscope_floats(z_ints)
         z_floats *= self.unit_scale
         z_floats += self.unit_offset
-        z_floats[invalid] = np.nan
         return z_floats
 
 
-def _nanoscope_invalid(ints: np.ndarray) -> np.ndarray:
-    """Mask of the INT32_MIN samples a 4-byte section stores where data are invalid."""
-    if ints.dtype.itemsize != 4:
-        return np.zeros(ints.shape, dtype=bool)
-    return ints == np.iinfo(np.int32).min
+def _nanoscope_floats(ints: np.ndarray) -> np.ndarray:
+    """Samples as float32, NaN at each INT32_MIN a 4-byte section marks invalid."""
+    floats = ints.astype("f4")
+    if ints.dtype.itemsize == 4:
+        floats[ints == np.iinfo(np.int32).min] = np.nan
+    return floats
 
 
 def _nanoscope_curve_scale(header, subheader, sens_key: str) -> float:
@@ -1538,11 +1537,8 @@ class _FFVReader:
 
     def get_curve(self, r, c):
         with memoryview(self.data):  # assert data is open, and hold it open
-            ints = self.ints[r, c]
-            invalid = _nanoscope_invalid(ints)
-            f = ints.astype("f4")
+            f = _nanoscope_floats(self.ints[r, c])
         f *= self.scale
-        f[invalid] = np.nan
         return f[0, ::-1], f[1]
 
 

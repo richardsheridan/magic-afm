@@ -115,8 +115,8 @@ SUMMARY_RUNS = ("ardf", "ardf_retrace", "arh5", "qnm", "ffv")
 FULL_RUNS = ("nid",)
 
 # Pixels left out of every value comparison, in exported (row-flipped) coordinates. A1
-# pixel (12, 3) as the reader indexes it has an INT32_MIN extend half that the reader
-# scales to -10,324 nm instead of masking it. The export flips rows, so it lands at (31
+# pixel (12, 3) as the reader indexes it has an INT32_MIN extend half, which the reader
+# reads as NaN, and the CLI writes NaN at that pixel in every map; leaving it out keeps the comparison from depending on how a fit treats a curve with a NaN half. The export flips rows, so it lands at (31
 # - 12, 3).
 EXCLUDED_PIXELS = {"ffv": ((19, 3),)}
 
