@@ -226,16 +226,20 @@ def _select_volume(fvfile: FVFile, trace: int | None) -> Volume:
     return fvfile.volumes[names.index(wanted)]
 
 
-def _check_force_bpp(length, ncurves, npts, header) -> int:
+def _check_force_bpp(length, ncurves, npts, header, ffv=False) -> int:
     """Bytes per point of a force section that holds ncurves curves of npts points."""
     bpp, rem = divmod(length, ncurves * npts)
     if rem or bpp not in (2, 4):
-        force_line = header.get("Ciao force list", [{}])[0].get("force/line")
-        samps_line = header["Ciao scan list"][0].get("Samps/line")
+        cfl = header.get("Ciao force list", [{}])[0]
+        force_line = cfl.get("force/line")
+        if ffv:
+            grid = f"FV Lines: {cfl.get('FV Lines')}, force/line: {force_line}"
+        else:
+            samps_line = header["Ciao scan list"][0].get("Samps/line")
+            grid = f"force/line: {force_line} against Samps/line: {samps_line}"
         raise FileFormatError(
             f"force data length {length} does not fit {ncurves} curves of {npts}"
-            f" points; the capture may skip points (force/line: {force_line}"
-            f" against Samps/line: {samps_line})"
+            f" points; the capture may skip points ({grid})"
         )
     return bpp
 
@@ -1511,14 +1515,13 @@ class _FFVReader:
     }
 
     @classmethod
-    def parse(cls, header, data, subheader):
-        c = int(header["Ciao scan list"][0]["Samps/line"])
-        r = int(header["Ciao scan list"][0]["Lines"])
+    def parse(cls, header, data, subheader, shape):
+        r, c = shape
         name = subheader["@4:Image Data"].split('"')[1]
         offset = int(subheader["Data offset"])
         length = int(subheader["Data length"])
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
-        bpp = _check_force_bpp(length, r * c, 2 * n_ext, header)
+        bpp = _check_force_bpp(length, r * c, 2 * n_ext, header, ffv=True)
         ints = np.ndarray(
             shape=(r, c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
         )
@@ -1716,14 +1719,29 @@ class NanoscopeFile:
         # \Aspect Ratio: 1:1
         # \Scan Size: 800 800 nm
         csl = header["Ciao scan list"][0]
-        fastpx = _nonzero(int(csl["Samps/line"]), "Samps/line", "Ciao scan list")
-        slowpx = _nonzero(int(csl["Lines"]), "Lines", "Ciao scan list")
+        cfl = header["Ciao force list"][0]
+        # deflection and height data are separate "force images"
+        # a force volume pairs the first height with the first deflection error
+        force_sections = {}
+        is_ffv = False
+        for subheader in header["Ciao force image list"]:
+            name = subheader["@4:Image Data"].split('"')[1]
+            is_ffv = is_ffv or "Height" in name
+            force_sections.setdefault(name, subheader)
+        if is_ffv:
+            fv_lines = int(cfl["FV Lines"].split()[0])
+            slowpx = _nonzero(fv_lines, "FV Lines", "Ciao force list")
+            fv_cols = int(cfl["force/line"].split()[0])
+            fastpx = _nonzero(fv_cols, "force/line", "Ciao force list")
+        else:
+            fastpx = _nonzero(int(csl["Samps/line"]), "Samps/line", "Ciao scan list")
+            slowpx = _nonzero(int(csl["Lines"]), "Lines", "Ciao scan list")
         shape = slowpx, fastpx
         ratestr, unit = csl["PFT Freq"].split()
         if unit.lower() != "khz":
             raise FileFormatError(f"PFT Freq unit is {unit!r}, expected kHz")
         rate = _nonzero(float(ratestr), "PFT Freq", "Ciao scan list")
-        force_line = header["Ciao force list"][0]["force/line"].split()[0]
+        force_line = cfl["force/line"].split()[0]
         npts = _nonzero(int(force_line), "force/line", "Ciao force list")
         t_step = 1 / (rate * 1000) / npts
         for subheader in header["Ciao force image list"]:
@@ -1748,17 +1766,8 @@ class NanoscopeFile:
         for entry in header["Ciao image list"]:
             name = entry["@2:Image Data"].split('"')[1]
             images[name] = NanoscopeImage.parse_image(data, header, entry, name)
-        # deflection and height data are separate "force images"
-        # we've got to pair them up
-        heights = []
-        deflections = []
-        for subheader in header["Ciao force image list"]:
-            name = subheader["@4:Image Data"].split('"')[1]
-            if "Height" in name:
-                heights.append(subheader)
-            else:
-                deflections.append(subheader)
-        if not heights:
+        if not is_ffv:
+            deflections = header["Ciao force image list"]
             # QNM data doesn't contain height data which we synthesize from an image
             try:
                 height_for_z = images["Height Sensor"].get_image()
@@ -1797,16 +1806,22 @@ class NanoscopeFile:
             ]
         else:
             sync_dist = None
+            z_subh = force_sections.get("Height Sensor", force_sections.get("Height"))
+            if z_subh is None:
+                raise FileFormatError("no Height Sensor or Height force section")
+            try:
+                d_subh = force_sections["Deflection Error"]
+            except KeyError:
+                raise FileFormatError("no Deflection Error force section") from None
             volumes = [
                 NanoscopeVolume.parse(
                     shape,
                     scansize,
                     t_step,
                     sync_dist,
-                    _FFVReader.parse(header, data, z_subh),
-                    _FFVReader.parse(header, data, d_subh),
+                    _FFVReader.parse(header, data, z_subh, shape),
+                    _FFVReader.parse(header, data, d_subh, shape),
                 )
-                for z_subh, d_subh in zip(heights, deflections)
             ]
         # volumes = {v.name:v for v in volumes}
         k = float(header["Ciao force image list"][0]["Spring Constant"])
