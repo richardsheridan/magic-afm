@@ -125,8 +125,8 @@ def test_gui_ignores_trace_on_a_file_without_a_direction(tmp_path, case, trace):
 
 @pytest.mark.slow
 @pytest.mark.parametrize("trace", DIRECTIONS, ids=trace_id)
-def test_gui_ignores_trace_on_two_undirected_volumes(real_data_file, trace):
-    """DOE4's two Deflection Error volumes have no direction: the first is used."""
+def test_gui_ignores_trace_on_a_real_force_volume(real_data_file, trace):
+    """A force volume's one volume has no direction: it is used whatever trace asks."""
     with open_fvfile(Path(real_data_file(DOE4_RELPATH))) as fvfile:
         curve = gui_curve(fvfile, trace)
         expected = fvfile.volumes[0].get_curve(0, 0)

@@ -405,38 +405,75 @@ def test_nanoscope_image_length_not_whole_samples_of_2_or_4_bytes_raises_format_
     assert_format_error(path, "Data length")
 
 
-@pytest.mark.parametrize("build, size", NANOSCOPE_BUILDS, ids=["pfc", "spm"])
+# id: section, key and its zero value in each format whose reader takes the key; a
+# force volume takes its grid from the force list, a capture from the scan list
+NANOSCOPE_ZERO_CASES = {
+    "image-Number-of-lines": (
+        "Ciao image list",
+        "Number of lines",
+        {"pfc": "0", "spm": "0"},
+    ),
+    "image-Samps-line": ("Ciao image list", "Samps/line", {"pfc": "0", "spm": "0"}),
+    "scan-Samps-line": ("Ciao scan list", "Samps/line", {"pfc": "0"}),
+    "scan-Lines": ("Ciao scan list", "Lines", {"pfc": "0"}),
+    "PFT-Freq": ("Ciao scan list", "PFT Freq", {"pfc": "0 KHz", "spm": "0 kHz"}),
+    "force-line": ("Ciao force list", "force/line", {"pfc": "0 0", "spm": "0"}),
+    "FV-Lines": ("Ciao force list", "FV Lines", {"spm": "0"}),
+    "force-image-Samps-line": (
+        "Ciao force image list",
+        "Samps/line",
+        {"pfc": "0 0", "spm": "0 0"},
+    ),
+}
+NANOSCOPE_BUILDS_BY_FORMAT = dict(zip(("pfc", "spm"), NANOSCOPE_BUILDS))
+
+
 @pytest.mark.parametrize(
-    "section, key, pfc_value, spm_value",
+    "build, size, section, key, value",
     [
-        ("Ciao image list", "Number of lines", "0", "0"),
-        ("Ciao image list", "Samps/line", "0", "0"),
-        ("Ciao scan list", "Samps/line", "0", "0"),
-        ("Ciao scan list", "Lines", "0", "0"),
-        ("Ciao scan list", "PFT Freq", "0 KHz", "0 kHz"),
-        ("Ciao force list", "force/line", "0 0", "0"),
-        ("Ciao force image list", "Samps/line", "0 0", "0 0"),
-    ],
-    ids=[
-        "image-Number-of-lines",
-        "image-Samps-line",
-        "scan-Samps-line",
-        "scan-Lines",
-        "PFT-Freq",
-        "force-line",
-        "force-image-Samps-line",
+        pytest.param(build, size, section, key, values[fmt], id=f"{case}-{fmt}")
+        for case, (section, key, values) in NANOSCOPE_ZERO_CASES.items()
+        for fmt, (build, size) in NANOSCOPE_BUILDS_BY_FORMAT.items()
+        if fmt in values
     ],
 )
 def test_nanoscope_zero_count_or_rate_raises_format_error_naming_it(
-    tmp_path, build, size, section, key, pfc_value, spm_value
+    tmp_path, build, size, section, key, value
 ):
     """A zero count or rate the reader divides by fails to parse, naming its key."""
     path = build(tmp_path).path
-    value = pfc_value if build is build_pfc else spm_value
     edit_nanoscope_header(
         path, lambda lines: _set_key(lines, section, key, value), size
     )
     assert_format_error(path, re.escape(key))
+
+
+@pytest.mark.parametrize("width", [3, 8])
+def test_spm_force_length_not_2_or_4_byte_samples_raises_format_error_naming_grid(
+    tmp_path, width
+):
+    """The message names the force list's FV Lines and force/line."""
+    (rows, cols), points = (4, 4), 16
+    path = build_spm(tmp_path, (rows, cols), points).path
+    length = rows * cols * 2 * points * width
+    edit_nanoscope_header(
+        path,
+        lambda lines: _set_key(
+            lines, "Ciao force image list", "Data length", str(length)
+        ),
+        SPM_HEADER_BYTES,
+    )
+    assert_format_error(path, r"(?s)(?=.*FV Lines)(?=.*force/line)")
+
+
+@pytest.mark.parametrize(
+    "force_sections",
+    [("peak force error", "height sensor"), ("height sensor",)],
+    ids=["peak-force-error", "height-only"],
+)
+def test_spm_without_a_deflection_error_raises_format_error(tmp_path, force_sections):
+    path = build_spm(tmp_path, force_sections=force_sections).path
+    assert_format_error(path, "Deflection Error")
 
 
 @pytest.mark.parametrize("sample_points", ["0", "-1"])

@@ -39,6 +39,8 @@ from synthetic_files.nanoscope import (
 
 PFC_RELPATH = "test_cases/PS_PCL_SAA/QNM/onekhz.000.pfc"
 SPM_RELPATH = "test_cases/A1_OCSOH-PMMA21k_300421.0_300425.spm"
+# a force volume whose Ciao scan list grid (16 x 8) is not its 8 x 8 grid
+STALE_GRID_SPM_RELPATH = "test_cases/DOE4_20nN_80nm.0_00012.spm"
 
 # grid (rows, cols), points per half curve, other builder arguments
 PFC_CASES = {
@@ -75,8 +77,8 @@ SPM_CASES = {
 SPM_SCANSIZE_CASES = [case for case in SPM_CASES if case != "tall-64"]
 # Left out everywhere: t_step. The reader takes it from PFT Freq and force/line, the
 # curves per line; the builder from the Scan rate of the ramps, which no real file
-# settles either. The builder's stale scan list grid and invalid pixels are checked only
-# as the builder writes them.
+# settles either. The builder's invalid pixels are checked only as the builder writes
+# them.
 
 
 def assert_float32_close(actual, expected):
@@ -486,6 +488,70 @@ def test_spm_builder_can_write_a_stale_scan_list_grid(tmp_path):
     assert synthetic.volumes[0].shape == (8, 8)
 
 
+# grid (rows, cols) of the file, and of its Ciao scan list alone
+FORCE_LIST_GRID_CASES = {
+    "stale-scan-list": ((8, 8), (8, 16)),
+    "transposed-scan-list": ((3, 6), (6, 3)),
+    "zero-scan-list": ((4, 4), (0, 0)),
+}
+
+
+@pytest.mark.parametrize("case", FORCE_LIST_GRID_CASES)
+def test_spm_grid_comes_from_the_force_list(tmp_path, case):
+    """Rows are the force list's FV Lines and columns its force/line."""
+    shape, scan_list_grid = FORCE_LIST_GRID_CASES[case]
+    synthetic = build_spm(tmp_path, shape, 16, scan_list_grid=scan_list_grid)
+    expected = synthetic.volumes[0]
+    with open_fvfile(synthetic.path) as fvfile:
+        assert [v.shape for v in fvfile.volumes] == [shape]
+        np.testing.assert_allclose(fvfile.scansize, synthetic.scansize, rtol=1e-12)
+        volume = fvfile.volumes[0]
+        (x_step, _), (y_step, _) = volume.step_info[:2]
+        z, d = volume.get_all_curves()
+    fast, slow = synthetic.scansize
+    rows, cols = shape
+    np.testing.assert_allclose(x_step, fast * 1e-9 / cols, rtol=1e-12)
+    np.testing.assert_allclose(y_step, slow * 1e-9 / rows, rtol=1e-12)
+    assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
+    assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+
+
+# force sections in file order, unlike the A1 file's
+FORCE_SECTION_CASES = {
+    "repeated": ("deflection", "height sensor", "deflection 2.5 V", "height sensor"),
+    "later-deflection-differs": (
+        "deflection",
+        "height sensor",
+        "other deflection",
+        "height sensor",
+    ),
+    "later-height-sensor-differs": (
+        "deflection",
+        "height sensor",
+        "deflection 2.5 V",
+        "other height sensor",
+    ),
+    "peak-force-error-first": ("peak force error", "deflection", "height sensor"),
+    "height-error-first": ("height error", "deflection", "height sensor"),
+    "unknown-name-first": ("adhesion", "deflection", "height sensor"),
+}
+
+
+@pytest.mark.parametrize("case", FORCE_SECTION_CASES)
+def test_spm_pairs_the_first_deflection_error_with_the_first_height(tmp_path, case):
+    """One volume, from the first of each name; sections of other names go unread."""
+    sections = FORCE_SECTION_CASES[case]
+    synthetic = build_spm(tmp_path, (4, 4), 16, force_sections=sections)
+    expected = synthetic.volumes[0]
+    with open_fvfile(synthetic.path) as fvfile:
+        assert [(v.name, v.shape) for v in fvfile.volumes] == [
+            ("Deflection Error", (4, 4))
+        ]
+        z, d = fvfile.volumes[0].get_all_curves()
+    assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
+    assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+
+
 def header_layout(headers):
     """Each section in order with how many times it occurs."""
     return [(name, len(sections)) for name, sections in headers.items()]
@@ -625,3 +691,29 @@ def test_synthetic_spm_has_the_structure_of_the_real_file(real_data_file, tmp_pa
     with open_fvfile(synthetic.path) as fvfile:
         assert structure(fvfile) == real_structure
         assert_keys_in_real_file(fvfile.headers, real_headers)
+
+
+@pytest.mark.slow
+def test_real_spm_with_a_stale_scan_list_has_the_force_list_grid(real_data_file):
+    """One 8 x 8 volume over 500 x 500 nm, steps of 62.5 nm."""
+    with open_fvfile(Path(real_data_file(STALE_GRID_SPM_RELPATH))) as fvfile:
+        assert [(v.name, v.shape) for v in fvfile.volumes] == [
+            ("Deflection Error", (8, 8))
+        ]
+        np.testing.assert_allclose(fvfile.scansize, (500.0, 500.0), rtol=1e-12)
+        steps = fvfile.volumes[0].step_info[:2]
+    assert [unit for _, unit in steps] == ["m", "m"]
+    np.testing.assert_allclose([step for step, _ in steps], 62.5e-9, rtol=1e-12)
+
+
+@pytest.mark.slow
+def test_real_spm_with_a_stale_scan_list_has_a_z_ramp_in_each_half(real_data_file):
+    """Each half of every z spans over 10 nm and runs steadily one way."""
+    with open_fvfile(Path(real_data_file(STALE_GRID_SPM_RELPATH))) as fvfile:
+        z, _ = fvfile.volumes[0].get_all_curves()
+    index = np.arange(z.shape[-1])
+    for r, c, half in np.ndindex(z.shape[:3]):
+        curve = z[r, c, half].astype(np.float64)
+        assert np.ptp(curve) > 10.0, ((r, c, half), np.ptp(curve))
+        assert abs(np.corrcoef(index, curve)[0, 1]) > 0.9, (r, c, half)
+    assert z.shape[:3] == (8, 8, 2)

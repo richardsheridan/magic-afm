@@ -76,13 +76,15 @@ more), while the ramp script lines of the real file, ``Segment Samples`` 1041, 2
 match better as stored than with every other row reversed, so the builder stores every
 line the same way.
 
-Two arguments write what the real files hold and today's reader gets wrong, for
-tests of a fix: ``scan_list_grid`` writes a Ciao scan list grid unlike the rest,
-as a second real force volume has (16 x 8 where every other key says 8 x 8), and
-``invalid_pixels`` writes INT32_MIN over the extend half of Peak Force Error,
-the second Deflection Error and Height Sensor and into the image, as the real
-file does at one pixel while its header says ``Invalid Data Flag: None``. The
-expected extend halves and image are NaN at those pixels.
+Three arguments write what other real files hold. ``scan_list_grid`` writes a Ciao
+scan list grid unlike the rest, as a second real force volume has (16 x 8 where every
+other key says 8 x 8); the force list gives the grid. ``force_sections`` writes another
+set or order of force sections, as that file's Deflection Error, Height Sensor,
+Deflection Error and Height Sensor, whose repeats hold the same values as the first.
+``invalid_pixels`` writes INT32_MIN over the extend half of Peak Force Error, the second
+Deflection Error and Height Sensor and into the image, as the real file does at one
+pixel while its header says ``Invalid Data Flag: None``; today's reader gets it wrong.
+The expected extend halves and image are NaN at those pixels.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -101,7 +103,7 @@ expected extend halves and image are NaN at those pixels.
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -120,6 +122,13 @@ PFC_HEADER_BYTES = 40960
 # the Sens. Phase soft scale of every real scan list: a factor of 1 with no unit
 PHASE_SENS = "1.000000"
 SPM_HEADER_BYTES = 80960
+# the force sections of the real force volume, in its order
+SPM_FORCE_SECTIONS = (
+    "deflection",
+    "peak force error",
+    "deflection 2.5 V",
+    "height sensor",
+)
 
 
 def _g(x: float) -> str:
@@ -431,6 +440,7 @@ def build_spm(
     scan_list_grid: Index | None = None,
     invalid_pixels: Iterable[Index] = (),
     phase_image: bool = False,
+    force_sections: Sequence[str] = SPM_FORCE_SECTIONS,
     filename: str = "synthetic.0_00000.spm",
 ) -> SyntheticFile:
     """Write a force volume of shape (rows, cols) and say what it holds.
@@ -439,10 +449,16 @@ def build_spm(
     ``defl_sens`` and ``z_sens`` (of the Height Sensor) in nm/V, ``scan_size``
     the fast axis in nm, ``ramp_rate`` the ramps per second. ``scan_list_grid``
     (rows, cols) replaces the grid of the Ciao scan list alone; ``invalid_pixels``
-    lists the (row, col) of pixels marked invalid. Both write what the reader
-    gets wrong today; see the module docstring. ``phase_image`` adds a Phase image
-    after the Height Sensor image, on the scan list's unitless ``Sens. Phase`` soft
-    scale (``V 1.000000 `` in the real files), so its values are in V.
+    lists the (row, col) of pixels marked invalid; see the module docstring.
+    ``phase_image`` adds a Phase image after the Height Sensor image, on the scan
+    list's unitless ``Sens. Phase`` soft scale (``V 1.000000 `` in the real files),
+    so its values are in V. ``force_sections`` lists the force sections in file
+    order, each one of: "deflection" (Deflection Error at 0.5 V full scale),
+    "deflection 2.5 V" (the same values at 2.5 V, marked at invalid pixels),
+    "height sensor", "peak force error", "other deflection" and "other height
+    sensor" (those names holding each half reversed), and "height error" and
+    "adhesion" (names of neither, on a sensitivity the scan list lacks). The
+    expected volume pairs the values of "deflection" with those of "height sensor".
     """
     rows, cols = shape
     scan_rows, scan_cols = shape if scan_list_grid is None else scan_list_grid
@@ -488,12 +504,55 @@ def build_spm(
     # lines, values
     defl = 'S [DeflectionError] "Deflection Error"'
     full = full_scale
-    channels = [
-        (defl, "Sens. DeflSens", 2, "0.5000000", "2.500000", deflection),
-        ('S [] "Peak Force Error"', "Sens. ForceDeflSens", 2, full, full, error),
-        (defl, "Sens. DeflSens", 2, "2.500000", "2.500000", deflection_2v5),
-        ('S [ZSensor] "Height Sensor"', "Sens. ZsensSens", 4, full, full, height),
-    ]
+    sections_by_name = {
+        "deflection": (defl, "Sens. DeflSens", 2, "0.5000000", "2.500000", deflection),
+        "peak force error": (
+            'S [] "Peak Force Error"',
+            "Sens. ForceDeflSens",
+            2,
+            full,
+            full,
+            error,
+        ),
+        "deflection 2.5 V": (
+            defl,
+            "Sens. DeflSens",
+            2,
+            "2.500000",
+            "2.500000",
+            deflection_2v5,
+        ),
+        "height sensor": (
+            'S [ZSensor] "Height Sensor"',
+            "Sens. ZsensSens",
+            4,
+            full,
+            full,
+            height,
+        ),
+        # the same names holding other values: each half reversed
+        "other deflection": (
+            defl,
+            "Sens. DeflSens",
+            2,
+            "2.500000",
+            "2.500000",
+            np.ascontiguousarray(deflection[..., ::-1]),
+        ),
+        "other height sensor": (
+            'S [ZSensor] "Height Sensor"',
+            "Sens. ZsensSens",
+            4,
+            full,
+            full,
+            np.ascontiguousarray(height[..., ::-1]),
+        ),
+        # names that are neither a deflection nor a height, on a sensitivity the scan
+        # list does not have
+        "height error": ('S [] "Height Error"', "Sens. Unknown", 2, full, full, error),
+        "adhesion": ('S [] "Adhesion"', "Sens. Unknown", 2, full, full, error),
+    }
+    channels = [sections_by_name[name] for name in force_sections]
     offset = SPM_HEADER_BYTES
     force_sections = []
     for image_data, sens, bytes_per_pixel, value, fv_value, data in channels:

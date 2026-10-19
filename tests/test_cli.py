@@ -29,7 +29,7 @@
 # One complete file per reader path that works through the CLI today: ARDF (both0001:
 # two volumes, so --trace matters), ARH5 (rtrace0001.h5), Nanoscope QNM
 # (onekhz.000.pfc), Nanoscope force volume (A1...spm) and NID (the example .nid, also
-# the subject of tests/test_goldens.py). Excluded: DOE4 (mis-decoded), the stopped
+# the subject of tests/test_goldens.py). Excluded: DOE4 (run below with no fit), the stopped
 # hard/mellow scans (hard0001 and hard0003 are covered by test_stopped_scans.py) and the
 # non-square twoxln/twoxpt (twoxln0001, 64 lines of 32 points, is run below for the
 # shape of its maps only).
@@ -690,10 +690,10 @@ def test_cli_trace_option_is_ignored_on_a_file_without_a_direction(
 
 @pytest.mark.slow
 @pytest.mark.parametrize("trace", ["trace", "retrace"])
-def test_cli_trace_option_is_ignored_on_two_undirected_volumes(
+def test_cli_trace_option_is_ignored_on_a_real_force_volume(
     real_data_file, tmp_path, trace
 ):
-    """DOE4's two Deflection Error volumes have no direction, so --trace is ignored."""
+    """A force volume's one volume has no direction, so --trace is ignored."""
     path = Path(real_data_file(DOE4_RELPATH))
     result = skip_run([path], tmp_path / "out", trace)
     assert result.exit_code == 0, result.output
