@@ -25,7 +25,7 @@ the index of the curve's last sample, which closes the away segment. The channel
 ``Raw``, ``Defl`` and ``ZSnsr``, and z is ``Raw``. The sample rate is ``NumPtsPerSec``;
 the note also keeps ``FastMapZRate`` from the fast-map settings, which a slow map does
 not use. The Segments convention and the channels follow a real conversion of a 5 x 6
-slow map; the meaning of ``"r:c"`` and the image names are not checked against one.
+slow map, and so do the image names: ``MapHeight`` and ``MapAdhesion``, then per-curve values ``TriggerTime`` and ``Seconds`` in s, ``XLVDT`` and ``YLVDT`` in m, and ``HeaterTemperature`` and ``HeaterHumidity``, NaN without a heater. The meaning of ``"r:c"`` is not checked against one.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -120,6 +120,19 @@ MAP_UNITS = {
     "Height": "m",
     "YoungsJKR": "Pa",
     "ZSensor": "m",
+}
+
+
+# the images of a slow force map; the heater images have no unit the reader knows
+FORCE_MAP_UNITS = {
+    "MapAdhesion": "N",
+    "MapHeight": "m",
+    "TriggerTime": "s",
+    "Seconds": "s",
+    "XLVDT": "m",
+    "YLVDT": "m",
+    "HeaterTemperature": "V",
+    "HeaterHumidity": "V",
 }
 
 
@@ -295,8 +308,21 @@ def build_arh5_force_map(
             dext[r, c, :ne], dret[r, c, :nr] = d_nm[:ne], d_nm[ne:]
         image_group = f.create_group("Image")
         # the maps the software computes come from the Z sensor
-        for name, image in _maps(zsnsr_ext, dext, dret, k, rng).items():
-            image_group.create_dataset(name + "Trace", data=image, chunks=image.shape)
+        maps = _maps(zsnsr_ext, dext, dret, k, rng)
+        rows, cols = np.indices(shape)
+        values = {
+            "MapAdhesion": maps["Adhesion"],
+            "MapHeight": maps["Height"],
+            "TriggerTime": ext_points / float(samples_str),
+            "Seconds": 3661431000.0 + rows * shape[1] + cols,
+            "XLVDT": cols * scan_size[0] * 1e-9 / max(shape[1] - 1, 1),
+            "YLVDT": rows * scan_size[1] * 1e-9 / max(shape[0] - 1, 1),
+            "HeaterTemperature": np.full(shape, np.nan),
+            "HeaterHumidity": np.full(shape, np.nan),
+        }
+        for name, image in values.items():
+            image = np.asarray(image, np.float32)
+            image_group.create_dataset(name, data=image, chunks=image.shape)
         images = {name: image[()] for name, image in image_group.items()}
     # the away segment is not part of the curve
     n_ret = ret_points.max()
@@ -310,7 +336,7 @@ def build_arh5_force_map(
         path=path,
         volumes=[volume],
         images=images,
-        image_units=_image_units(images),
+        image_units=dict(FORCE_MAP_UNITS),
         k=expected["k"],
         defl_sens=expected["defl_sens"],
         t_step=1 / float(samples_str),
