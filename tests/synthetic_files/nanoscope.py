@@ -76,15 +76,16 @@ more), while the ramp script lines of the real file, ``Segment Samples`` 1041, 2
 match better as stored than with every other row reversed, so the builder stores every
 line the same way.
 
-Three arguments write what other real files hold. ``scan_list_grid`` writes a Ciao
-scan list grid unlike the rest, as a second real force volume has (16 x 8 where every
-other key says 8 x 8); the force list gives the grid. ``force_sections`` writes another
-set or order of force sections, as that file's Deflection Error, Height Sensor,
-Deflection Error and Height Sensor, whose repeats hold the same values as the first.
+Three arguments write what other real files hold. ``scan_list_grid`` writes a Ciao scan
+list grid unlike the rest, as a second real force volume has (16 x 8 where every other
+key says 8 x 8); the force list gives the grid. ``force_sections`` writes another set or
+order of force sections, as that file's Deflection Error, Height Sensor, Deflection
+Error and Height Sensor, whose repeats hold the same values as the first.
 ``invalid_pixels`` writes INT32_MIN over the extend half of Peak Force Error, the second
 Deflection Error and Height Sensor and into the image, as the real file does at one
-pixel while its header says ``Invalid Data Flag: None``.
-The expected z extend half and image are NaN at those pixels; the deflection, from the first Deflection Error, holds real values there.
+pixel while its header says ``Invalid Data Flag: None``. The expected z extend half and
+image are NaN at those pixels; the deflection, from the first Deflection Error, holds
+real values there.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -248,20 +249,19 @@ def build_pfc(
     """Write a PeakForce capture of shape (rows, cols) and say what it holds.
 
     ``points`` per half curve, so each curve holds twice as many. ``k`` in N/m,
-    ``defl_sens`` and ``z_sens`` (of the Height image) in nm/V, ``scan_size``
-    the fast axis in nm, ``rate`` the PFT Freq in kHz, ``amplitude`` the Peak
-    Force Amplitude in nm. ``sync_distance`` is the lag of the deflection behind
-    the drive in samples of ``sample_points`` per period (by default 512 kHz
-    over ``rate``); it must stay under half a period. ``sync_distance_qnm``
-    adds that newer key, whose value is then the lag. ``extend_marker`` writes
-    the INT16_MIN marker of the real captures. ``phase_image`` adds a Phase image
-    after the Height image, on the scan list's unitless ``Sens. Phase`` soft scale
-    (``V 1.000000 `` in the real files), so its values are in V.
-    ``drive_frequency`` in kHz is written on the ``@2:DriveFrequency3SoftHarmoniX``
-    line of the scan list (by default ``rate`` x 1000 / 1024, as in the real
-    captures), beside a ``@3:`` line of 0.005 kHz; one period of it spans a curve.
-    ``drive_frequency_line=False`` leaves the ``@2:`` line out, keeping the ``@3:``
-    line, and a curve then spans one period of ``rate``.
+    ``defl_sens`` and ``z_sens`` (of the Height image) in nm/V, ``scan_size`` the fast
+    axis in nm, ``rate`` the PFT Freq in kHz, ``amplitude`` the Peak Force Amplitude in
+    nm. ``sync_distance`` is the lag of the deflection behind the drive in samples of
+    ``sample_points`` per period (by default 512 kHz over ``rate``); it must stay under
+    half a period. ``sync_distance_qnm`` adds that newer key, whose value is then the
+    lag. ``extend_marker`` writes the INT16_MIN marker of the real captures.
+    ``phase_image`` adds a Phase image after the Height image, on the scan list's
+    unitless ``Sens. Phase`` soft scale (``V 1.000000 `` in the real files), so its
+    values are in V. ``drive_frequency`` in kHz is written on the
+    ``@2:DriveFrequency3SoftHarmoniX`` line of the scan list (by default ``rate`` x 1000
+    / 1024, as in the real captures), beside a ``@3:`` line of 0.005 kHz; one period of
+    it spans a curve. ``drive_frequency_line=False`` leaves the ``@2:`` line out,
+    keeping the ``@3:`` line, and a curve then spans one period of ``rate``.
     """
     rows, cols = shape
     n_curves = rows * cols
@@ -468,24 +468,23 @@ def build_spm(
     """Write a force volume of shape (rows, cols) and say what it holds.
 
     ``points`` per half curve, so each curve holds twice as many. ``k`` in N/m,
-    ``defl_sens`` and ``z_sens`` (of the Height Sensor) in nm/V, ``scan_size``
-    the fast axis in nm, ``ramp_rate`` the ramps per second. ``scan_list_grid``
-    (rows, cols) replaces the grid of the Ciao scan list alone; ``invalid_pixels``
-    lists the (row, col) of pixels marked invalid; see the module docstring.
-    ``invalid_samples`` lists (channel, (row, col), half, point) samples to write as
-    INT32_MIN in the "deflection" or "height sensor" channel, half 0 the extend and 1
-    the retract, point counted in the curve as read (the extend in time order); the
-    expected curve is NaN there. The channels written after them from those two
-    ("other deflection", "other height sensor") carry the marks too.
-    ``phase_image`` adds a Phase image after the Height Sensor image, on the scan
-    list's unitless ``Sens. Phase`` soft scale (``V 1.000000 `` in the real files),
-    so its values are in V. ``force_sections`` lists the force sections in file
-    order, each one of: "deflection" (Deflection Error at 0.5 V full scale),
-    "deflection 2.5 V" (the same values at 2.5 V, marked at invalid pixels),
-    "height sensor", "peak force error", "other deflection" and "other height
-    sensor" (those names holding each half reversed), and "height error" and
-    "adhesion" (names of neither, on a sensitivity the scan list lacks). The
-    expected volume pairs the values of "deflection" with those of "height sensor".
+    ``defl_sens`` and ``z_sens`` (of the Height Sensor) in nm/V, ``scan_size`` the fast
+    axis in nm, ``ramp_rate`` the ramps per second. ``scan_list_grid`` (rows, cols)
+    replaces the grid of the Ciao scan list alone; ``invalid_pixels`` lists the (row,
+    col) of pixels marked invalid; see the module docstring. ``invalid_samples`` lists
+    (channel, (row, col), half, point) samples to write as INT32_MIN in the "deflection"
+    or "height sensor" channel, half 0 the extend and 1 the retract, point counted in
+    the curve as read (the extend in time order); the expected curve is NaN there. The
+    channels written after them from those two ("other deflection", "other height
+    sensor") carry the marks too. ``phase_image`` adds a Phase image after the Height
+    Sensor image, on the scan list's unitless ``Sens. Phase`` soft scale
+    (``V 1.000000 `` in the real files), so its values are in V. ``force_sections``
+    lists the force sections in file order, each one of: "deflection" (Deflection Error
+    at 0.5 V full scale), "deflection 2.5 V" (the same values at 2.5 V, marked at
+    invalid pixels), "height sensor", "peak force error", "other deflection" and "other
+    height sensor" (those names holding each half reversed), and "height error" and
+    "adhesion" (names of neither, on a sensitivity the scan list lacks). The expected
+    volume pairs the values of "deflection" with those of "height sensor".
     """
     rows, cols = shape
     scan_rows, scan_cols = shape if scan_list_grid is None else scan_list_grid
