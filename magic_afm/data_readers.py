@@ -198,6 +198,9 @@ class FVFile(Protocol):
     @staticmethod
     def check_type(data: Buffer): ...
 
+    @staticmethod
+    def sample_width(data: Buffer) -> int | None: ...
+
     @classmethod
     def parse(cls, data: Buffer) -> "FVFile": ...
 
@@ -514,6 +517,18 @@ class ARH5File:
     scansize: tuple[float, float]
     sync_dist: float | None = None
     trace: int | None = None
+
+    @staticmethod
+    def sample_width(data) -> int | None:
+        """Common itemsize of every dataset in the file, or None if they differ."""
+        widths = set()
+
+        def visit(name, obj):
+            if hasattr(obj, "dtype"):
+                widths.add(obj.dtype.itemsize)
+
+        data.visititems(visit)
+        return widths.pop() if len(widths) == 1 else None
 
     @classmethod
     def parse(cls, h5data):
@@ -1334,6 +1349,12 @@ class ARDFFile:
         file_header.validate()
         return file_header
 
+    @staticmethod
+    def sample_width(data: Buffer) -> int | None:
+        """Curves and images are float32; the 8-bit thumbnails are not counted."""
+        ARDFFile.check_type(data)
+        return 4
+
     @classmethod
     def parse(cls, data: Buffer):
         file_header = cls.check_type(data)
@@ -1737,9 +1758,9 @@ class NanoscopeFile:
         if not start == magic:
             raise FileFormatError("Not a nanoscope file.", start)
 
-    @classmethod
-    def parse(cls, data: Buffer):
-        cls.check_type(data)
+    @staticmethod
+    def _read_header(data: Buffer) -> dict:
+        NanoscopeFile.check_type(data)
         # End of header is demarcated by a SUB byte (26 = 0x1A)
         header_end_pos = _find_in_buffer(data, b"\x1a")
         if header_end_pos < 0:
@@ -1758,6 +1779,62 @@ class NanoscopeFile:
         for section in ("Ciao scan list", "Ciao force list", "Ciao force image list"):
             if section not in header:
                 raise FileFormatError(f"No {section} in the header")
+        return header
+
+    @staticmethod
+    def _force_shape(header) -> tuple[bool, Index]:
+        """Whether the file is a force volume, and the grid its curves lie on."""
+        csl = header["Ciao scan list"][0]
+        cfl = header["Ciao force list"][0]
+        # any section with Height in its name marks a force volume, else QNM
+        is_ffv = any(
+            "Height" in subheader["@4:Image Data"].split('"')[1]
+            for subheader in header["Ciao force image list"]
+        )
+        if is_ffv:
+            fv_lines = int(cfl["FV Lines"].split()[0])
+            slowpx = _nonzero(fv_lines, "FV Lines", "Ciao force list")
+            fv_cols = int(cfl["force/line"].split()[0])
+            fastpx = _nonzero(fv_cols, "force/line", "Ciao force list")
+        else:
+            fastpx = _nonzero(int(csl["Samps/line"]), "Samps/line", "Ciao scan list")
+            slowpx = _nonzero(int(csl["Lines"]), "Lines", "Ciao scan list")
+        return is_ffv, (slowpx, fastpx)
+
+    @staticmethod
+    def sample_width(data: Buffer) -> int | None:
+        """Common width of every image and force section, or None if they differ."""
+        header = NanoscopeFile._read_header(data)
+        is_ffv, (r, c) = NanoscopeFile._force_shape(header)
+        cfl = header["Ciao force list"][0]
+        if is_ffv:
+            grid = f"FV Lines: {cfl['FV Lines']}, force/line: {cfl['force/line']}"
+        else:
+            samps_line = header["Ciao scan list"][0]["Samps/line"]
+            grid = f"force/line: {cfl['force/line']} against Samps/line: {samps_line}"
+        widths = set()
+        for h in header["Ciao force image list"]:
+            n_ext = _nonzero(
+                int(h["Samps/line"].split()[0]), "Samps/line", "Ciao force image list"
+            )
+            widths.add(_check_force_bpp(int(h["Data length"]), r * c, 2 * n_ext, grid))
+        for h in header["Ciao image list"]:
+            name = h["@2:Image Data"].split('"')[1]
+            length = int(h["Data length"])
+            lines = _nonzero(int(h["Number of lines"]), "Number of lines", name)
+            samps = _nonzero(int(h["Samps/line"]), "Samps/line", name)
+            bpp, rem = divmod(length, lines * samps)
+            if rem or bpp not in (2, 4):
+                raise FileFormatError(
+                    f"Data length {length} of image {name!r} is not {lines} x {samps}"
+                    " samples of 2 or 4 bytes"
+                )
+            widths.add(bpp)
+        return widths.pop() if len(widths) == 1 else None
+
+    @classmethod
+    def parse(cls, data: Buffer):
+        header = cls._read_header(data)
 
         # Header items that I should be reading someday
         # \Frame direction: Down
@@ -1768,23 +1845,13 @@ class NanoscopeFile:
         # \Aspect Ratio: 1:1
         # \Scan Size: 800 800 nm
         csl = header["Ciao scan list"][0]
-        cfl = header["Ciao force list"][0]
         # deflection and height data are separate "force images", first of each name
         force_sections = {}
         for subheader in header["Ciao force image list"]:
             name = subheader["@4:Image Data"].split('"')[1]
             force_sections.setdefault(name, subheader)
-        # any section with Height in its name marks a force volume, else QNM
-        is_ffv = any("Height" in name for name in force_sections)
-        if is_ffv:
-            fv_lines = int(cfl["FV Lines"].split()[0])
-            slowpx = _nonzero(fv_lines, "FV Lines", "Ciao force list")
-            fv_cols = int(cfl["force/line"].split()[0])
-            fastpx = _nonzero(fv_cols, "force/line", "Ciao force list")
-        else:
-            fastpx = _nonzero(int(csl["Samps/line"]), "Samps/line", "Ciao scan list")
-            slowpx = _nonzero(int(csl["Lines"]), "Lines", "Ciao scan list")
-        shape = slowpx, fastpx
+        is_ffv, shape = cls._force_shape(header)
+        slowpx, fastpx = shape
         ratestr, unit = csl["PFT Freq"].split()
         if unit.lower() != "khz":
             raise FileFormatError(f"PFT Freq unit is {unit!r}, expected kHz")
@@ -2332,9 +2399,9 @@ class NIDFile:
         if not start == magic:
             raise FileFormatError("Not a Nanosurf NID file.", start)
 
-    @classmethod
-    def parse(cls, data: Buffer):
-        cls.check_type(data)
+    @staticmethod
+    def _read_header(data: Buffer) -> tuple[dict, int]:
+        NIDFile.check_type(data)
         # End of header is demarcated by the bytes b"#!"
         header_end_pos = _find_in_buffer(data, b"#!")
         if header_end_pos < 0:
@@ -2344,6 +2411,18 @@ class NIDFile:
         header = _parse_nanosurf_header(
             bytes(memoryview(data)[:header_end_pos]).decode("utf-8").splitlines()
         )
+        return header, header_end_pos
+
+    @staticmethod
+    def sample_width(data: Buffer) -> int | None:
+        """Common width of every dataset, or None if they differ."""
+        header, _ = NIDFile._read_header(data)
+        widths = {int(header[name]["SaveBits"]) // 8 for name in header["datasets"]}
+        return widths.pop() if len(widths) == 1 else None
+
+    @classmethod
+    def parse(cls, data: Buffer):
+        header, header_end_pos = cls._read_header(data)
 
         # datasets are stored contiguously in header order right after the marker
         offset = header_end_pos + 2
