@@ -1470,6 +1470,20 @@ def _parse_nanoscope_header(header_lines: Iterable[str]):
     return header
 
 
+def _nanoscope_image_layout(h, name) -> tuple[int, Index]:
+    """Bytes per sample and shape of an image section, checked against its length."""
+    length = int(h["Data length"])
+    r = _nonzero(int(h["Number of lines"]), "Number of lines", name)
+    c = _nonzero(int(h["Samps/line"]), "Samps/line", name)
+    bpp, rem = divmod(length, r * c)
+    if rem or bpp not in (2, 4):
+        raise FileFormatError(
+            f"Data length {length} of image {name!r} is not {r} x {c} samples"
+            " of 2 or 4 bytes"
+        )
+    return bpp, (r, c)
+
+
 @frozen
 class NanoscopeImage:
     data: Buffer
@@ -1486,14 +1500,7 @@ class NanoscopeImage:
     def parse_image(cls, data, header, h, name):
         length = int(h["Data length"])
         offset = int(h["Data offset"])
-        r = _nonzero(int(h["Number of lines"]), "Number of lines", name)
-        c = _nonzero(int(h["Samps/line"]), "Samps/line", name)
-        bpp, rem = divmod(length, r * c)
-        if rem or bpp not in (2, 4):
-            raise FileFormatError(
-                f"Data length {length} of image {name!r} is not {r} x {c} samples"
-                " of 2 or 4 bytes"
-            )
+        bpp, shape = _nanoscope_image_layout(h, name)
         value = h["@2:Z scale"]
         hard_scale = float(value.split()[-2]) / (2 ** (bpp * 8))
         hard_offset = float(h["@2:Z offset"].split()[-2]) / (2 ** (bpp * 8))
@@ -1519,7 +1526,7 @@ class NanoscopeImage:
             bpp=bpp,
             unit_scale=unit_scale,
             unit_offset=unit_offset,
-            shape=(r, c),
+            shape=shape,
             units=units,
         )
 
@@ -1558,6 +1565,15 @@ def _nanoscope_curve_scale(header, subheader, sens_key: str) -> float:
     return float(sens) * float(lsb)
 
 
+def _nanoscope_force_grid(header, is_ffv: bool) -> str:
+    """The header keys, with their values, that give the grid of the force curves."""
+    cfl = header["Ciao force list"][0]
+    if is_ffv:
+        return f"FV Lines: {cfl['FV Lines']}, force/line: {cfl['force/line']}"
+    samps_line = header["Ciao scan list"][0]["Samps/line"]
+    return f"force/line: {cfl['force/line']} against Samps/line: {samps_line}"
+
+
 @frozen
 class _FFVReader:
     data: Buffer
@@ -1577,8 +1593,7 @@ class _FFVReader:
         offset = int(subheader["Data offset"])
         length = int(subheader["Data length"])
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
-        cfl = header["Ciao force list"][0]
-        grid = f"FV Lines: {cfl['FV Lines']}, force/line: {cfl['force/line']}"
+        grid = _nanoscope_force_grid(header, is_ffv=True)
         bpp = _check_force_bpp(length, r * c, 2 * n_ext, grid)
         ints = np.ndarray(
             shape=(r, c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
@@ -1611,9 +1626,7 @@ class _QNMDReader:
         offset = int(subheader["Data offset"])
         n_ext, _ = tuple(map(int, subheader["Samps/line"].split()))
         npts = 2 * n_ext
-        force_line = header["Ciao force list"][0]["force/line"]
-        samps_line = header["Ciao scan list"][0]["Samps/line"]
-        grid = f"force/line: {force_line} against Samps/line: {samps_line}"
+        grid = _nanoscope_force_grid(header, is_ffv=False)
         bpp = _check_force_bpp(length, r * c, npts, grid)
         d_ints = np.ndarray(
             shape=(r * c, 2, n_ext), dtype=f"<i{bpp}", buffer=data, offset=offset
@@ -1806,12 +1819,7 @@ class NanoscopeFile:
         """Common width of every image and force section, or None if they differ."""
         header = NanoscopeFile._read_header(data)
         is_ffv, (r, c) = NanoscopeFile._force_shape(header)
-        cfl = header["Ciao force list"][0]
-        if is_ffv:
-            grid = f"FV Lines: {cfl['FV Lines']}, force/line: {cfl['force/line']}"
-        else:
-            samps_line = header["Ciao scan list"][0]["Samps/line"]
-            grid = f"force/line: {cfl['force/line']} against Samps/line: {samps_line}"
+        grid = _nanoscope_force_grid(header, is_ffv)
         widths = set()
         for h in header["Ciao force image list"]:
             n_ext = _nonzero(
@@ -1820,15 +1828,7 @@ class NanoscopeFile:
             widths.add(_check_force_bpp(int(h["Data length"]), r * c, 2 * n_ext, grid))
         for h in header["Ciao image list"]:
             name = h["@2:Image Data"].split('"')[1]
-            length = int(h["Data length"])
-            lines = _nonzero(int(h["Number of lines"]), "Number of lines", name)
-            samps = _nonzero(int(h["Samps/line"]), "Samps/line", name)
-            bpp, rem = divmod(length, lines * samps)
-            if rem or bpp not in (2, 4):
-                raise FileFormatError(
-                    f"Data length {length} of image {name!r} is not {lines} x {samps}"
-                    " samples of 2 or 4 bytes"
-                )
+            bpp, _ = _nanoscope_image_layout(h, name)
             widths.add(bpp)
         return widths.pop() if len(widths) == 1 else None
 
