@@ -1023,6 +1023,7 @@ class _ARDFForceMapReader:
     points: int
     vtype: int
     channels: _ChanMap
+    nseg: int
     nancurve: np.ndarray = field(repr=False)
     _seen_vsets: dict[Index, _ARDFVset] = field(init=False, factory=dict)
 
@@ -1064,6 +1065,20 @@ class _ARDFForceMapReader:
             yield _ARDFVdata.unpack(vdat_header)
             pointer = vdat_header.offset + vdat_header.size
 
+    def split(self, vdat: _ARDFVdata) -> tuple[slice, slice]:
+        """Slices of a curve's extend and retract segments.
+
+        The offsets hold each segment's start, then the index of the last sample;
+        a retract that is the last segment runs to that sample inclusive.
+        """
+        start, ext, *rest = vdat.seg_offsets
+        ret = rest[0] if self.nseg > 2 else rest[self.nseg - 2] + 1
+        return slice(start, ext), slice(ext, ret)
+
+    def read_halves(self, vdat: _ARDFVdata, factor: float):
+        x = vdat.get_ndarray(factor)
+        return tuple(x[sl] for sl in self.split(vdat))
+
     def get_curve(self, r: int, c: int) -> Curve:
         """Efficiently get a specific curve from disk."""
         if not (0 <= r < self.lines and 0 <= c < self.points):
@@ -1094,14 +1109,10 @@ class _ARDFForceMapReader:
 
         zxr, dxr = self.nancurve
         for vdat in self.traverse_vdats(vset.offset + vset.size):
-            _, ext, *_ = vdat.seg_offsets
-            ret = 2 * ext
             if vdat.channel == self.channels[self.zname][0]:
-                z = vdat.get_ndarray(self.zfactor)
-                zxr = z[:ret].reshape(2, ext)
+                zxr = self.read_halves(vdat, self.zfactor)
             elif vdat.channel == self.channels["Defl"][0]:
-                d = vdat.get_ndarray(self.dfactor)
-                dxr = d[:ret].reshape(2, ext)
+                dxr = self.read_halves(vdat, self.dfactor)
         return _halves(zxr, dxr)
 
     def iter_indices(self) -> Iterable[Index]:
@@ -1119,19 +1130,19 @@ class _ARDFForceMapReader:
                 continue
             zxr, dxr = self.nancurve
             for vdat in self.traverse_vdats(vset.offset + vset.size):
-                _, ext, *_ = vdat.seg_offsets
-                ret = 2 * ext
                 if vdat.channel == self.channels[zname][0]:
-                    z = vdat.get_ndarray(self.zfactor)
-                    zxr = z[:ret].reshape(2, ext)
+                    zxr = self.read_halves(vdat, self.zfactor)
                 elif vdat.channel == self.channels["Defl"][0]:
-                    d = vdat.get_ndarray(self.dfactor)
-                    dxr = d[:ret].reshape(2, ext)
+                    dxr = self.read_halves(vdat, self.dfactor)
             yield (vset.line, vset.point), _halves(zxr, dxr)
 
     def get_all_curves(self) -> np.ndarray:
-        """Eagerly load all curves into memory."""
-        minext = 0xFFFFFFFF
+        """Eagerly load all curves into memory.
+
+        Both halves of every curve are cut to the shortest extend or retract, keeping
+        the points nearest the surface.
+        """
+        n = 0xFFFFFFFF
         vdats = {}
         for vset in self.traverse_vsets(self.vtoc.pointers[0]):
             if vset.vtype != self.vtype:
@@ -1144,20 +1155,17 @@ class _ARDFForceMapReader:
                     x[1] = vdat  # dvdat
             if None in x:
                 raise FileFormatError(f"missing vdat channel: {x}, {self.channels}")
-            minext = min(minext, vdat.seg_offsets[1])
+            for half in self.split(vdat):
+                n = min(n, half.stop - half.start)
         del vset, vdat, x
-        minfloats = 2 * minext
-        x = np.full((self.lines, self.points, 2, minfloats), np.nan, dtype=np.float32)
-        for (r, c), (zvdat, dvdat) in vdats.items():
-            # center the slice, as the stacked array splits each curve halfway
-            floats = zvdat.seg_offsets[1] * 2
-            halfextra = (floats - minfloats) // 2  # even - even -> even
-            sl = np.s_[halfextra : minfloats + halfextra]
-            # TODO: verify turnaround point against iter_curves
-            x[r, c, :, :] = zvdat.get_ndarray()[sl], dvdat.get_ndarray()[sl]
-        x[:, :, 0] *= self.zfactor
-        x[:, :, 1] *= self.dfactor
-        return np.moveaxis(x.reshape(x.shape[:-1] + (2, -1)), 2, 0)
+        x = np.full((2, self.lines, self.points, 2, n), np.nan, dtype=np.float32)
+        for (r, c), vdat_pair in vdats.items():
+            for i, (vdat, factor) in enumerate(
+                zip(vdat_pair, (self.zfactor, self.dfactor), strict=True)
+            ):
+                ext, ret = self.read_halves(vdat, factor)
+                x[i, r, c] = ext[len(ext) - n :], ret[:n]
+        return x
 
 
 @frozen
@@ -1171,7 +1179,10 @@ class ARDFVolume:
     _struct = struct.Struct("<LL24sddd32s32s32s32sQ")
 
     @classmethod
-    def parse_volm(cls, volm_header: _ARDFHeader, npts: int | None = None):
+    def parse_volm(
+        cls, volm_header: _ARDFHeader, npts_by_nseg: dict[int, int | None] | None = None
+    ):
+        """Parse a volume; npts_by_nseg gives an untriggered half's points."""
         data = volm_header.data
         if volm_header.size != 32 or volm_header.name != b"VOLM":
             raise FileFormatError("Malformed volume header.", volm_header)
@@ -1205,6 +1216,8 @@ class ARDFVolume:
             raise FileFormatError(
                 f"volume definition has {nseg} segments but names {seg_names}"
             )
+        if nseg not in (2, 3):
+            raise FileFormatError(f"cannot read volume of segments {seg_names}")
 
         # Implicit table of channels here smh
         offset = vdef_header.offset + vdef_header.size
@@ -1235,19 +1248,22 @@ class ARDFVolume:
         # Check if each offset is regularly spaced
         # optimize for LARGE regular case (FMaps are SMALL)
         first_vset_header = _ARDFHeader.unpack(data, vtoc.pointers[0])
-        if complete and not np.any(np.diff(np.diff(vtoc.pointers))):
+        regular = not np.any(np.diff(np.diff(vtoc.pointers)))
+        if complete and regular and nseg == 2:
             reader = _ARDFFFMReader.parse(first_vset_header, points, lines, channels)
             name = "Trace" if reader.trace else "Retrace"
         else:
             first_vset = _ARDFVset.unpack(first_vset_header)
-            args = (data, vtoc, lines, points, first_vset.vtype, channels)
+            args = (data, vtoc, lines, points, first_vset.vtype, channels, nseg)
+            npts = (npts_by_nseg or {}).get(nseg)
             if npts is None:
                 # no usable note, so fall back on the longest acquired curve
                 probe = _ARDFForceMapReader(*args, _nan_curve(0))
                 npts = max(
-                    vdat.seg_offsets[1]
+                    half.stop - half.start
                     for vset in probe.traverse_vsets(vtoc.pointers[0])
                     for vdat in probe.traverse_vdats(vset.offset + vset.size)
+                    for half in probe.split(vdat)
                 )
             reader = _ARDFForceMapReader(*args, _nan_curve(npts))
             name = "FMAP"
@@ -1321,12 +1337,14 @@ class ARDFFile:
                 f"text table has {len(ttoc.entries)} entries, expected 1"
             )
         notes = _parse_ar_note(ttoc.decode_entry(0).splitlines())
-        try:
-            npts = round(
-                float(notes["NumPtsPerSec"]) / float(notes["FastMapZRate"]) / 2
-            )
-        except (KeyError, ValueError, ZeroDivisionError):
-            npts = None
+        # an untriggered half lasts half a ramp, at the fast or the slow map rate
+        npts_by_nseg: dict[int, int | None] = {}
+        for nseg, key in ((2, "FastMapZRate"), (3, "ForceScanRate")):
+            try:
+                npts = round(float(notes["NumPtsPerSec"]) / float(notes[key]) / 2)
+            except (KeyError, ValueError, ZeroDivisionError):
+                npts = None
+            npts_by_nseg[nseg] = npts
         images = {}
         volumes = []
         for item, pointer in ftoc.entries:
@@ -1336,7 +1354,7 @@ class ARDFFile:
                 item = ARDFImage.parse_imag(item)
                 images[item.name] = item
             elif item.name == b"VOLM":
-                item = ARDFVolume.parse_volm(item, npts)
+                item = ARDFVolume.parse_volm(item, npts_by_nseg)
                 # volumes[item.name] = item
                 volumes.append(item)
             else:
