@@ -395,10 +395,9 @@ class ARH5ForceMapVolume:
         # this is all necessary because the arrays are not of uniform length
         # get_all_curves cuts every half down to the length of the shortest
         self.extlens = self.segments[:, :, 0]
-        self.minext = self.split = np.min(self.extlens)
+        self.minext = np.min(self.extlens)
         self.extretlens = self.segments[:, :, 1]
         self.minret = np.min(self.extretlens - self.extlens)
-        self.npts = self.minext + self.minret
 
         # We only care about 2 channels, Defl and z (Raw if recorded, else ZSnsr)
         # Convert channels array to a map that can be used to index into ForceMap data by name
@@ -414,11 +413,9 @@ class ARH5ForceMapVolume:
         curve = self.force_curves[f"{r}:{c}"]  # XXX Read h5data
         split = self.extlens[r, c]
         end = self.extretlens[r, c]
-        # h5py wants increasing row indices, so read both rows in order then pick
-        rows = sorted((self.z_row, self.d_row))
-        data = curve[rows, :end]  # XXX Read h5data
-        zd = data[[rows.index(self.z_row), rows.index(self.d_row)]]
-        z, d = (zd * _NANOMETER_UNIT_CONVERSION).astype(np.float32)
+        z = curve[self.z_row, :end] * _NANOMETER_UNIT_CONVERSION  # XXX Read h5data
+        d = curve[self.d_row, :end] * _NANOMETER_UNIT_CONVERSION  # XXX Read h5data
+        z, d = z.astype(np.float32), d.astype(np.float32)
         return (z[:split], z[split:]), (d[:split], d[split:])
 
     def iter_indices(self) -> Iterable[Index]:

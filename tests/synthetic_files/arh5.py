@@ -98,7 +98,7 @@ def _common_note(shape, k, invols, scan_size):
     return lines, expected
 
 
-def _maps(zext, zret, dext, dret, k, rng) -> dict[str, np.ndarray]:
+def _maps(zext, dext, dret, k, rng) -> dict[str, np.ndarray]:
     """Per-pixel maps the Asylum software computes, in m, N and Pa."""
     z_top = np.nanmax(zext, axis=-1) * 1e-9
     young = rng.uniform(1e6, 1e7, z_top.shape)
@@ -185,7 +185,7 @@ def build_arh5_ffm(
             chunks = (1, min(cols, 16), n_total)
             for name, data in (("Defl", defl), ("Drive", drive), ("Raw", raw)):
                 group.create_dataset(name, data=data, chunks=chunks)
-            for name, image in _maps(zext, zret, dext, dret, k, rng).items():
+            for name, image in _maps(zext, dext, dret, k, rng).items():
                 image_group.create_dataset(
                     name + direction, data=image, chunks=image.shape
                 )
@@ -295,7 +295,7 @@ def build_arh5_force_map(
             dext[r, c, :ne], dret[r, c, :nr] = d_nm[:ne], d_nm[ne:]
         image_group = f.create_group("Image")
         # the maps the software computes come from the Z sensor
-        for name, image in _maps(zsnsr_ext, zret, dext, dret, k, rng).items():
+        for name, image in _maps(zsnsr_ext, dext, dret, k, rng).items():
             image_group.create_dataset(name + "Trace", data=image, chunks=image.shape)
         images = {name: image[()] for name, image in image_group.items()}
     # the away segment is not part of the curve
