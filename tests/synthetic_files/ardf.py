@@ -1,4 +1,4 @@
-"""Asylum Research ARDF files, the fast force maps the Asylum software saves.
+"""Asylum Research ARDF files, the fast and slow force maps the Asylum software saves.
 
 An ARDF file is a run of little-endian sections, each opening with a 16 byte header: a
 CRC32, the section's size in bytes, a four letter name and flags. The CRC (zlib's)
@@ -71,8 +71,25 @@ whether a scan can stop part way along a line (the builder stops after whole
 lines); or a stopped scan that kept both directions, which the builder writes
 as a complete one cut short. The main note's ``FMapScanPoints`` and
 ``FMapScanLines`` are the settings of a slow force map, not this grid, so the
-builder leaves them out. Slow force maps, whose curves have extend, retract and
-dwell segments, are not built.
+builder leaves them out.
+
+A slow force map, written with ``slow_map``, follows one real file of 5 lines of 6
+points. Its single volume has a ``VDEF`` naming the segments "Ext;Ret;Away;", channels
+``Raw``, ``Defl`` and ``ZSnsr``, and curves of type 2, each as long as its own extend,
+retract and Away segments: a ramp stops early once the force triggers, and the Away
+segment carries the tip further from the surface after the retract. Each ``VDAT`` gives
+where the extend, retract and Away segments start and the index of the last point. The
+curves snake: the first line taken runs from its last point, the next from point 0,
+and so on, and each curve's index is its place on the grid, line by line, whatever the
+order it was taken in. An ``XDAT`` with the experiment's values for the curve follows
+each curve's ``VDAT`` sections. The note gives the ramp rate, ``ForceScanRate``, and
+the sample rate, ``NumPtsPerSec``, so an untriggered curve has ``NumPtsPerSec /
+ForceScanRate / 2`` points per half; its ``FastMapZRate`` is a fast force map setting
+left over in the note, which says nothing of this map. The images' note sits after the
+last image and no texts end the file. The real file names its images ``MapHeight`` and
+``MapAdhesion``; the builder calls them ``Height`` and ``Adhesion``. No real file
+settles which way the first line of a slow map runs when its line count is even, nor
+how a slow map stopped part way or one with a dwell segment is laid out.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -133,6 +150,14 @@ CAPTURE_CODES = {"trace": 1, "retrace": 2, "both": 3}
 VSET_TYPES = {"trace": (5,), "retrace": (5,), "both": (10, 11)}
 # the drive signal runs about this far above the Z sensor in the real files, in m
 DRIVE_OFFSET = 1.1e-6
+SLOW_CHANNELS = (("Raw", "m"), ("Defl", "m"), ("ZSnsr", "m"))
+SLOW_MAP_UNITS = {"Height": "m", "Adhesion": "N"}
+SLOW_SEGMENTS = b"Ext;Ret;Away;"
+SLOW_VSET_TYPE = 2
+# force index, line, point, how many values, and the values XDEF names
+XDAT = struct.Struct("<LLLL6d")
+# the Z sensor reads within a few tenths of a nm of Raw in the real slow map, in m
+ZSNSR_OFFSET = -0.1e-9
 END_TEXT = (
     "Date:  2000-01-01\rTime:  12:00:00 PM\rSeconds:  3029572800\r"
     "End Inside Temp:  25.000 °C\rEnd Outside Temp:  22.000 °C\r"
@@ -290,8 +315,12 @@ def build_ardf(
     channel_units: dict[str, str] | None = None,
     gap: int = 0,
     filename: str = "synthetic.ARDF",
+    slow_map: bool = False,
+    ext_points=None,
+    ret_points=None,
+    away_points=8,
 ) -> SyntheticFile:
-    """Write a fast force map ARDF file and say what it holds.
+    """Write a fast or slow force map ARDF file and say what it holds.
 
     ``shape`` is (lines, points per line): rows are the slow axis, columns the fast one.
     ``points`` per half curve, so each curve holds twice as many; ``capture`` is
@@ -305,7 +334,36 @@ def build_ardf(
     filesystem allows, follow the file's text table, so that everything the file's
     pointers address (the note, images, volumes, curves, thumbnails and texts) sits that
     much further on.
+
+    With ``slow_map`` the file is a slow force map of one volume, named "FMAP" as the
+    reader names it. ``points`` is then the points per half of an untriggered curve,
+    ``rate`` the untriggered curves per second, and ``ext_points``, ``ret_points`` and
+    ``away_points`` the points of each curve's extend, retract and Away segments, an int
+    or a (lines, points) array, the first two ``points`` unless given.
     """
+    if slow_map:
+        if capture != "trace":
+            raise ValueError("a slow force map holds one volume", capture)
+        return _build_slow_map(
+            directory,
+            shape,
+            points,
+            ext_points=points if ext_points is None else ext_points,
+            ret_points=points if ret_points is None else ret_points,
+            away_points=away_points,
+            scan_down=scan_down,
+            lines_taken=lines_taken,
+            seed=seed,
+            k=k,
+            invols=invols,
+            scan_size=scan_size,
+            rate=rate,
+            channel_units=channel_units,
+            gap=gap,
+            filename=filename,
+        )
+    if ext_points is not None or ret_points is not None:
+        raise ValueError("a fast force map has halves of equal length", points)
     lines, cols = shape
     if lines < 2 or cols < 2:
         raise ValueError("a map needs at least two lines of two points", shape)
@@ -515,5 +573,228 @@ def build_ardf(
         image_units={
             name + d: MAP_UNITS[name] for name in MAP_NAMES for d in directions
         },
+        units=units,
+    )
+
+
+def _build_slow_map(
+    directory: Path,
+    shape: Index,
+    points: int,
+    *,
+    ext_points,
+    ret_points,
+    away_points,
+    scan_down: bool,
+    lines_taken: int | None,
+    seed: int,
+    k: float,
+    invols: float,
+    scan_size: tuple[float, float],
+    rate: float,
+    channel_units: dict[str, str] | None,
+    gap: int,
+    filename: str,
+) -> SyntheticFile:
+    """Write a slow force map ARDF file; build_ardf with slow_map says how."""
+    lines, cols = shape
+    if lines < 2 or cols < 2:
+        raise ValueError("a map needs at least two lines of two points", shape)
+    lines_taken = lines if lines_taken is None else lines_taken
+    if not 0 < lines_taken <= lines:
+        raise ValueError("lines_taken must be within the grid", lines_taken, lines)
+    units = dict(SLOW_CHANNELS) | (channel_units or {})
+    if set(units) != {name for name, _ in SLOW_CHANNELS}:
+        raise ValueError("channel_units names an unknown channel", channel_units)
+    rng = np.random.default_rng(seed)
+    counts = tuple(
+        point_counts(shape, n) for n in (ext_points, ret_points, away_points)
+    )
+
+    k_str, invols_str = _g(k), _g(invols * 1e-9)
+    fast_str, slow_str = _g(scan_size[0] * 1e-9), _g(scan_size[1] * 1e-9)
+    samples_str = _g(rate * 2 * points)
+    smaller = min(scan_size)
+    note = {
+        "Version": "16.08.202",
+        "ForceScanRate": f" {_g(rate)}",
+        "NumPtsPerSec": f" {samples_str}",
+        "FMapScanPoints": f" {cols}",
+        "FMapScanLines": f" {lines}",
+        "ScanSize": f" {_g(max(scan_size) * 1e-9)}",
+        "FastScanSize": f" {fast_str}",
+        "SlowScanSize": f" {slow_str}",
+        "ImagingMode": "Contact",
+        "InvOLS": f" {invols_str}",
+        "SpringConstant": f" {k_str}",
+        "ScanDown": f" {int(scan_down)}",
+        "FastRatio": f" {_g(scan_size[0] / smaller)}",
+        "SlowRatio": f" {_g(scan_size[1] / smaller)}",
+        # left over from a fast force map, and not a whole fraction of this one's rate
+        "FastMapZRate": f" {_g(3 * rate)}",
+        "UserCalcUnit": " °",
+    }
+    image_note = {
+        key: note[key]
+        for key in (
+            "ScanSize",
+            "FastScanSize",
+            "SlowScanSize",
+            "ImagingMode",
+            "InvOLS",
+            "SpringConstant",
+            "FastRatio",
+            "SlowRatio",
+            "FMapScanPoints",
+            "FMapScanLines",
+            "FastMapZRate",
+        )
+    }
+    x_step = float(fast_str) / (cols - 1)
+    y_step = float(slow_str) / (lines - 1)
+    t_step = 1 / float(samples_str)
+
+    # the lines in the order they were taken, each the other way from the one before
+    line_order = list(range(lines)) if scan_down else list(range(lines))[::-1]
+    line_order = line_order[:lines_taken]
+    order = []
+    for i, line in enumerate(line_order):
+        line_points = range(cols)[::-1] if i % 2 == 0 else range(cols)
+        order.extend((line, p) for p in line_points)
+    acquired = np.zeros(shape, dtype=bool)
+    acquired[line_order] = True
+
+    ext, ret, away = counts
+    zext, zret, dext, dret = force_curves(rng, ext, ret, z_far=700.0, ramp=480.0)
+    # the Away segment goes on from where the retract stopped, off the surface
+    n_ret, n_away = int(ret.max()), int(away.max())
+    last = np.take_along_axis(zret, ret[..., None] - 1, axis=-1)
+    zaway = last - 480.0 / max(n_ret - 1, 1) * np.arange(1, n_away + 1)
+    daway = rng.normal(0.0, 0.05, zaway.shape)
+    past_end = np.arange(n_away) >= away[..., None]
+    zaway[past_end] = np.nan
+    daway[past_end] = np.nan
+
+    # each channel's segments in m, then in its unit, as float32
+    raw = [(z * 1e-9).astype(np.float32) for z in (zext, zret, zaway)]
+    defl = [(d * 1e-9).astype(np.float32) for d in (dext, dret, daway)]
+    zsnsr = [
+        (z + ZSNSR_OFFSET + rng.normal(0.0, 0.03e-9, z.shape)).astype(np.float32)
+        for z in raw
+    ]
+    written = [
+        [_in_unit(segment, units[name]) for segment in channel]
+        for channel, (name, _) in zip((raw, defl, zsnsr), SLOW_CHANNELS, strict=True)
+    ]
+
+    def in_nm(segment, name):
+        """A segment as written, in nm, NaN where never taken."""
+        nm = segment.astype(np.float64) * LENGTH_UNITS[units[name]] * 1e9
+        return np.where(acquired[..., None], nm, np.nan)
+
+    volume = SyntheticVolume(
+        "FMAP",
+        in_nm(written[0][0], "Raw"),
+        in_nm(written[0][1], "Raw"),
+        in_nm(written[1][0], "Defl"),
+        in_nm(written[1][1], "Defl"),
+        ext,
+        ret,
+        tuple(order),
+        None if lines_taken == lines else acquired,
+    )
+    raw_m = np.concatenate(raw, axis=-1).astype(np.float64)
+    images = {
+        "Height": (-np.nanmax(raw_m, axis=-1)).astype(np.float32),
+        "Adhesion": (-np.nanmin(defl[1].astype(np.float64), axis=-1) * k).astype(
+            np.float32
+        ),
+    }
+
+    f = _Sections()
+    f.add(b"ARDF")
+    ftoc = f.table(b"FTOC", 32, 24, TABLE_FLAGS)
+    ttoc = f.table(b"TTOC", 16, 32, TABLE_FLAGS)
+    f.skip(gap)
+    f.entry(ttoc, 0, b"TOFF", TOFF.pack(0, f.text(0, _note(note))))
+
+    image_tables = []
+    next_entry = None
+    for i, (name, image) in enumerate(images.items()):
+        imag = f.table(b"IMAG", 4, 24, ITEM_FLAGS)
+        f.entry(ftoc, i, b"IMAG", POINTER.pack(imag))
+        if next_entry is not None:
+            f.patch(next_entry, POINTER, imag)
+        next_entry = f.entry(imag, 0, b"NEXT", POINTER.pack(0))
+        image_tables.append((imag, f.table(b"TTOC", 4, 32, TABLE_FLAGS)))
+        idef = (cols, lines, 0, 0, x_step, y_step, b"m", b"m", _cstring(name), b"m")
+        f.add(b"IDEF", IDEF.pack(*idef))
+        ibox = f.table(b"IBOX", lines, HEADER.size + 4 * cols, TABLE_FLAGS)
+        for line in sorted(line_order):
+            f.entry(ibox, line, b"IDAT", image[line].astype("<f4").tobytes())
+        f.add(b"GAMI")
+    # the first image's note follows the last image
+    text = f.text(0, _note(image_note))
+    f.entry(image_tables[0][1], 0, b"TOFF", TOFF.pack(0, text))
+
+    volm = f.table(b"VOLM", 4, 24, ITEM_FLAGS)
+    f.entry(ftoc, len(images), b"VOLM", POINTER.pack(volm))
+    f.patch(next_entry, POINTER, volm)
+    f.entry(volm, 0, b"NSET", POINTER.pack(lines_taken * cols))
+    f.table(b"TTOC", 4, 32, TABLE_FLAGS)
+    vdef = (cols, lines, b"", x_step, y_step, t_step, b"m", b"m", b"s")
+    f.add(b"VDEF", VDEF.pack(*vdef, SLOW_SEGMENTS, 3))
+    for channel, _ in SLOW_CHANNELS:
+        f.add(b"VCHN", VCHN.pack(_cstring(channel), _cstring(units[channel])))
+    xdef = struct.pack("<LL", 0, len(XDEF_TEXT)) + XDEF_TEXT
+    f.add(b"XDEF", xdef + bytes(XDEF_SIZE - HEADER.size - len(xdef)))
+    vtoc = f.table(b"VTOC", lines, 40, TABLE_FLAGS)
+    f.add(b"MLOV")
+
+    previous = 0
+    for i, (line, p) in enumerate(order):
+        index = line * cols + p
+        lengths = [int(n[line, p]) for n in counts]
+        total = sum(lengths)
+        # where each segment starts, then the last point
+        segments = (0, lengths[0], lengths[0] + lengths[1], total - 1, 0)
+        fields = (index, line, p, SLOW_VSET_TYPE, previous)
+        vset = f.add(b"VSET", VSET.pack(*fields, 0))
+        if i % cols == 0:
+            f.entry(vtoc, i // cols, b"VOFF", VOFF.pack(index, line, p, vset))
+        name = f"Line{line:04d}Point{p:04d}".encode()
+        f.add(b"VNAM", VNAM.pack(index, line, p, len(name), name))
+        for channel, segments_written in enumerate(written):
+            values = np.concatenate(
+                [s[line, p, :n] for s, n in zip(segments_written, lengths, strict=True)]
+            )
+            vdat = VDAT.pack(index, line, p, total, channel, *segments)
+            f.add(b"VDAT", vdat + values.astype("<f4").tobytes())
+        lvdt = (p * x_step, line * y_step)
+        seconds, trigger = 3029572800.0 + i, lengths[0] / float(samples_str)
+        xdat = XDAT.pack(index, line, p, 6, *lvdt, seconds, trigger, np.nan, np.nan)
+        f.add(b"XDAT", xdat)
+        # the curve points on to whatever section follows it
+        f.patch(vset, VSET, *fields, f.tell())
+        previous = vset
+
+    stored_images = {}
+    for (imag, _), (name, image) in zip(image_tables, images.items(), strict=True):
+        held = np.where(acquired, image, np.float32(0))
+        thumbnail = f.add(b"THMB", _thumbnail(held, scan_size))
+        f.entry(imag, 1, b"THMB", POINTER.pack(thumbnail))
+        stored_images[name] = np.where(acquired, image, np.float32(np.nan))
+
+    path = Path(directory) / filename
+    f.write(path)
+    return SyntheticFile(
+        path=path,
+        volumes=[volume],
+        images=stored_images,
+        k=float(k_str),
+        defl_sens=float(invols_str) * 1e9,
+        t_step=t_step,
+        scansize=(float(fast_str) * 1e9, float(slow_str) * 1e9),
+        image_units=dict(SLOW_MAP_UNITS),
         units=units,
     )

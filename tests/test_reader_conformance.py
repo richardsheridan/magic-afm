@@ -41,6 +41,7 @@ BUILDERS = {
     "ardf-trace": (partial(build_ardf, capture="trace"), 1, None),
     "ardf-retrace": (partial(build_ardf, capture="retrace"), 1, None),
     "ardf-both": (partial(build_ardf, capture="both"), 2, 1),
+    "ardf-slow-map": (partial(build_ardf, slow_map=True, ext_points=24), 1, None),
 }
 
 
@@ -113,6 +114,8 @@ def test_get_all_curves_returns_one_float32_array_z_d_by_grid_by_halves(tmp_path
 RAGGED_NID_EXT = 64 - np.arange(15).reshape(5, 3) % 5 * 4
 RAGGED_ARH5_EXT = 40 - np.arange(12).reshape(3, 4) % 3 * 2
 RAGGED_ARH5_RET = 40 - np.arange(12).reshape(3, 4) % 4
+RAGGED_ARDF_EXT = 36 - np.arange(20).reshape(5, 4) * 7 % 11
+RAGGED_ARDF_RET = 30 - np.arange(20).reshape(5, 4) % 3 * 2
 CURVE_BUILDERS = {case: builder for case, (builder, _, _) in BUILDERS.items()} | {
     "nid-longer-extend": partial(build_nid, shape=(3, 5), points=(48, 40)),
     "nid-ragged": partial(
@@ -127,6 +130,14 @@ CURVE_BUILDERS = {case: builder for case, (builder, _, _) in BUILDERS.items()} |
         ret_points=RAGGED_ARH5_RET,
     ),
     "ardf-stopped": partial(build_ardf, shape=(4, 4), lines_taken=3),
+    "ardf-slow-map-stopped": partial(
+        build_ardf,
+        shape=(5, 4),
+        slow_map=True,
+        ext_points=RAGGED_ARDF_EXT,
+        ret_points=RAGGED_ARDF_RET,
+        lines_taken=3,
+    ),
 }
 
 
