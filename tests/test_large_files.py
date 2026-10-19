@@ -313,6 +313,16 @@ RAGGED_CASES = {
     ),
     # curves of one length, read curve by curve, with lines never taken
     "ardf-stopped": partial(build_ardf, shape=RAGGED_GRID, points=24, lines_taken=37),
+    # a slow map, its curves read by their own segments, with lines never taken
+    "ardf-slow-map": partial(
+        build_ardf,
+        shape=RAGGED_GRID,
+        points=48,
+        slow_map=True,
+        ext_points=RAGGED_EXT,
+        ret_points=RAGGED_RET,
+        lines_taken=37,
+    ),
 }
 
 

@@ -28,7 +28,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 from synthetic_files import open_fvfile
-from synthetic_files.ardf import build_ardf
+from synthetic_files.ardf import VDEF, build_ardf
+
+from magic_afm.data_readers import FileFormatError
 
 COMPLETE_RELPATH = "test_cases/PDMS_SAA/ffm/both0001.ARDF"
 STOPPED_RELPATH = "test_cases/PDMS_SAA/ffm/hard0001.ARDF"
@@ -54,6 +56,56 @@ STOPPED_CASES = {
     "stopped-tall-from-line-0": ((8, 6), 16, True, 5),
     "stopped-wide-from-last-line": ((6, 8), 16, False, 4),
 }
+
+
+def ragged(shape, low, high, seed, longest_at=None, longest=None):
+    """Points per curve from low to high inclusive, with one longer at longest_at."""
+    counts = np.random.default_rng(seed).integers(low, high + 1, shape)
+    if longest_at is not None:
+        counts[longest_at] = longest
+    return counts
+
+
+# grid, points per half of an untriggered curve, points of each extend and retract,
+# ScanDown, lines taken before the scan stopped (None for a complete scan)
+SLOW_CASES = {
+    # as the real file: some extends longer than the retract, most shorter
+    "slow-from-last-line": (
+        (5, 6),
+        24,
+        ragged((5, 6), 9, 30, 1, (0, 1), 33),
+        24,
+        False,
+        None,
+    ),
+    "slow-retract-shortest-from-line-0": (
+        (5, 6),
+        24,
+        ragged((5, 6), 28, 40, 2),
+        ragged((5, 6), 20, 26, 3),
+        True,
+        None,
+    ),
+    # every curve as long as the next, so their offsets are evenly spaced
+    "slow-uniform": ((4, 5), 24, 20, 24, False, None),
+    "slow-stopped-from-line-0": (
+        (6, 5),
+        24,
+        ragged((6, 5), 12, 23, 4, (1, 1), 33),
+        ragged((6, 5), 16, 22, 5),
+        True,
+        4,
+    ),
+    "slow-stopped-from-last-line": (
+        (6, 6),
+        24,
+        ragged((6, 6), 26, 35, 6, (4, 2), 38),
+        ragged((6, 6), 14, 22, 7),
+        False,
+        3,
+    ),
+}
+STOPPED_SLOW_CASES = [case for case, (*_, taken) in SLOW_CASES.items() if taken]
 QUANTITIES = ("Height", "ZSensor", "Adhesion", "Force", "YoungsJKR")
 DIRECTIONS = {"trace": ["Trace"], "retrace": ["Retrace"], "both": ["Trace", "Retrace"]}
 
@@ -110,6 +162,18 @@ def assert_images_where_held(fvfile, synthetic):
 
 
 def build_case(tmp_path, case):
+    if case in SLOW_CASES:
+        shape, points, ext, ret, scan_down, lines_taken = SLOW_CASES[case]
+        return build_ardf(
+            tmp_path,
+            shape,
+            points,
+            slow_map=True,
+            ext_points=ext,
+            ret_points=ret,
+            scan_down=scan_down,
+            lines_taken=lines_taken,
+        )
     if case in COMPLETE_CASES:
         shape, points, capture, scan_down = COMPLETE_CASES[case]
         return build_ardf(tmp_path, shape, points, capture=capture, scan_down=scan_down)
@@ -127,6 +191,22 @@ def complete(request, tmp_path):
 @pytest.fixture(params=list(STOPPED_CASES))
 def stopped(request, tmp_path):
     return build_case(tmp_path, request.param)
+
+
+@pytest.fixture(params=list(SLOW_CASES))
+def slow(request, tmp_path):
+    return build_case(tmp_path, request.param)
+
+
+@pytest.fixture(params=STOPPED_SLOW_CASES)
+def stopped_slow(request, tmp_path):
+    return build_case(tmp_path, request.param)
+
+
+def acquired_mask(volume):
+    if volume.acquired is None:
+        return np.ones(volume.shape, dtype=bool)
+    return volume.acquired
 
 
 def test_ardf_metadata_round_trips(complete):
@@ -274,6 +354,104 @@ def test_ardf_stopped_scan_images_are_nan_off_the_scan(stopped):
             assert np.isnan(image.get_image()[missing]).all()
 
 
+def test_ardf_slow_map_is_read_curve_by_curve_as_fmap(slow):
+    with open_fvfile(slow.path) as fvfile:
+        assert [v.name for v in fvfile.volumes] == ["FMAP"]
+        assert_metadata(fvfile, slow)
+
+
+def test_ardf_slow_map_get_curve_returns_the_extend_and_retract_segments(slow):
+    """Each half is the curve's own segment, the Away segment in neither."""
+    expected = slow.volumes[0]
+    with open_fvfile(slow.path) as fvfile:
+        volume = fvfile.volumes[0]
+        for r, c in np.argwhere(acquired_mask(expected)).tolist():
+            curve = volume.get_curve(r, c)
+            lengths = [expected.ext_points[r, c], expected.ret_points[r, c]]
+            assert [[len(half) for half in part] for part in curve] == [lengths] * 2
+            assert_same_curve(curve, expected.curve(r, c))
+
+
+def test_ardf_slow_map_iter_curves_follows_the_order_on_disk(slow):
+    expected = slow.volumes[0]
+    with open_fvfile(slow.path) as fvfile:
+        volume = fvfile.volumes[0]
+        assert list(volume.iter_indices()) == list(expected.order)
+        seen = []
+        for (r, c), curve in volume.iter_curves():
+            seen.append((r, c))
+            assert_same_curve(curve, expected.curve(r, c))
+        assert seen == list(expected.order)
+
+
+def test_ardf_slow_map_get_all_curves_cuts_both_halves_to_the_shortest(slow):
+    """Every half cut to the shortest acquired half, nearest the surface; NaN off it."""
+    expected = slow.volumes[0]
+    acquired = acquired_mask(expected)
+    n = int(
+        min(expected.ext_points[acquired].min(), expected.ret_points[acquired].min())
+    )
+    want = np.full((2, *expected.shape, 2, n), np.nan)
+    for r, c in np.argwhere(acquired).tolist():
+        (zext, zret), (dext, dret) = expected.curve(r, c, n, n)
+        want[:, r, c] = (zext, zret), (dext, dret)
+    with open_fvfile(slow.path) as fvfile:
+        all_curves = fvfile.volumes[0].get_all_curves()
+    assert all_curves.dtype == np.float32
+    assert all_curves.shape == want.shape
+    assert_float32_close(all_curves, want)
+
+
+def test_ardf_stopped_slow_map_is_nan_as_long_as_an_untriggered_curve_off_the_scan(
+    stopped_slow,
+):
+    """Each half of a never-acquired curve has the points of an untriggered half."""
+    expected = stopped_slow.volumes[0]
+    acquired = expected.acquired
+    with open_fvfile(stopped_slow.path) as fvfile:
+        notes = fvfile.headers
+        rate = float(notes["NumPtsPerSec"])
+        untriggered = round(rate / float(notes["ForceScanRate"]) / 2)
+        # the other lengths a placeholder could take differ from it
+        others = {
+            round(rate / float(notes["FastMapZRate"]) / 2),
+            int(expected.ext_points[acquired].max()),
+            int(expected.ret_points[acquired].max()),
+        }
+        assert untriggered not in others and len(others) == 3
+        volume = fvfile.volumes[0]
+        for r, c in np.argwhere(~acquired).tolist():
+            for part in volume.get_curve(r, c):
+                for half in part:
+                    assert np.shape(half) == (untriggered,)
+                    assert np.asarray(half).dtype == np.float32
+                    assert np.isnan(half).all()
+
+
+@pytest.mark.parametrize(
+    "names", [("Ext", "Dwell", "Ret", "Away"), ("Ext",)], ids=["dwell", "extend-only"]
+)
+def test_ardf_slow_map_with_other_segments_raises_format_error(tmp_path, names):
+    """A volume of segments other than Ext, Ret and maybe Away is not read."""
+    # extends all shorter than the retract, so that only the segments are amiss
+    ext = ragged((5, 6), 9, 23, 1)
+    path = build_ardf(tmp_path, (5, 6), 24, slow_map=True, ext_points=ext).path
+    data = bytearray(path.read_bytes())
+    (offset,) = [offset for offset, name, *_ in sections(data) if name == b"VDEF"]
+    *fields, _, _ = VDEF.unpack_from(data, offset + HEADER.size)
+    seg_names = "".join(f"{name};" for name in names).encode()
+    VDEF.pack_into(data, offset + HEADER.size, *fields, seg_names, len(names))
+    _, size, _, _ = HEADER.unpack_from(data, offset)
+    struct.pack_into("<L", data, offset, zlib.crc32(data[offset + 4 : offset + size]))
+    path.write_bytes(data)
+    with pytest.raises(FileFormatError, match=r"\W+".join(names)):
+        with open_fvfile(path) as fvfile:
+            for volume in fvfile.volumes:
+                volume.get_curve(0, 0)
+                list(volume.iter_curves())
+                volume.get_all_curves()
+
+
 #################################################
 # The file layout, read without the reader
 #################################################
@@ -396,7 +574,7 @@ def structure(fvfile):
     }
 
 
-@pytest.mark.parametrize("case", [*COMPLETE_CASES, *STOPPED_CASES])
+@pytest.mark.parametrize("case", [*COMPLETE_CASES, *STOPPED_CASES, *SLOW_CASES])
 def test_ardf_every_section_has_a_valid_crc(tmp_path, case):
     # the reader checks most CRCs, but not those of the VTOC header, the image data, the
     # thumbnails or the image texts, and for a complete scan only the first curve's VSET
