@@ -86,8 +86,8 @@ each curve's ``VDAT`` sections. The note gives the ramp rate, ``ForceScanRate``,
 the sample rate, ``NumPtsPerSec``, so an untriggered curve has ``NumPtsPerSec /
 ForceScanRate / 2`` points per half; its ``FastMapZRate`` is a fast force map setting
 left over in the note, which says nothing of this map. The images' note sits after the
-last image and no texts end the file. The real file names its images ``MapHeight`` and
-``MapAdhesion``; the builder calls them ``Height`` and ``Adhesion``. No real file
+last image and no texts end the file. The images are named ``MapHeight`` and
+``MapAdhesion``, as in the real file. No real file
 settles which way the first line of a slow map runs when its line count is even, nor
 how a slow map stopped part way or one with a dwell segment is laid out.
 """
@@ -151,7 +151,7 @@ VSET_TYPES = {"trace": (5,), "retrace": (5,), "both": (10, 11)}
 # the drive signal runs about this far above the Z sensor in the real files, in m
 DRIVE_OFFSET = 1.1e-6
 SLOW_CHANNELS = (("Raw", "m"), ("Defl", "m"), ("ZSnsr", "m"))
-SLOW_MAP_UNITS = {"Height": "m", "Adhesion": "N"}
+SLOW_MAP_UNITS = {"MapHeight": "m", "MapAdhesion": "N"}
 SLOW_SEGMENTS = b"Ext;Ret;Away;"
 SLOW_VSET_TYPE = 2
 # force index, line, point, how many values, and the values XDEF names
@@ -705,8 +705,8 @@ def _build_slow_map(
     )
     raw_m = np.concatenate(raw, axis=-1).astype(np.float64)
     images = {
-        "Height": (-np.nanmax(raw_m, axis=-1)).astype(np.float32),
-        "Adhesion": (-np.nanmin(defl[1].astype(np.float64), axis=-1) * k).astype(
+        "MapHeight": (-np.nanmax(raw_m, axis=-1)).astype(np.float32),
+        "MapAdhesion": (-np.nanmin(defl[1].astype(np.float64), axis=-1) * k).astype(
             np.float32
         ),
     }
