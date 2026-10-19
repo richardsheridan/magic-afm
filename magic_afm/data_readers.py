@@ -400,14 +400,13 @@ class ARH5ForceMapVolume:
         self.minret = np.min(self.extretlens - self.extlens)
         self.npts = self.minext + self.minret
 
-        # We only care about 2 channels, Defl and ZSnsr
+        # We only care about 2 channels, Defl and z (Raw if recorded, else ZSnsr)
         # Convert channels array to a map that can be used to index into ForceMap data by name
-        # chanmap should always be {'Defl':1,'ZSnsr':2} but it's cheap to calculate
         chanmap = {
             key: index for index, key in enumerate(self.force_curves.attrs["Channels"])
         }
-        # We could slice with "1:" if chanmap were constant but I'm not sure if it is
-        self.defl_zsnsr_row_slice = [chanmap["Defl"], chanmap["ZSnsr"]]
+        zname = "Raw" if "Raw" in chanmap else "ZSnsr"
+        self.z_row, self.d_row = chanmap[zname], chanmap["Defl"]
 
     def get_curve(self, r, c):
         # Because of the nonuniform arrays, each indent gets its own dataset
@@ -415,10 +414,11 @@ class ARH5ForceMapVolume:
         curve = self.force_curves[f"{r}:{c}"]  # XXX Read h5data
         split = self.extlens[r, c]
         end = self.extretlens[r, c]
-        # Index into the data and grab the Defl and Zsnsr ext and ret arrays as one 2D array
-        defl_zsnsr = curve[self.defl_zsnsr_row_slice, :end]  # XXX Read h5data
-        # reverse axis zero so data is ordered zsnsr,defl like we did for FFM
-        z, d = (defl_zsnsr[::-1] * _NANOMETER_UNIT_CONVERSION).astype(np.float32)
+        # h5py wants increasing row indices, so read both rows in order then pick
+        rows = sorted((self.z_row, self.d_row))
+        data = curve[rows, :end]  # XXX Read h5data
+        zd = data[[rows.index(self.z_row), rows.index(self.d_row)]]
+        z, d = (zd * _NANOMETER_UNIT_CONVERSION).astype(np.float32)
         return (z[:split], z[split:]), (d[:split], d[split:])
 
     def iter_indices(self) -> Iterable[Index]:
@@ -525,9 +525,9 @@ class ARH5File:
         # NOTE: aspect is redundant to scansize
         # self.aspect = float(self.notes["SlowRatio"]) / float(self.notes["FastRatio"])
         defl_sens = float(notes["InvOLS"]) * _NANOMETER_UNIT_CONVERSION
-        rate = float(notes["FastMapZRate"])
         volumes = []
         if "FFM" in h5data:
+            rate = float(notes["FastMapZRate"])
             # self.scandown = bool(self.notes["ScanDown"])
             # FastMapCapture: 1 trace (a guess), 2 retrace, 3 both. No note or group
             # attribute says which group is which, so assume FFM/0 and FFM/1 follow
@@ -545,11 +545,14 @@ class ARH5File:
                     )
                 )
             npts = volumes[0]._zreader.shape[-1]
+            t_step = 1 / rate / npts
         else:
             # self.scandown = bool(self.notes["FMapScanDown"])
             volumes.append(ARH5ForceMapVolume(h5data))
-            npts = volumes[0].npts
-        t_step = 1 / rate / npts
+            sample_rate = float(notes.get("NumPtsPerSec", 0))
+            if not sample_rate:
+                raise FileFormatError("force map note lacks a nonzero NumPtsPerSec")
+            t_step = 1 / sample_rate
         trace = 1 if len(volumes) > 1 else None
         return cls(notes, images, volumes, k, defl_sens, t_step, scansize, trace=trace)
 
