@@ -83,8 +83,8 @@ set or order of force sections, as that file's Deflection Error, Height Sensor,
 Deflection Error and Height Sensor, whose repeats hold the same values as the first.
 ``invalid_pixels`` writes INT32_MIN over the extend half of Peak Force Error, the second
 Deflection Error and Height Sensor and into the image, as the real file does at one
-pixel while its header says ``Invalid Data Flag: None``; today's reader gets it wrong.
-The expected extend halves and image are NaN at those pixels.
+pixel while its header says ``Invalid Data Flag: None``.
+The expected z extend half and image are NaN at those pixels; the deflection, from the first Deflection Error, holds real values there.
 """
 
 # Copyright (C) Richard J. Sheridan
@@ -439,6 +439,7 @@ def build_spm(
     ramp_rate: float = 1.00469,
     scan_list_grid: Index | None = None,
     invalid_pixels: Iterable[Index] = (),
+    invalid_samples: Iterable[tuple[str, Index, int, int]] = (),
     phase_image: bool = False,
     force_sections: Sequence[str] = SPM_FORCE_SECTIONS,
     filename: str = "synthetic.0_00000.spm",
@@ -450,6 +451,11 @@ def build_spm(
     the fast axis in nm, ``ramp_rate`` the ramps per second. ``scan_list_grid``
     (rows, cols) replaces the grid of the Ciao scan list alone; ``invalid_pixels``
     lists the (row, col) of pixels marked invalid; see the module docstring.
+    ``invalid_samples`` lists (channel, (row, col), half, point) samples to write as
+    INT32_MIN in the "deflection" or "height sensor" channel, half 0 the extend and 1
+    the retract, point counted in the curve as read (the extend in time order); the
+    expected curve is NaN there. The channels written after them from those two
+    ("other deflection", "other height sensor") carry the marks too.
     ``phase_image`` adds a Phase image after the Height Sensor image, on the scan
     list's unitless ``Sens. Phase`` soft scale (``V 1.000000 `` in the real files),
     so its values are in V. ``force_sections`` lists the force sections in file
@@ -498,7 +504,17 @@ def build_spm(
         for channel in (error, deflection_2v5, height):
             channel[r, c, 0] = INT32_MIN
         image_codes[r, c] = INT32_MIN
-        zext[r, c] = dext[r, c] = image[r, c] = np.nan
+        zext[r, c] = image[r, c] = np.nan
+    marked = {
+        "deflection": (deflection, dext, dret),
+        "height sensor": (height, zext, zret),
+    }
+    for name, (r, c), half, point in invalid_samples:
+        channel, ext, ret = marked[name]
+        # the extend half is stored from the surface outward, the reverse of time order
+        stored_point = points - 1 - point if half == 0 else point
+        channel[r, c, half, stored_point] = INT32_MIN
+        (ext, ret)[half][r, c, point] = np.nan
 
     # Image Data, sensitivity, Bytes/pixel, full scale of the Z scale and FV scale
     # lines, values

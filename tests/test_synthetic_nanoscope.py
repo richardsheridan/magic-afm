@@ -77,8 +77,7 @@ SPM_CASES = {
 SPM_SCANSIZE_CASES = [case for case in SPM_CASES if case != "tall-64"]
 # Left out everywhere: t_step. The reader takes it from PFT Freq and force/line, the
 # curves per line; the builder from the Scan rate of the ramps, which no real file
-# settles either. The builder's invalid pixels are checked only as the builder writes
-# them.
+# settles either.
 
 
 def assert_float32_close(actual, expected):
@@ -452,7 +451,7 @@ def test_spm_builder_marks_invalid_pixels_as_the_real_file_does(tmp_path):
     expected = synthetic.volumes[0]
     for half, nan in (
         (expected.zext, True),
-        (expected.dext, True),
+        (expected.dext, False),
         (expected.zret, False),
         (expected.dret, False),
     ):
@@ -550,6 +549,56 @@ def test_spm_pairs_the_first_deflection_error_with_the_first_height(tmp_path, ca
         z, d = fvfile.volumes[0].get_all_curves()
     assert_float32_close(z, np.stack([expected.zext, expected.zret], axis=2))
     assert_float32_close(d, np.stack([expected.dext, expected.dret], axis=2))
+
+
+def assert_nan_where_expected(actual, expected):
+    """NaN exactly where the expected values are, close to them elsewhere."""
+    np.testing.assert_array_equal(np.isnan(actual), np.isnan(expected))
+    if not np.isnan(expected).all():
+        assert_float32_close(actual, expected)
+
+
+# samples written as INT32_MIN: channel, pixel, half (0 extend, 1 retract), point
+INVALID_SAMPLES = [
+    ("height sensor", (0, 1), 1, 5),
+    ("height sensor", (2, 0), 0, 0),
+    ("deflection", (2, 3), 0, 3),
+    ("deflection", (3, 0), 1, 0),
+    ("deflection", (3, 3), 0, 15),
+]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"invalid_pixels": [(1, 2)]}, {"invalid_samples": INVALID_SAMPLES}],
+    ids=["invalid-pixel", "invalid-samples"],
+)
+def test_spm_int32_min_force_samples_read_nan(tmp_path, kwargs):
+    """Each INT32_MIN sample of z or deflection, in either half, reads NaN."""
+    synthetic = build_spm(tmp_path, (4, 4), 16, **kwargs)
+    expected = synthetic.volumes[0]
+    with open_fvfile(synthetic.path) as fvfile:
+        volume = fvfile.volumes[0]
+        curves = {(r, c): volume.get_curve(r, c) for r, c in np.ndindex(volume.shape)}
+        z, d = volume.get_all_curves()
+    for (r, c), ((zext, zret), (dext, dret)) in curves.items():
+        (ezext, ezret), (edext, edret) = expected.curve(r, c)
+        for actual, half in (
+            (zext, ezext),
+            (zret, ezret),
+            (dext, edext),
+            (dret, edret),
+        ):
+            assert_nan_where_expected(actual, half)
+    assert_nan_where_expected(z, np.stack([expected.zext, expected.zret], axis=2))
+    assert_nan_where_expected(d, np.stack([expected.dext, expected.dret], axis=2))
+
+
+def test_spm_int32_min_image_pixels_read_nan(tmp_path):
+    synthetic = build_spm(tmp_path, (4, 4), 16, invalid_pixels=[(1, 2)])
+    with open_fvfile(synthetic.path) as fvfile:
+        image = fvfile.images["Height Sensor"].get_image()
+    assert_nan_where_expected(image, synthetic.images["Height Sensor"] * 1e-9)
 
 
 def header_layout(headers):
@@ -717,3 +766,34 @@ def test_real_spm_with_a_stale_scan_list_has_a_z_ramp_in_each_half(real_data_fil
         assert np.ptp(curve) > 10.0, ((r, c, half), np.ptp(curve))
         assert abs(np.corrcoef(index, curve)[0, 1]) > 0.9, (r, c, half)
     assert z.shape[:3] == (8, 8, 2)
+
+
+# the one pixel of the real force volume whose z extend half and image are INT32_MIN
+SPM_INVALID_PIXEL = (12, 3)
+
+
+@pytest.mark.slow
+def test_real_spm_invalid_pixel_has_a_nan_z_extend_and_real_deflection(real_data_file):
+    """Only its z extend half is NaN; its z retract and its deflection are real."""
+    with open_fvfile(Path(real_data_file(SPM_RELPATH))) as fvfile:
+        volume = fvfile.volumes[0]
+        (zext, zret), (dext, dret) = volume.get_curve(*SPM_INVALID_PIXEL)
+        z, d = volume.get_all_curves()
+    assert np.isnan(zext).all()
+    for half in (zret, dext, dret):
+        assert np.isfinite(half).all()
+    nan_z = np.zeros(z.shape, dtype=bool)
+    nan_z[(*SPM_INVALID_PIXEL, 0)] = True
+    np.testing.assert_array_equal(np.isnan(z), nan_z)
+    assert np.isfinite(d).all()
+
+
+@pytest.mark.slow
+def test_real_spm_height_sensor_image_is_nan_at_its_invalid_pixel_only(
+    real_data_file,
+):
+    with open_fvfile(Path(real_data_file(SPM_RELPATH))) as fvfile:
+        image = fvfile.images["Height Sensor"].get_image()
+    invalid = np.zeros(image.shape, dtype=bool)
+    invalid[SPM_INVALID_PIXEL] = True
+    np.testing.assert_array_equal(np.isnan(image), invalid)
