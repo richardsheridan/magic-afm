@@ -2,7 +2,7 @@
 from PyInstaller.utils.hooks import copy_metadata
 
 # imageio calls importlib.metadata.version on import
-a = Analysis(
+gui_a = Analysis(
     ['magic_afm/gui/__main__.py'],
     pathex=[],
     binaries=[],
@@ -15,11 +15,11 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
-pyz = PYZ(a.pure)
+gui_pyz = PYZ(gui_a.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
+gui_exe = EXE(
+    gui_pyz,
+    gui_a.scripts,
     [],
     exclude_binaries=True,
     name='magic_afm_gui',
@@ -34,18 +34,62 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+cli_a = Analysis(
+    ['magic_afm/cli/__main__.py'],
+    pathex=[],
+    binaries=[],
+    datas=copy_metadata('imageio'),
+    hiddenimports=[],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+cli_pyz = PYZ(cli_a.pure)
+
+cli_exe = EXE(
+    cli_pyz,
+    cli_a.scripts,
+    [],
+    exclude_binaries=True,
+    name='magic_afm_cli',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=True,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
 coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
+    gui_exe,
+    gui_a.binaries,
+    gui_a.datas,
+    cli_exe,
+    cli_a.binaries,
+    cli_a.datas,
     strip=False,
     upx=True,
     upx_exclude=[],
     name='magic_afm_gui',
 )
+# BUNDLE makes the alphabetically first executable of the COLLECT, the CLI, the one
+# the app launches, and takes the console flag of the last EXE given, also the CLI,
+# which makes the app background-only (no Dock icon or menu bar). Name the GUI and
+# set the keys it gets when it is the only executable.
 app = BUNDLE(
     coll,
     name='magic_afm_gui.app',
     icon=None,
     bundle_identifier=None,
+    info_plist={
+        'CFBundleExecutable': 'magic_afm_gui',
+        'LSBackgroundOnly': False,
+        'NSHighResolutionCapable': True,
+    },
 )
