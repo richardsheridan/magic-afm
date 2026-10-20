@@ -39,9 +39,13 @@ jobs:
           fi
         shell: bash
       - name: Smoke test frozen CLI
-        if: startsWith( runner.os, 'win')
-        run: dist/magic_afm/magic_afm_cli.exe --help
         timeout-minutes: 2
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            dist/magic_afm/magic_afm_cli.exe --help
+          else
+            dist/magic_afm_gui.app/Contents/MacOS/magic_afm_cli --help
+          fi
         shell: bash
       - name: Show crash dumps
         if: failure()
@@ -49,11 +53,17 @@ jobs:
         shell: bash
       - name: Tidy dist
         if: startsWith( runner.os, 'mac')
-        # keep only the .app, in a dist/magic_afm folder like on Windows
+        # keep only the .app, in a dist/magic_afm folder like on Windows, with a
+        # launcher beside it for the CLI inside the bundle
         run: |
           rm -rf dist/magic_afm_gui
           mkdir dist/magic_afm
           mv dist/magic_afm_gui.app dist/magic_afm/
+          install -m 755 magic_afm_cli_mac.sh dist/magic_afm/magic_afm_cli
+      - name: Smoke test CLI launcher
+        if: startsWith( runner.os, 'mac')
+        timeout-minutes: 2
+        run: dist/magic_afm/magic_afm_cli --help
       - name: Copy README
         run: cp README.rst dist/magic_afm/
       - name: Zip app
