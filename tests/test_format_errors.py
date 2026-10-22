@@ -435,6 +435,7 @@ NANOSCOPE_ZERO_CASES = {
     "PFT-Freq": ("Ciao scan list", "PFT Freq", {"pfc": "0 KHz", "spm": "0 kHz"}),
     "force-line": ("Ciao force list", "force/line", {"spm": "0"}),
     "FV-Lines": ("Ciao force list", "FV Lines", {"spm": "0"}),
+    "Scan-rate": ("Ciao force list", "Scan rate", {"spm": "0"}),
     "force-image-Samps-line": (
         "Ciao force image list",
         "Samps/line",
@@ -462,6 +463,29 @@ def test_nanoscope_zero_count_or_rate_raises_format_error_naming_it(
         path, lambda lines: _set_key(lines, section, key, value), size
     )
     assert_format_error(path, re.escape(key))
+
+
+def _drop_scan_rate(lines):
+    kept = [line for line in lines if not line.startswith("\\Scan rate:")]
+    assert len(kept) == len(lines) - 1
+    return kept
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        _drop_scan_rate,
+        lambda lines: _set_key(lines, "Ciao force list", "Scan rate", "-1.00469"),
+        lambda lines: _set_key(lines, "Ciao force list", "Scan rate", "fast"),
+    ],
+    ids=["missing", "negative", "text"],
+)
+def test_spm_scan_rate_missing_negative_or_not_a_number_raises_format_error(
+    tmp_path, edit
+):
+    path = build_spm(tmp_path).path
+    edit_nanoscope_header(path, edit, SPM_HEADER_BYTES)
+    assert_format_error(path, "Scan rate")
 
 
 @pytest.mark.parametrize("width", [3, 8])
