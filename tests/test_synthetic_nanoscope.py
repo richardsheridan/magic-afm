@@ -73,9 +73,6 @@ SPM_CASES = {
 }
 # Left out of the scan size test: "tall-64", as for a capture.
 SPM_SCANSIZE_CASES = [case for case in SPM_CASES if case != "tall-64"]
-# Left out of the synthetic force volume tests: t_step. The reader takes it from PFT
-# Freq and force/line, the curves per line; the builder from the Scan rate of the ramps,
-# which no real file settles either.
 
 
 def assert_float32_close(actual, expected):
@@ -132,13 +129,13 @@ def test_pfc_lag_of_the_deflection_round_trips(tmp_path, case):
         )
 
 
-def assert_time_step(fvfile, t_step):
+def assert_time_step(fvfile, t_step, rtol=1e-12):
     """The file's time step and every volume's are t_step seconds."""
-    np.testing.assert_allclose(fvfile.t_step, t_step, rtol=1e-12)
+    np.testing.assert_allclose(fvfile.t_step, t_step, rtol=rtol)
     for volume in fvfile.volumes:
         step, unit = volume.step_info[2]
         assert unit == "s"
-        np.testing.assert_allclose(step, t_step, rtol=1e-12)
+        np.testing.assert_allclose(step, t_step, rtol=rtol)
 
 
 @pytest.mark.parametrize("case", list(PFC_CASES))
@@ -162,6 +159,20 @@ def test_pfc_time_step_is_the_written_drive_period_over_256_points(
     )
     with open_fvfile(synthetic.path) as fvfile:
         assert_time_step(fvfile, t_step)
+
+
+@pytest.mark.parametrize(
+    "shape, points, ramp_rate",
+    [((4, 4), 512, 1.00469), ((3, 6), 64, 2.0), ((6, 3), 128, 0.5)],
+    ids=["square-512-1.00469-Hz", "wide-64-2-Hz", "tall-128-0.5-Hz"],
+)
+def test_spm_time_step_is_one_scan_rate_period_over_the_points_per_curve(
+    tmp_path, shape, points, ramp_rate
+):
+    """One extend and retract of 2 x points samples spans 1 / Scan rate."""
+    synthetic = build_spm(tmp_path, shape, points, ramp_rate=ramp_rate)
+    with open_fvfile(synthetic.path) as fvfile:
+        assert_time_step(fvfile, synthetic.t_step)
 
 
 def _drop_drive_lines(lines):
@@ -804,15 +815,14 @@ def test_synthetic_spm_has_the_structure_of_the_real_file(real_data_file, tmp_pa
 
 @pytest.mark.slow
 @pytest.mark.parametrize(
-    "relpath, t_step",
-    [(SPM_RELPATH, 3.125e-5), (STALE_GRID_SPM_RELPATH, 6.25e-5)],
-    ids=["A1", "DOE4"],
+    "relpath", [SPM_RELPATH, STALE_GRID_SPM_RELPATH], ids=["A1", "DOE4"]
 )
-def test_real_spm_time_step_is_unchanged_by_its_drive_frequency(
-    real_data_file, relpath, t_step
+def test_real_spm_time_step_is_one_scan_rate_period_over_1024_points(
+    real_data_file, relpath
 ):
+    """1 / (1.00469 Hz) / 1024, whatever the PFT Freq and drive frequency."""
     with open_fvfile(Path(real_data_file(relpath))) as fvfile:
-        assert_time_step(fvfile, t_step)
+        assert_time_step(fvfile, 9.720038e-4, rtol=1e-6)
 
 
 @pytest.mark.slow
