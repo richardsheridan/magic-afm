@@ -67,10 +67,12 @@ The layout, section order, keys and channel set follow a real force volume (soft
 0x09400202, a 32 x 32 map of 512 + 512 point curves). That file ends with 12288 bytes no
 header line describes; the builder leaves them out. No real file settles grids that are
 not square (as for a capture), the meaning of the image's -6.021 V Z offset (written 0 V
-here) or the order the curves were taken. A ramp, extend and retract, takes 1 / ``Scan rate`` of the Ciao force list, about 1 s in the real file as Nanoscope Analysis plots it; the ramp script lines, ``Segment Samples`` 1041, 2083 and 1041 at a ``Sample Period`` of 12 us, do not give the time a curve spans.
-``FV Line Direction`` says ``Bidirection``, but neighbouring rows of the real image
-match better as stored than with every other row reversed, so the builder stores every
-line the same way.
+here) or the order the curves were taken. A ramp, extend and retract, takes 1 /
+``Scan rate`` of the Ciao force list, about 1 s in the real file as Nanoscope Analysis
+plots it; the ramp script lines, ``Segment Samples`` 1041, 2083 and 1041 at a
+``Sample Period`` of 12 us, do not give the time a curve spans. ``FV Line Direction``
+says ``Bidirection``, but neighbouring rows of the real image match better as stored
+than with every other row reversed, so the builder stores every line the same way.
 
 Three arguments write what other real files hold. ``scan_list_grid`` writes a Ciao scan
 list grid unlike the rest, as a second real force volume has (16 x 8 where every other
