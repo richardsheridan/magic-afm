@@ -1930,8 +1930,6 @@ class NanoscopeFile:
                 )
             ]
         else:
-            # one PFT Freq period over the curves per line
-            t_step = 1 / (rate * 1000) / fastpx
             sync_dist = None
             # z from Height Sensor (the measured z) or else Height; d from Deflection
             # Error; sections of other names go unread
@@ -1942,6 +1940,19 @@ class NanoscopeFile:
                 d_subh = force_sections["Deflection Error"]
             except KeyError:
                 raise FileFormatError("no Deflection Error force section") from None
+            # one force list Scan rate period (Hz) over extend plus retract points
+            try:
+                ramp_rate = float(header["Ciao force list"][0]["Scan rate"])
+            except (KeyError, ValueError):
+                raise FileFormatError(
+                    "Scan rate in Ciao force list is missing or not a number"
+                ) from None
+            if not ramp_rate > 0:
+                raise FileFormatError(
+                    f"Scan rate is {ramp_rate:g} in Ciao force list, expected positive"
+                )
+            points_per_curve = 2 * int(d_subh["Samps/line"].split()[0])
+            t_step = 1 / ramp_rate / points_per_curve
             volumes = [
                 NanoscopeVolume.parse(
                     shape,
