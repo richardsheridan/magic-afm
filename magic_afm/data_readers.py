@@ -1940,7 +1940,6 @@ class NanoscopeFile:
                 d_subh = force_sections["Deflection Error"]
             except KeyError:
                 raise FileFormatError("no Deflection Error force section") from None
-            # one force list Scan rate period (Hz) over extend plus retract points
             try:
                 ramp_rate = float(header["Ciao force list"][0]["Scan rate"])
             except (KeyError, ValueError):
@@ -1951,16 +1950,13 @@ class NanoscopeFile:
                 raise FileFormatError(
                     f"Scan rate is {ramp_rate:g} in Ciao force list, expected positive"
                 )
-            points_per_curve = 2 * int(d_subh["Samps/line"].split()[0])
-            t_step = 1 / ramp_rate / points_per_curve
+            z_reader = _FFVReader.parse(header, data, z_subh, shape)
+            d_reader = _FFVReader.parse(header, data, d_subh, shape)
+            # one force list Scan rate period (Hz) over extend plus retract points
+            t_step = 1 / ramp_rate / d_reader.ints[0, 0].size
             volumes = [
                 NanoscopeVolume.parse(
-                    shape,
-                    scansize,
-                    t_step,
-                    sync_dist,
-                    _FFVReader.parse(header, data, z_subh, shape),
-                    _FFVReader.parse(header, data, d_subh, shape),
+                    shape, scansize, t_step, sync_dist, z_reader, d_reader
                 )
             ]
         # volumes = {v.name:v for v in volumes}
