@@ -9,9 +9,11 @@ The full output goes to ``build/gate/gate-<timestamp>.log`` (copied to
 relevant excerpts. Extra arguments are passed to pytest. Exits nonzero if any
 step failed.
 
-When every file in ``tests/real_data_manifest.txt`` is present under the
-real-data root (``$MAFM_TEST_DATA``, else ``example.data``) at its recorded
-size, the test steps run with ``MAFM_REQUIRE_REAL_DATA=1``. A passing gate
+When the real-data root (``$MAFM_TEST_DATA``, else the
+``tests/magic-afm-test-data`` submodule) is a clean checkout of the commit
+HEAD pins for that submodule, and every file of its ``SHA256SUMS.txt`` is
+present at its recorded size, the test steps run with
+``MAFM_REQUIRE_REAL_DATA=1``. A passing gate
 that tested exactly the committed tree (no extra arguments, no environment
 variable that changes test selection or numerics, a clean working tree with
 no untracked files at the start and the end, no tracked file written during
@@ -50,7 +52,7 @@ TAIL_LINES = 30
 PYTEST_ARGS = ["-p", "no:cacheprovider", "-rfEs", "--tb=short", "--color=no"]
 SUMMARY_RE = re.compile(r"^=+ .* in [\d.]+s.* =+$")
 SHORT_SUMMARY_RE = re.compile(r"^=+ short test summary info =+$")
-MANIFEST = ROOT / "tests" / "real_data_manifest.txt"
+DATA_SUBMODULE = "tests/magic-afm-test-data"
 STAMP_FILE = "gate-passed-trees"
 BLOCKED_PREFIXES = ("PYTEST_", "NUMBA_", "OPENBLAS_", "NPY_", "OMP_", "MKL_", "MAFM_")
 BLOCKED_NAMES = {
@@ -72,9 +74,9 @@ def steps(pixi, extra):
     yield "typecheck", [*run, "typecheck"], False
 
 
-def git(*args):
+def git(*args, cwd=ROOT):
     return subprocess.run(
-        ["git", *args], cwd=ROOT, capture_output=True, text=True, check=True
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
     ).stdout
 
 
@@ -88,14 +90,32 @@ def blocking_env_vars():
 
 
 def missing_real_data():
-    """Manifest paths absent from the real-data root at their recorded size."""
-    root = Path(os.environ.get("MAFM_TEST_DATA") or ROOT / "example.data")
+    """Why the real-data root is not the corpus HEAD pins, complete; empty if it is."""
+    root = Path(os.environ.get("MAFM_TEST_DATA") or ROOT / DATA_SUBMODULE).resolve()
+    manifest = root / "SHA256SUMS.txt"
+    if not manifest.is_file():
+        return [f"no SHA256SUMS.txt in {root}"]
+    try:
+        pinned = git("rev-parse", f"HEAD:{DATA_SUBMODULE}").strip()
+    except (OSError, subprocess.CalledProcessError):
+        return [f"HEAD pins no commit for {DATA_SUBMODULE}"]
+    try:
+        top, head = git("rev-parse", "--show-toplevel", "HEAD", cwd=root).splitlines()
+        changed = git("status", "--porcelain", "--untracked-files=all", cwd=root)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return [f"{root} is not a git checkout"]
+    if Path(top).resolve() != root:
+        return [f"{root} is not a git checkout"]
     missing = []
-    for line in MANIFEST.read_text(encoding="utf-8").splitlines():
+    if head != pinned:
+        missing.append(f"{root} is at {head[:12]}, HEAD pins {pinned[:12]}")
+    if changed:
+        missing.append(f"{root} has local changes")
+    for line in manifest.read_text(encoding="utf-8").splitlines():
         if not line.strip() or line.startswith("#"):
             continue
         _, original, stored, _, relpath = line.split(maxsplit=4)
-        path = root / "test_cases" / relpath
+        path = root / relpath
         xz = path.with_name(path.name + ".xz")
         if not (
             (path.is_file() and path.stat().st_size == int(original))

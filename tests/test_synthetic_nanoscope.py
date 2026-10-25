@@ -37,10 +37,10 @@ from synthetic_files.nanoscope import (
     edit_nanoscope_header,
 )
 
-PFC_RELPATH = "test_cases/PS_PCL_SAA/QNM/onekhz.000.pfc"
-SPM_RELPATH = "test_cases/A1_OCSOH-PMMA21k_300421.0_300425.spm"
+PFC_RELPATH = "PS_PCL_SAA/QNM/onekhz.000.pfc"
+SPM_RELPATH = "A1_OCSOH-PMMA21k_300421.0_300425.spm"
 # a force volume whose Ciao scan list grid (16 x 8) is not its 8 x 8 grid
-STALE_GRID_SPM_RELPATH = "test_cases/DOE4_20nN_80nm.0_00012.spm"
+STALE_GRID_SPM_RELPATH = "DOE4_20nN_80nm.0_00012.spm"
 
 # grid (rows, cols), points per half curve, other builder arguments
 PFC_CASES = {

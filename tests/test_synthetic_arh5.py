@@ -31,8 +31,8 @@ from synthetic_files.arh5 import ASCII, build_arh5_ffm, build_arh5_force_map
 from magic_afm.calculation import FitMode, prepare_force_curve
 from magic_afm.data_readers import FileFormatError
 
-ARH5_RELPATH = "test_cases/PDMS_SAA/ffm/rtrace0001.h5"
-BOTH_ARH5_RELPATH = "test_cases/PDMS_SAA/ffm/both0001.h5"
+ARH5_RELPATH = "PDMS_SAA/ffm/rtrace0001.h5"
+BOTH_ARH5_RELPATH = "PDMS_SAA/ffm/both0001.h5"
 
 # grid (rows, cols), points per half curve, captured directions
 FFM_CASES = {

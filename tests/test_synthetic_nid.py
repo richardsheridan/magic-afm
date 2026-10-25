@@ -27,7 +27,7 @@ import pytest
 from synthetic_files import open_fvfile
 from synthetic_files.nid import build_nid
 
-NID_RELPATH = "test_cases/20251216_141819_PVDF2_Film_U_00002.nid"
+NID_RELPATH = "20251216_141819_PVDF2_Film_U_00002.nid"
 
 # forward rows of a force-triggered map stop early; backward rows stay full, as in the
 # real file

@@ -29,6 +29,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# the real-data corpus, a git submodule; MAFM_TEST_DATA points elsewhere
+DATA_SUBMODULE = REPO_ROOT / "tests" / "magic-afm-test-data"
 CACHE_DIR = Path(tempfile.gettempdir()) / "magic-afm-test-data"
 # unpacked entries unused for this long are deleted, once per test process
 CACHE_MAX_AGE_S = 14 * 24 * 3600
@@ -46,7 +48,7 @@ def _missing_real_data(msg: str):
 
 
 def _data_root() -> Path:
-    return Path(os.environ.get("MAFM_TEST_DATA") or REPO_ROOT / "example.data")
+    return Path(os.environ.get("MAFM_TEST_DATA") or DATA_SUBMODULE)
 
 
 _pruned_dirs = set()
@@ -109,7 +111,8 @@ def resolve_real_data_file(relpath: str) -> Path:
     if packed.is_file():
         return _unpack_cached(packed, relpath)
     _missing_real_data(
-        f"real data file {relpath} not found under {root}; set MAFM_TEST_DATA"
+        f"real data file {relpath} not found under {root}; run "
+        "`git submodule update --init` or set MAFM_TEST_DATA"
     )
 
 

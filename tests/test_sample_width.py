@@ -417,10 +417,10 @@ REAL_WIDTHS = {
 @pytest.mark.slow
 @pytest.mark.parametrize("relpath", REAL_WIDTHS)
 def test_real_file_sample_width(real_data_file, relpath):
-    got = sample_width(real_data_file(f"test_cases/{relpath}"))
+    got = sample_width(real_data_file(f"{relpath}"))
     assert type(got) is int and got == REAL_WIDTHS[relpath], got
 
 
 @pytest.mark.slow
 def test_real_skipped_point_capture_sample_width_raises_format_error(real_data_file):
-    assert_refused(real_data_file("test_cases/PS_PCL_SAA/QNM/maxscanrate.000.pfc"))
+    assert_refused(real_data_file("PS_PCL_SAA/QNM/maxscanrate.000.pfc"))

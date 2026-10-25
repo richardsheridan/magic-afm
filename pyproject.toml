@@ -133,6 +133,8 @@ extend-exclude = [
     "magic_afm/_vendored_lstsq.py",
     "magic_afm/_vendored_root.py",
     "magic_afm/_version.py",
+    # the real-data corpus, its own repository
+    "tests/magic-afm-test-data",
 ]
 force-exclude = true
 
@@ -156,7 +158,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = ["--strict-markers"]
 markers = [
-    "slow: reads real data files (from example.data or MAFM_TEST_DATA; skips if absent, fails if MAFM_REQUIRE_REAL_DATA=1) or builds large synthetic files",
+    "slow: reads real data files (from the tests/magic-afm-test-data submodule or MAFM_TEST_DATA; skips if absent, fails if MAFM_REQUIRE_REAL_DATA=1) or builds large synthetic files",
 ]
 
 [tool.pixi.environments]

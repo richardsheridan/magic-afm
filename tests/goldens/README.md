@@ -72,10 +72,10 @@ its pytest step fails, on a manual run of the Test workflow, and on a push whose
 commit message contains `[regen-goldens]`. Copy the `test` environment's files into
 `tests/goldens/<pixi platform>/`.
 
-The tests need the real data files; see `tests/real_data_manifest.txt` and the
-`real_data_file` fixture in `tests/conftest.py`. Without them the real-file tests skip,
-unless `MAFM_REQUIRE_REAL_DATA=1` (set in CI where the data is available) makes them
-fail.
+The tests need the real data files, the `tests/magic-afm-test-data` submodule (its
+`SHA256SUMS.txt` lists them); see the `real_data_file` fixture in `tests/conftest.py`.
+Without them the real-file tests skip, unless `MAFM_REQUIRE_REAL_DATA=1` (set in CI)
+makes them fail.
 
 ## When a golden test fails
 

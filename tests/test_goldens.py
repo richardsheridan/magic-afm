@@ -45,7 +45,7 @@ from magic_afm.calculation import PROPERTY_DTYPE, FitFix, FitMode
 from magic_afm.data_readers import SUFFIX_FVFILE_MAP
 
 GOLDENS_PATH = Path(__file__).resolve().parent / "goldens" / "t2_goldens.json"
-NID_RELPATH = "test_cases/20251216_141819_PVDF2_Film_U_00002.nid"
+NID_RELPATH = "20251216_141819_PVDF2_Film_U_00002.nid"
 MODES = (FitMode.EXTEND, FitMode.RETRACT, FitMode.BOTH)
 
 # Fit options at the CLI defaults (magic_afm/cli/_impl.py, main). The GUI defaults are

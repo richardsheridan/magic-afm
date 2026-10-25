@@ -1,0 +1,3 @@
+[submodule "tests/magic-afm-test-data"]
+	path = tests/magic-afm-test-data
+	url = https://github.com/richardsheridan/magic-afm-test-data.git

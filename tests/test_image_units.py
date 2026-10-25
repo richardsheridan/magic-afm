@@ -29,8 +29,8 @@ from synthetic_files.arh5 import build_arh5_ffm, build_arh5_force_map
 from synthetic_files.nanoscope import build_pfc, build_spm
 from synthetic_files.nid import build_nid
 
-BOTH_ARDF = "test_cases/PDMS_SAA/ffm/both0001.ARDF"
-BOTH_H5 = "test_cases/PDMS_SAA/ffm/both0001.h5"
+BOTH_ARDF = "PDMS_SAA/ffm/both0001.ARDF"
+BOTH_H5 = "PDMS_SAA/ffm/both0001.h5"
 ASYLUM_UNITS = {
     "HeightTrace": "m",
     "AdhesionTrace": "N",
@@ -42,10 +42,10 @@ ASYLUM_UNITS = {
 REAL_UNITS = [
     *((BOTH_ARDF, name, unit) for name, unit in ASYLUM_UNITS.items()),
     *((BOTH_H5, name, unit) for name, unit in ASYLUM_UNITS.items()),
-    ("test_cases/PS_PCL_SAA/QNM/onekhz.000.pfc", "Height", "m"),
-    ("test_cases/A1_OCSOH-PMMA21k_300421.0_300425.spm", "Height Sensor", "m"),
-    ("test_cases/20251216_141819_PVDF2_Film_U_00002.nid", "MapHeight", "m"),
-    ("test_cases/20251216_141819_PVDF2_Film_U_00002.nid", "MaxRetAdhesionForce", "N"),
+    ("PS_PCL_SAA/QNM/onekhz.000.pfc", "Height", "m"),
+    ("A1_OCSOH-PMMA21k_300421.0_300425.spm", "Height Sensor", "m"),
+    ("20251216_141819_PVDF2_Film_U_00002.nid", "MapHeight", "m"),
+    ("20251216_141819_PVDF2_Film_U_00002.nid", "MaxRetAdhesionForce", "N"),
 ]
 SLOW_MAP_BUILDERS = {
     "ardf-slow-map": partial(build_ardf, slow_map=True),

@@ -26,8 +26,8 @@ import pytest
 
 from magic_afm.data_readers import SUFFIX_FVFILE_MAP
 
-PFC = "test_cases/PS_PCL_SAA/QNM/onekhz.001.pfc"
-EXPORT = "test_cases/onekhz.001.pfc-record261-retract-ascii.txt"
+PFC = "PS_PCL_SAA/QNM/onekhz.001.pfc"
+EXPORT = "onekhz.001.pfc-record261-retract-ascii.txt"
 PIXEL = (8, 5)
 # Nanoscope Analysis cuts the PeakForce period into halves two samples later than the
 # reader, so its retract starts two samples into the reader's and, the curve being one
