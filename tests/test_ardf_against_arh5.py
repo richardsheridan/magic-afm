@@ -25,10 +25,28 @@ import numpy as np
 import pytest
 from synthetic_files import open_fvfile
 
-# each ARDF and its conversion, under PDMS_SAA/ffm/: both directions kept,
-# and the retrace alone
-STEMS = ["both0001", "rtrace0001"]
+# each ARDF and its conversion, by corpus relpath without the suffix: two fast maps, one
+# with both directions kept and one with the retrace alone, and a slow force map
+STEMS = ["PDMS_SAA/ffm/both0001", "PDMS_SAA/ffm/rtrace0001", "AC160s00"]
+STEM_IDS = [Path(stem).name for stem in STEMS]
 METADATA = ("k", "defl_sens", "sync_dist", "scansize", "t_step", "trace")
+# images the ARH5 file holds and the ARDF does not; every other stem has none
+ARH5_ONLY_IMAGES = {
+    "AC160s00": {
+        "HeaterHumidity",
+        "HeaterTemperature",
+        "Seconds",
+        "TriggerTime",
+        "XLVDT",
+        "YLVDT",
+    },
+}
+# AC160s00 is a slow map whose extends stop at the trigger, so their lengths vary; the
+# lengths below are those of Asylum's own .ibw exports of its curves, (4, 5) being the
+# one pixel that never triggered
+AC160S00_SHAPE = (5, 6)
+AC160S00_EXTEND_POINTS = {(4, 4): 339, (2, 0): 535, (4, 5): 496}
+AC160S00_RETRACT_POINTS = 496
 
 
 def assert_exactly_equal(actual, expected):
@@ -37,8 +55,8 @@ def assert_exactly_equal(actual, expected):
 
 def open_pair(real_data_file, stem):
     """The ARDF and the ARH5 file of stem, each opened the way the CLI opens it."""
-    ardf = Path(real_data_file(f"PDMS_SAA/ffm/{stem}.ARDF"))
-    arh5 = Path(real_data_file(f"PDMS_SAA/ffm/{stem}.h5"))
+    ardf = Path(real_data_file(f"{stem}.ARDF"))
+    arh5 = Path(real_data_file(f"{stem}.h5"))
     return open_fvfile(ardf), open_fvfile(arh5)
 
 
@@ -49,7 +67,7 @@ def volumes_by_name(fvfile) -> dict:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("stem", STEMS)
+@pytest.mark.parametrize("stem", STEMS, ids=STEM_IDS)
 def test_ardf_and_its_arh5_conversion_hold_the_same_curves(real_data_file, stem):
     """Volumes of the same name have the same shape, curves and curve indices."""
     ardf_cm, arh5_cm = open_pair(real_data_file, stem)
@@ -81,7 +99,7 @@ def test_ardf_and_its_arh5_conversion_hold_the_same_curves(real_data_file, stem)
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("stem", STEMS)
+@pytest.mark.parametrize("stem", STEMS, ids=STEM_IDS)
 def test_ardf_and_its_arh5_conversion_declare_the_same_metadata(real_data_file, stem):
     """k, deflection sensitivity, sync distance, scan size, t_step and trace."""
     ardf_cm, arh5_cm = open_pair(real_data_file, stem)
@@ -91,13 +109,17 @@ def test_ardf_and_its_arh5_conversion_declare_the_same_metadata(real_data_file, 
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("stem", STEMS)
+@pytest.mark.parametrize("stem", STEMS, ids=STEM_IDS)
 def test_ardf_and_its_arh5_conversion_hold_the_same_images(real_data_file, stem):
-    """The same image names, each with the same shape, units and values."""
+    """Every ARDF image is in the ARH5 file with the same shape, units and values.
+
+    The ARH5 file holds no other image but those ARH5_ONLY_IMAGES names for its stem.
+    """
     ardf_cm, arh5_cm = open_pair(real_data_file, stem)
     with ardf_cm as ardf, arh5_cm as arh5:
         assert ardf.images
-        assert sorted(ardf.images) == sorted(arh5.images)
+        assert set(ardf.images) <= set(arh5.images)
+        assert set(arh5.images) - set(ardf.images) == ARH5_ONLY_IMAGES.get(stem, set())
         for name, ardf_image in ardf.images.items():
             arh5_image = arh5.images[name]
             assert ardf_image.shape == arh5_image.shape, name
@@ -105,3 +127,21 @@ def test_ardf_and_its_arh5_conversion_hold_the_same_images(real_data_file, stem)
             ardf_values, arh5_values = ardf_image.get_image(), arh5_image.get_image()
             assert ardf_values.dtype == arh5_values.dtype == np.float32, name
             assert_exactly_equal(ardf_values, arh5_values)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("suffix", [".ARDF", ".h5"])
+def test_ac160s00_curves_have_the_lengths_of_the_asylum_ibw_exports(
+    real_data_file, suffix
+):
+    """Each reader gives AC160s00 the extend and retract lengths of the .ibw exports."""
+    path = Path(real_data_file(f"AC160s00{suffix}"))
+    with open_fvfile(path) as fvfile:
+        (volume,) = fvfile.volumes
+        assert volume.shape == AC160S00_SHAPE
+        for r, c in np.ndindex(volume.shape):
+            (z_ext, z_ret), (d_ext, d_ret) = volume.get_curve(r, c)
+            assert len(z_ext) == len(d_ext), (r, c)
+            assert len(z_ret) == len(d_ret) == AC160S00_RETRACT_POINTS, (r, c)
+            if (r, c) in AC160S00_EXTEND_POINTS:
+                assert len(z_ext) == AC160S00_EXTEND_POINTS[r, c], (r, c)
