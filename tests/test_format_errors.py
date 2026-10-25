@@ -48,7 +48,7 @@ from synthetic_files.nid import build_nid
 from magic_afm import data_readers
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MAXSCANRATE_RELPATH = "test_cases/PS_PCL_SAA/QNM/maxscanrate.000.pfc"
+MAXSCANRATE_RELPATH = "PS_PCL_SAA/QNM/maxscanrate.000.pfc"
 
 # Runs in a fresh interpreter under -O: argv[1] is this directory, argv[2] the file. The
 # last line of stdout is the JSON of what reading the file raised.

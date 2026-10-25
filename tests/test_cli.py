@@ -65,15 +65,15 @@ from magic_afm.calculation import FitFix
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GOLDENS_PATH = REPO_ROOT / "tests" / "goldens" / "t3_goldens.json"
 
-ARDF_RELPATH = "test_cases/PDMS_SAA/ffm/both0001.ARDF"
-ARH5_RELPATH = "test_cases/PDMS_SAA/ffm/rtrace0001.h5"
-QNM_RELPATH = "test_cases/PS_PCL_SAA/QNM/onekhz.000.pfc"
-FFV_RELPATH = "test_cases/A1_OCSOH-PMMA21k_300421.0_300425.spm"
-NID_RELPATH = "test_cases/20251216_141819_PVDF2_Film_U_00002.nid"
+ARDF_RELPATH = "PDMS_SAA/ffm/both0001.ARDF"
+ARH5_RELPATH = "PDMS_SAA/ffm/rtrace0001.h5"
+QNM_RELPATH = "PS_PCL_SAA/QNM/onekhz.000.pfc"
+FFV_RELPATH = "A1_OCSOH-PMMA21k_300421.0_300425.spm"
+NID_RELPATH = "20251216_141819_PVDF2_Film_U_00002.nid"
 NID_STEM = "20251216_141819_PVDF2_Film_U_00002"
-NON_SQUARE_ARDF_RELPATH = "test_cases/PDMS_SAA/ffm/twoxln0001.ARDF"
-TRACE_ONLY_ARDF_RELPATH = "test_cases/PDMS_SAA/ffm/onekhz0001.ARDF"
-DOE4_RELPATH = "test_cases/DOE4_20nN_80nm.0_00012.spm"
+NON_SQUARE_ARDF_RELPATH = "PDMS_SAA/ffm/twoxln0001.ARDF"
+TRACE_ONLY_ARDF_RELPATH = "PDMS_SAA/ffm/onekhz0001.ARDF"
+DOE4_RELPATH = "DOE4_20nN_80nm.0_00012.spm"
 
 # name: (relpath, extra CLI arguments)
 CLI_RUNS: dict[str, tuple[str, tuple[str, ...]]] = {

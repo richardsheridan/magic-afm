@@ -24,8 +24,7 @@ from pathlib import Path
 import conftest
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-RELPATH = "test_cases/SAMPLE/ffm/tiny0001.ARDF"
+RELPATH = "SAMPLE/ffm/tiny0001.ARDF"
 
 
 @pytest.fixture(autouse=True)
@@ -180,10 +179,10 @@ def test_missing_file_fails_when_real_data_is_required(
 
 @pytest.mark.slow
 def test_real_data_corpus_matches_the_manifest(real_data_file):
-    """Every file the manifest lists resolves to the bytes its digest names."""
-    manifest = (REPO_ROOT / "tests" / "real_data_manifest.txt").read_text()
+    """Every file the corpus manifest lists resolves to the bytes its digest names."""
+    manifest = Path(real_data_file("SHA256SUMS.txt")).read_text()
     entries = [
-        (line.split()[0], "test_cases/" + line.split()[-1])
+        (line.split()[0], line.split(maxsplit=4)[-1])
         for line in manifest.splitlines()
         if line and not line.startswith("#")
     ]

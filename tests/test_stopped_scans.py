@@ -46,8 +46,8 @@ from tqdm.std import tqdm as tqdm_std
 from magic_afm.calculation import FitFix, FitMode
 
 STOPPED_SCANS = {
-    "hard0001": "test_cases/PDMS_SAA/ffm/hard0001.ARDF",
-    "hard0003": "test_cases/PDMS_SAA/ffm/hard0003.ARDF",
+    "hard0001": "PDMS_SAA/ffm/hard0001.ARDF",
+    "hard0003": "PDMS_SAA/ffm/hard0003.ARDF",
 }
 MISSING_ROWS = 13
 

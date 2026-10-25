@@ -23,66 +23,7 @@ jobs:
       - run: pixi run lint
       - run: pixi run typecheck
 
-  # Fetch the files in tests/real_data_manifest.txt from the private corpus bucket
-  # into one cache that every test job restores. The cache key is the manifest's
-  # hash, so the bucket is read only when the manifest changes; a stale cache is
-  # restored first and only missing or changed files are downloaded. Pull requests
-  # from forks get no Google credentials, so they use whatever cache exists.
-  real-data:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      BUCKET: gs://magic-afm-test-cases-f8c5e4
-      DATA_DIR: example.data/test_cases
-    steps:
-      - uses: actions/checkout@v4
-      - name: Restore real-data cache
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: example.data/test_cases
-          key: real-data-${{ hashFiles('tests/real_data_manifest.txt') }}
-          restore-keys: real-data-
-          enableCrossOsArchive: true
-      - name: Authenticate to Google Cloud
-        if: >-
-          steps.cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request'
-          || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: google-github-actions/auth@v3
-        with:
-          project_id: magic-afm-tests
-          workload_identity_provider: projects/1049386035423/locations/global/workloadIdentityPools/github/providers/magic-afm
-      - name: Download missing or changed files
-        if: >-
-          steps.cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request'
-          || github.event.pull_request.head.repo.full_name == github.repository)
-        run: |
-          set -euo pipefail
-          # sha256 of the original file, whether stored raw or as .xz
-          digest() {
-            if [ "$2" = raw ]; then cat "$1"; else xz -dc "$1"; fi | sha256sum | cut -d' ' -f1
-          }
-          grep -v '^#' tests/real_data_manifest.txt | while read -r sum _ _ chain path; do
-            obj=$path
-            [ "$chain" = raw ] || obj=$path.xz
-            dest=$DATA_DIR/$obj
-            if [ -f "$dest" ] && [ "$(digest "$dest" "$chain")" = "$sum" ]; then
-              echo "cached: $path"
-              continue
-            fi
-            mkdir -p "$(dirname "$dest")"
-            gcloud storage cp "$BUCKET/$obj" "$dest"
-            if [ "$(digest "$dest" "$chain")" != "$sum" ]; then
-              echo "::error::sha256 mismatch for $path"
-              exit 1
-            fi
-          done
-
   test:
-    needs: real-data
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -92,7 +33,10 @@ jobs:
         environment: [test, test-nonumba, test-py311]
     timeout-minutes: 30
     steps:
+      # the real-data corpus is the public tests/magic-afm-test-data submodule
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Setup Pixi
         uses: prefix-dev/setup-pixi@v0
         with:
@@ -109,15 +53,6 @@ jobs:
           # the SIMD features numpy dispatches to and the BLAS it loaded
           pixi run -e ${{ matrix.environment }} python -c "import numpy; numpy.show_runtime()"
         shell: bash
-      # tests marked slow skip when this misses (a fork's pull request); runs that
-      # have the corpus set MAFM_REQUIRE_REAL_DATA below, so a miss fails there
-      - name: Restore real-data cache
-        uses: actions/cache/restore@v4
-        with:
-          path: example.data/test_cases
-          key: real-data-${{ hashFiles('tests/real_data_manifest.txt') }}
-          restore-keys: real-data-
-          enableCrossOsArchive: true
       # the GUI smoke test needs a display: Xvfb on Linux, the desktop elsewhere
       - name: Install Xvfb
         if: runner.os == 'Linux'
@@ -127,10 +62,8 @@ jobs:
         run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}pixi run -e ${{ matrix.environment }} pytest -rfEs
         env:
           MAFM_GUI_TESTS: "1"
-          MAFM_REQUIRE_REAL_DATA: >-
-            ${{ (github.event_name != 'pull_request'
-            || github.event.pull_request.head.repo.full_name == github.repository)
-            && '1' || '' }}
+          # the submodule is public, so every run has the corpus, forks included
+          MAFM_REQUIRE_REAL_DATA: "1"
       # when pytest fails, on a manual run, or when a pushed head commit message has
       # [regen-goldens], regenerate this platform's real-file goldens (the pixi test
       # envs pin the CPU-specific numerics) so drift can be measured with --compare

@@ -41,7 +41,7 @@ BLOCKED_NAMES = {
     "PYTHONDEVMODE",
 }
 
-# manifest path -> (original size, stored size, form present in the data root)
+# manifest path -> (original size, stored size, form committed in the data repository)
 DATA = {
     "raw_only.bin": (100, 40, "raw"),
     "sub/packed.bin": (200, 70, "xz"),
@@ -104,9 +104,11 @@ def _git(cwd: Path, env: dict[str, str], *args) -> str:
 
 @pytest.fixture(scope="module")
 def template(tmp_path_factory) -> Path:
-    """A committed repository with tools/ and a manifest, its data, and a fake pixi.
+    """A committed repository with tools/, its data repository, and a fake pixi.
 
-    Built once per module; each test works on a copy of the repository and data.
+    The data repository holds a manifest and the files it lists, and the main
+    repository pins its commit at tests/magic-afm-test-data. Built once per
+    module; each test works on a copy of the repository and data.
     """
     base = tmp_path_factory.mktemp("gate-template")
     gitconfig = base / "gitconfig"
@@ -128,33 +130,40 @@ def template(tmp_path_factory) -> Path:
         launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n')
         launcher.chmod(0o755)
 
+    data = base / "data"
+    lines = ["# synthetic manifest for the gate tests"]
+    for relpath, (original, stored, form) in DATA.items():
+        lines.append(f"{'0' * 64}  {original}  {stored}  delta+lzma2  {relpath}")
+        if form == "raw":
+            _write_size(data / relpath, original)
+        else:
+            _write_size(data / (relpath + ".xz"), stored)
+    (data / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n")
+    _git(data, env, "init", "-q")
+    _git(data, env, "add", ".")
+    _git(data, env, "commit", "-q", "--no-verify", "-m", "data")
+    data_commit = _git(data, env, "rev-parse", "HEAD")
+
     repo = base / "repo"
-    (repo / "tests").mkdir(parents=True)
+    # an uninitialized submodule's empty directory
+    (repo / "tests" / "magic-afm-test-data").mkdir(parents=True)
     shutil.copytree(
         REPO_ROOT / "tools",
         repo / "tools",
         ignore=shutil.ignore_patterns("__pycache__"),
     )
     shutil.copyfile(REPO_ROOT / ".gitignore", repo / ".gitignore")
-    lines = ["# synthetic manifest for the gate tests"]
-    for relpath, (original, stored, _) in DATA.items():
-        lines.append(f"{'0' * 64}  {original}  {stored}  delta+lzma2  {relpath}")
-    (repo / "tests" / "real_data_manifest.txt").write_text("\n".join(lines) + "\n")
     (repo / "notes.txt").write_text("committed\n")
     _git(repo, env, "init", "-q")
     _git(repo, env, "add", ".")
+    gitlink = f"160000,{data_commit},tests/magic-afm-test-data"
+    _git(repo, env, "update-index", "--add", "--cacheinfo", gitlink)
     _git(repo, env, "commit", "-q", "--no-verify", "-m", "initial")
     # keep every tracked file clearly older than any gate run
     past = time.time() - 60
     for path in repo.rglob("*"):
         if path.is_file() and ".git" not in path.relative_to(repo).parts:
             os.utime(path, (past, past))
-
-    for relpath, (original, stored, form) in DATA.items():
-        if form == "raw":
-            _write_size(base / "data" / "test_cases" / relpath, original)
-        else:
-            _write_size(base / "data" / "test_cases" / (relpath + ".xz"), stored)
     return base
 
 
@@ -284,11 +293,34 @@ def test_stamp_from_a_worktree_goes_to_the_shared_git_directory(gate):
     assert not (worktree_gitdir / "gate-passed-trees").exists()
 
 
-def test_default_data_root_is_example_data_in_the_repository(gate):
-    shutil.copytree(gate.data_root, gate.repo / "example.data")
-    shutil.rmtree(gate.data_root)
+def test_default_data_root_is_the_submodule_in_the_repository(gate):
+    submodule = gate.repo / "tests" / "magic-afm-test-data"
+    submodule.rmdir()
+    # a rename, since git's read-only object files stop rmtree on Windows
+    gate.data_root.rename(submodule)
     result = gate.run(MAFM_TEST_DATA=None)
     assert f"stamped tree {gate.tree()}" in _lines(result), result.stdout
+
+
+def test_uninitialized_submodule_prevents_a_stamp_and_the_requirement(gate):
+    reason = _assert_no_stamp(gate, gate.run(MAFM_TEST_DATA=None))
+    assert "SHA256SUMS.txt" in reason
+    for call in gate.pytest_calls():
+        assert call["env"].get("MAFM_REQUIRE_REAL_DATA") != "1", call["step"]
+
+
+def test_data_root_at_another_commit_prevents_a_stamp(gate):
+    (gate.data_root / "later.bin").write_bytes(b"later")
+    gate.git("add", "later.bin", cwd=gate.data_root)
+    gate.git("commit", "-q", "--no-verify", "-m", "later", cwd=gate.data_root)
+    reason = _assert_no_stamp(gate, gate.run())
+    assert "pins" in reason
+
+
+def test_data_root_that_is_not_a_git_checkout_prevents_a_stamp(gate):
+    (gate.data_root / ".git").rename(gate.data_root / "was-git")
+    reason = _assert_no_stamp(gate, gate.run())
+    assert "not a git checkout" in reason
 
 
 def test_failing_gate_writes_no_stamp_and_prints_no_stamp_line(gate):
@@ -344,8 +376,8 @@ def test_no_stamp_reason_names_every_blocking_variable(gate):
     "damage", ["missing file", "raw at stored size", "xz at original size"]
 )
 def test_incomplete_real_data_prevents_a_stamp_and_the_requirement(gate, damage):
-    raw = gate.data_root / "test_cases" / "raw_only.bin"
-    packed = gate.data_root / "test_cases" / "sub" / "packed.bin.xz"
+    raw = gate.data_root / "raw_only.bin"
+    packed = gate.data_root / "sub" / "packed.bin.xz"
     if damage == "missing file":
         packed.unlink()
     elif damage == "raw at stored size":

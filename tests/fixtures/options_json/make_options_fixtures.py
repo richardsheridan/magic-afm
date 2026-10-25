@@ -10,8 +10,10 @@ environment of this checkout. From the repository root:
     git worktree remove WT_B2; git worktree remove WT_B3
 
 then compare OUTDIR with this directory and copy the files over byte for byte
-(never re-dump them). pytest never runs this. The input files come from
-example.data (or MAFM_TEST_DATA) and are unpacked into a temporary directory.
+(never re-dump them). pytest never runs this. The input files come from the
+local corpus in example.data/test_cases (or MAFM_TEST_DATA), since
+both0000.ARDF is not in the tests/magic-afm-test-data submodule, and are
+unpacked into a temporary directory.
 
 Each run is a separate interpreter with PYTHONPATH set to the worktree, so the
 tag's own magic_afm is imported; the child asserts that it is. The CLI runs
@@ -54,8 +56,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-PFC = "test_cases/PS_PCL_SAA/QNM/onekhz.000.pfc"
-ARDF = "test_cases/PDMS_SAA/ffm/both0000.ARDF"
+PFC = "PS_PCL_SAA/QNM/onekhz.000.pfc"
+ARDF = "PDMS_SAA/ffm/both0000.ARDF"
 
 # fixture name: (tag, front end, input relpath, extra CLI args)
 RUNS = {
@@ -73,7 +75,9 @@ SHIMS = {"b2": ["b53b6a0"]}
 
 
 def data_root():
-    return Path(os.environ.get("MAFM_TEST_DATA") or REPO_ROOT / "example.data")
+    return Path(
+        os.environ.get("MAFM_TEST_DATA") or REPO_ROOT / "example.data" / "test_cases"
+    )
 
 
 def unpack(relpath, dest_dir):

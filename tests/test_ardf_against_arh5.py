@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 from synthetic_files import open_fvfile
 
-# each ARDF and its conversion, under test_cases/PDMS_SAA/ffm/: both directions kept,
+# each ARDF and its conversion, under PDMS_SAA/ffm/: both directions kept,
 # and the retrace alone
 STEMS = ["both0001", "rtrace0001"]
 METADATA = ("k", "defl_sens", "sync_dist", "scansize", "t_step", "trace")
@@ -37,8 +37,8 @@ def assert_exactly_equal(actual, expected):
 
 def open_pair(real_data_file, stem):
     """The ARDF and the ARH5 file of stem, each opened the way the CLI opens it."""
-    ardf = Path(real_data_file(f"test_cases/PDMS_SAA/ffm/{stem}.ARDF"))
-    arh5 = Path(real_data_file(f"test_cases/PDMS_SAA/ffm/{stem}.h5"))
+    ardf = Path(real_data_file(f"PDMS_SAA/ffm/{stem}.ARDF"))
+    arh5 = Path(real_data_file(f"PDMS_SAA/ffm/{stem}.h5"))
     return open_fvfile(ardf), open_fvfile(arh5)
 
 

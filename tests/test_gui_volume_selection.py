@@ -28,7 +28,7 @@ from synthetic_files.nid import build_nid
 
 from magic_afm._options import TraceChoice
 
-DOE4_RELPATH = "test_cases/DOE4_20nN_80nm.0_00012.spm"
+DOE4_RELPATH = "DOE4_20nN_80nm.0_00012.spm"
 
 DIRECTED_BUILDERS = {
     f"{fmt}-{capture}": partial(builder, capture=capture)

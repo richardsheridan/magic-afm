@@ -32,8 +32,8 @@ from synthetic_files.ardf import VDEF, build_ardf
 
 from magic_afm.data_readers import FileFormatError
 
-COMPLETE_RELPATH = "test_cases/PDMS_SAA/ffm/both0001.ARDF"
-STOPPED_RELPATH = "test_cases/PDMS_SAA/ffm/hard0001.ARDF"
+COMPLETE_RELPATH = "PDMS_SAA/ffm/both0001.ARDF"
+STOPPED_RELPATH = "PDMS_SAA/ffm/hard0001.ARDF"
 
 # grid (lines, points per line), points per half curve, captured directions, ScanDown
 # (True takes line 0 first, False the last line)
