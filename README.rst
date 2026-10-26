@@ -94,6 +94,17 @@ Do this to allow it:
 4. Click **Open Anyway** once more in the dialog that follows. From then on
    the app opens normally.
 
+The macOS command line interface is inside the bundle. Run it by its path, or
+symlink it onto your ``PATH``::
+
+    magic_afm/magic_afm_gui.app/Contents/MacOS/magic_afm_cli --help
+    ln -s "$PWD/magic_afm/magic_afm_gui.app/Contents/MacOS/magic_afm_cli" ~/bin/
+
+If macOS blocks the CLI too, approve it the same way, or clear the quarantine
+on the whole folder once, which covers the app and the CLI together::
+
+    xattr -dr com.apple.quarantine magic_afm
+
 From source
 ^^^^^^^^^^^
 Clone the git repository to your local machine, and
